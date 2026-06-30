@@ -112,6 +112,20 @@ CLONE_LINE=$(grep clone "$BUF/session-T.md")
 hasnt "credential in URL userinfo is not stored" "$CLONE_LINE" 'ghp_aaaaaaaaaaaaaaaaaaaaaaaa'
 has   "URL host/path after the credential is preserved, not deleted" "$CLONE_LINE" 'github.com/foo/bar.git'
 
+# 2e4. a secret VALUE containing slashes (e.g. a realistic AWS-shaped key) is
+#      fully redacted, not truncated at the first '/' - regression check for
+#      the over-correction the @-exclusion-only fix above must not reintroduce.
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"awskey","command":"export AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"}}'
+AWS_LINE=$(grep awskey "$BUF/session-T.md")
+hasnt "AWS secret value (with slashes) is not stored" "$AWS_LINE" 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY'
+hasnt "AWS secret value is not even partially stored" "$AWS_LINE" 'K7MDENG'
+
+# 2e5. dashed multi-segment sk- key formats (Anthropic sk-ant-, OpenAI
+#      sk-proj-) are fully redacted, not left untouched by a body class that
+#      only allowed alnum and rejected the internal dashes.
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"anthropickey","command":"export ANTHROPIC_API_KEY=sk-ant-api03-AbCdEfGh1234567890XYZ"}}'
+hasnt "sk-ant- key is not stored" "$(grep anthropickey "$BUF/session-T.md")" 'sk-ant-api03-AbCdEfGh1234567890XYZ'
+
 # 2f. redaction applies to the Bash *description* field, not just command
 cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"deploy with ghp_abcdefghij1234567890","command":"true"}}'
 DESC_LINE=$(grep '\*\*bash\*\* deploy' "$BUF/session-T.md")
@@ -144,10 +158,12 @@ LONG_LINE=$(grep '\*\*bash\*\* long' "$BUF/session-T.md")
 has   "long command is marked truncated" "$LONG_LINE" '…[truncated]'
 hasnt "long command does not store the full untruncated text" "$LONG_LINE" "$LONGCMD"
 
-# 4. missing session_id is dropped (no nosession bucket)
+# 4. missing session_id is dropped (no nosession bucket), but breadcrumbed
+#    like the other silent-loss paths so the drop isn't entirely untraceable.
 reset_buf
 cap '{"tool_name":"Bash","tool_input":{"description":"x","command":"whoami"}}'
 absent "no nosession bucket created" "$BUF/session-nosession.md"
+present "dropped no-session-id action breadcrumbs to .capture-errors" "$DATA/.capture-errors"
 
 # 5. unsafe session_id is sanitized (no traversal/subdirs)
 cap '{"session_id":"../evil","tool_name":"Bash","tool_input":{"description":"x","command":"id"}}'

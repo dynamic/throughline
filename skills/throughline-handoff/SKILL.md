@@ -149,7 +149,14 @@ Key paths, URLs, credential locations (names only).
   `token|key|secret|password|credential|auth`, `Bearer`, `ghp_`/`github_pat_`/
   `gh[oprsu]_`/`sk-`/`AKIA`, URL userinfo) **and** for any other long, opaque,
   random-looking string regardless of keyword — reduce all of them to key names
-  only. This is defense in depth, not the sole barrier.
+  only. Two shapes capture's own redaction structurally cannot catch, so they
+  need a human/model eye specifically: (1) a credential attached to a bare CLI
+  flag with no keyword (`mysql -p<password>`, `curl -u user:pass`) — flags like
+  `-u`/`-p` are too overloaded across tools (e.g. `docker run -u uid:gid`) to
+  redact mechanically without false positives; (2) a value that's only
+  *partially* masked — seeing a `***` in a captured line doesn't mean the whole
+  secret was caught, so check what's still readable around it, not just whether
+  a mask is present. This is defense in depth, not the sole barrier.
 - **Report, then let the user review.** After writing, show the HANDOFF.md diff +
   session-log path. The review gate is post-write, not pre-write.
 - **Buffers are the source of truth for *what happened*** — they don't lie about

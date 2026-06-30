@@ -49,7 +49,10 @@ sid=$(printf '%s' "$input" | jq -r '.session_id // ""' 2>/dev/null)
 sid=$(tl_safe_sid "$sid")
 # Drop records with no usable session id rather than poisoning a shared
 # "nosession" bucket that flush never stamps and onboard re-warns about forever.
-[ -n "$sid" ] || exit 0
+# Breadcrumbed like the other silent-loss paths below: currently unreachable
+# (Claude Code always supplies a UUID session_id) but if that assumption ever
+# breaks, the loss should be visible rather than untraceable.
+[ -n "$sid" ] || { _tl_err "dropped action: no usable session_id"; exit 0; }
 
 line=$(printf '%s' "$input" | jq -r --arg root "$root" '
   # Mask common secret shapes so raw credentials never sit in the buffer. The
@@ -57,6 +60,12 @@ line=$(printf '%s' "$input" | jq -r --arg root "$root" '
   # this is defense-in-depth, not the only barrier (the skill scrubs too).
   # Best-effort: this is pattern/keyword matching, not entropy analysis, so a
   # bare opaque token with no recognizable shape or keyword will not be caught.
+  # Known gap, not fixable here without a high false-positive cost: a
+  # credential attached to a bare single-letter CLI flag with no keyword at all
+  # (mysql -p<password>, curl -u user:pass) has no keyword for this rule to
+  # anchor on, and flags like -u/-p are too overloaded across tools (docker run
+  # -u uid:gid, ssh -p <port>) to redact generically. The handoff skill re-scan
+  # is the second barrier for exactly this shape.
   # Shape-specific patterns run BEFORE the generic keyword=value catch-all below,
   # so e.g. "Authorization:Basic <base64>" is fully consumed by the Basic-auth
   # rule rather than the generic auth keyword rule eating just the Basic token
@@ -64,11 +73,12 @@ line=$(printf '%s' "$input" | jq -r --arg root "$root" '
   # trailing \w* too (not just leading) so compound names like SECRET_KEY= or
   # API_KEY_VALUE= still match - a keyword immediately followed by more word
   # characters used to fall through unredacted entirely. Its value group stops
-  # at @ and / as well as whitespace/quote: the URL-userinfo rule above already
-  # bounds and masks a credential inside a URL, and without this the generic
-  # rule re-matching token inside e.g. a user-token:***@host/path URL would
-  # greedily re-consume everything through the path, deleting rather than
-  # masking it.
+  # at @ (not /, which legitimate secrets like AWS keys commonly contain): the
+  # URL-userinfo rule above already bounds and masks a credential inside a URL
+  # and always inserts *** immediately before the @, so stopping the
+  # value-capture at @ is sufficient to keep this rule from re-consuming the
+  # host/path past an already-redacted URL credential, without under-redacting
+  # a slash-containing secret in the non-URL case.
   def redact:
     gsub("-----BEGIN [A-Z ]*PRIVATE KEY-----[\\s\\S]*?-----END [A-Z ]*PRIVATE KEY-----"; "***private-key-redacted***")
     | gsub("-----BEGIN [A-Z ]*PRIVATE KEY-----[\\s\\S]*"; "***private-key-redacted***")
@@ -78,11 +88,11 @@ line=$(printf '%s' "$input" | jq -r --arg root "$root" '
     | gsub("github_pat_[A-Za-z0-9_]{10,}"; "github_pat_***")
     | gsub("gh[oprsu]_[A-Za-z0-9]{10,}"; "gh_***")
     | gsub("xox[baprs]-[A-Za-z0-9-]{6,}"; "xox-***")
-    | gsub("sk-[A-Za-z0-9]{10,}"; "sk-***")
+    | gsub("sk-[A-Za-z0-9_-]{10,}"; "sk-***")
     | gsub("AKIA[0-9A-Z]{12,}"; "AKIA***")
     | gsub("AIza[0-9A-Za-z_\\-]{35}"; "AIza***")
     | gsub("(?i)\\bbasic\\s+[A-Za-z0-9+/=]{8,}"; "Basic ***")
-    | gsub("(?i)(?<k>\\w*(?:token|secret|password|passwd|api[_-]?key|access[_-]?key|credential|auth(?:orization)?|client[_-]?id)\\w*)(?<s>\\s*[:=]\\s*|\\s+)(?<v>\"?[^\\s\"@/]+)"; "\(.k)\(.s)***");
+    | gsub("(?i)(?<k>\\w*(?:token|secret|password|passwd|api[_-]?key|access[_-]?key|credential|auth(?:orization)?|client[_-]?id)\\w*)(?<s>\\s*[:=]\\s*|\\s+)(?<v>\"?[^\\s\"@]+)"; "\(.k)\(.s)***");
   # Neutralize control chars (incl. newlines) and backticks so a captured
   # command cannot break the markdown list / code span it is embedded in. The
   # control-char half mirrors the shared `tl_clean_ctrl` shell helper in

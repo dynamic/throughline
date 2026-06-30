@@ -83,7 +83,29 @@ comment-accuracy specialists) before merge.
   Noted as currently unreachable (Claude Code session_ids are UUIDs, already
   all-allowed characters) rather than restructured, since a collision-resistant
   encoding would cost the human-readable filenames for no live attack path.
-- **16 additional test cases** (58 total) covering the above, plus
+- **Fixed an over-correction from the previous fix**: bounding the
+  keyword=value value-capture at `/` (to stop it re-consuming a URL path past
+  an already-redacted credential) also truncated genuine slash-containing
+  secrets (e.g. a realistic AWS-shaped key) after their first `/`, leaving most
+  of the value exposed. The URL case only ever needed the boundary at `@` -
+  the URL-userinfo rule upstream always leaves `***@` right before the
+  host/path, so excluding only `@` (not `/`) fixes both cases at once.
+- **`sk-` key redaction now covers dashed multi-segment formats** (Anthropic's
+  `sk-ant-api03-...`, OpenAI's `sk-proj-...`): the body character class was
+  alnum-only, so the first internal dash in these current real-world key
+  formats stopped the match entirely and the whole key passed through
+  unredacted.
+- **Dropped no-session-id actions now breadcrumb too**, for the same
+  visibility reason as the mkdir/jq/write failures - currently unreachable
+  (Claude Code always supplies a UUID session_id) but no longer untraceable if
+  that assumption ever breaks.
+- **Handoff skill's re-scan checklist now names two shapes capture's own
+  redaction cannot catch mechanically**: a credential attached to a bare CLI
+  flag with no keyword (`mysql -p<password>`, `curl -u user:pass` - flags like
+  `-u`/`-p` are too overloaded across tools, e.g. `docker run -u uid:gid`, to
+  redact generically without false positives), and the fact that seeing a
+  `***` in a captured line doesn't guarantee the *whole* secret was masked.
+- **20 additional test cases** (62 total) covering the above, plus
   previously-uncovered branches: the `tl_active` silent-exit/opt-in-silence
   path, Write/NotebookEdit capture (only Edit was tested), `tl_safe_sid`'s
   `.`/`..` rejection, `THROUGHLINE_DATA_DIR`'s absolute-path branch, command
