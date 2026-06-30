@@ -148,6 +148,17 @@ comment-accuracy specialists) before merge.
   keyword at all (proving the final sentinel-to-`***` pass works
   independently of the generic rule), plus a check that the internal sentinel
   itself never leaks into the buffer.
+- **Session-id resolution deduplicated into `tl_resolve_sid`**: an eighth
+  review pass flagged that `capture`/`flush`/`onboard`/`precompact` each
+  hand-duplicated the same "extract `session_id`, then `tl_safe_sid` it" two
+  lines - exactly the kind of duplication that already caused a real desync
+  bug once (capture deriving it differently than the other three, fixed
+  earlier in this same series). All four now call one shared `_lib.sh`
+  helper. The similarly-flagged duplication between `flush`/`precompact`'s
+  marker-stamping boilerplate was left alone: the two differ in a real way
+  (flush stamps once via a guard, precompact intentionally stamps on every
+  compaction), so a shared helper would need a mode parameter rather than
+  removing genuine duplication.
 
 ### Added
 - **PreCompact hook** (`session-precompact.sh`): stamps a `compaction-boundary`

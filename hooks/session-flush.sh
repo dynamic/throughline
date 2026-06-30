@@ -17,10 +17,10 @@ data=$(tl_data_dir)
 bufdir="$data/buffer"
 [ -d "$bufdir" ] || exit 0
 
-# Resolve the session id the same way capture does, so the stamp lands on the
-# right buffer (and never on a "nosession" file capture refuses to create).
-sid=$(printf '%s' "$input" | jq -r '.session_id // ""' 2>/dev/null)
-sid=$(tl_safe_sid "$sid")
+# Resolve the session id via the shared helper (also used by capture and
+# precompact) so the stamp lands on the right buffer (and never on a
+# "nosession" file capture refuses to create).
+sid=$(tl_resolve_sid "$input")
 reason=$(printf '%s' "$input" | jq -r '.reason // "end"' 2>/dev/null)
 reason=$(tl_clean_ctrl "$reason")
 buf="$bufdir/session-$sid.md"

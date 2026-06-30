@@ -25,12 +25,12 @@ bufdir="$data/buffer"
 # of startup|resume|clear|compact; `session_id` keys this session's buffer.
 input=$(cat 2>/dev/null)
 src=""
-sid=""
 if tl_have_jq; then
   src=$(printf '%s' "$input" | jq -r '.source // ""' 2>/dev/null)
-  sid=$(printf '%s' "$input" | jq -r '.session_id // ""' 2>/dev/null)
 fi
-sid=$(tl_safe_sid "$sid")
+# tl_resolve_sid (also used by capture/flush/precompact) handles the
+# missing-jq case itself, returning "".
+sid=$(tl_resolve_sid "$input")
 
 echo "## throughline - project session context"
 echo

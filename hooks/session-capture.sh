@@ -42,11 +42,10 @@ _tl_err() {
 mkdir -p "$bufdir" 2>/dev/null || { _tl_err "mkdir failed for buffer dir"; exit 0; }
 
 # Session id is resolved independently of the formatted line below (rather than
-# splitting both out of one combined jq call) so it is derived identically to
-# how flush/onboard/precompact resolve it — a session_id containing a tab would
-# otherwise desync the two derivations and point them at different filenames.
-sid=$(printf '%s' "$input" | jq -r '.session_id // ""' 2>/dev/null)
-sid=$(tl_safe_sid "$sid")
+# splitting both out of one combined jq call), via the shared tl_resolve_sid
+# (also used by flush/precompact) so it is derived identically everywhere a
+# buffer filename is keyed off it.
+sid=$(tl_resolve_sid "$input")
 # Drop records with no usable session id rather than poisoning a shared
 # "nosession" bucket that flush never stamps and onboard re-warns about forever.
 # Breadcrumbed like the other silent-loss paths below: currently unreachable

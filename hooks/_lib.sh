@@ -55,6 +55,20 @@ tl_safe_sid() {
   case "$_tl_s" in ''|.|..) printf '' ;; *) printf '%s' "$_tl_s" ;; esac
 }
 
+# Resolve and sanitize the session_id from a hook's raw JSON stdin payload in
+# one step. Shared by session-capture.sh, session-flush.sh, and
+# session-precompact.sh, which all key their buffer filename off this exact
+# derivation - letting it drift between them once already desynced filenames
+# for a session_id containing a tab (capture used to extract it differently
+# than the other three). Prints "" if jq is unavailable or session_id is
+# absent/unsafe; safe to call even where the caller has not separately
+# checked tl_have_jq.
+tl_resolve_sid() {
+  tl_have_jq || { printf ''; return; }
+  _tl_raw=$(printf '%s' "$1" | jq -r '.session_id // ""' 2>/dev/null)
+  tl_safe_sid "$_tl_raw"
+}
+
 # Replace control characters (including newlines) with a space. Shared by
 # session-flush.sh and session-precompact.sh so their reason/trigger fields
 # can't break the `<!-- ... -->` marker they're embedded in. (capture.sh's `clean`

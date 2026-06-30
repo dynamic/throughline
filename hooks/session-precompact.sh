@@ -20,8 +20,7 @@ data=$(tl_data_dir)
 bufdir="$data/buffer"
 [ -d "$bufdir" ] || exit 0
 
-sid=$(printf '%s' "$input" | jq -r '.session_id // ""' 2>/dev/null)
-sid=$(tl_safe_sid "$sid")
+sid=$(tl_resolve_sid "$input")
 trigger=$(printf '%s' "$input" | jq -r '.trigger // .reason // "auto"' 2>/dev/null)
 trigger=$(tl_clean_ctrl "$trigger")
 [ -n "$sid" ] || exit 0
