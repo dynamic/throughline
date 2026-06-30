@@ -25,7 +25,7 @@ comment-accuracy specialists) before merge.
   now also matches `credential`, `auth`/`authorization`, and `client_id`; PEM
   private-key redaction now also catches a key body with no `-----END...-----`
   marker (a truncated or streamed key). Documented limitation, unchanged: this
-  is pattern/keyword matching, not entropy analysis — a bare opaque token with
+  is pattern/keyword matching, not entropy analysis: a bare opaque token with
   no recognizable shape still passes through.
 - **`[failed]` outcome marking scoped to verified schema**: the `exit_code` /
   `error` / `code` heuristics were only ever validated against the real Bash
@@ -44,10 +44,18 @@ comment-accuracy specialists) before merge.
   could desync from how flush/onboard/precompact derive it (e.g. for a
   session_id containing a tab). Capture now resolves the session id via its own
   dedicated jq call, identical to the other hooks.
-- **8 additional test cases** covering the above, plus previously-uncovered
-  branches: the `tl_active` silent-exit/opt-in-silence path, Write/NotebookEdit
-  capture (only Edit was tested), `tl_safe_sid`'s `.`/`..` rejection,
-  `THROUGHLINE_DATA_DIR`'s absolute-path branch, and command truncation.
+- **`.capture-errors` lives at the data-dir root, not under `buffer/`**: a
+  second review pass found that the breadcrumb's own write target depended on
+  `buffer/` already existing, so the one failure mode it most needs to report
+  (the `mkdir -p` that creates `buffer/` failing) silently defeated the
+  breadcrumb along with it. `tl_active` already guarantees the data dir itself
+  exists before any hook proceeds, so the breadcrumb now targets that instead.
+  README's gitignore guidance updated to match.
+- **10 additional test cases** (52 total) covering the above, plus
+  previously-uncovered branches: the `tl_active` silent-exit/opt-in-silence
+  path, Write/NotebookEdit capture (only Edit was tested), `tl_safe_sid`'s
+  `.`/`..` rejection, `THROUGHLINE_DATA_DIR`'s absolute-path branch, command
+  truncation, and the breadcrumb surviving a `buffer/`-creation failure.
 
 ### Added
 - **PreCompact hook** (`session-precompact.sh`): stamps a `compaction-boundary`

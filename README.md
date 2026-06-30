@@ -110,14 +110,17 @@ tool-agnostic project record.
 
 **Commit policy.** The durable `HANDOFF.md` and `logs/` are meant to be committed so
 teammates and fresh clones get oriented. The raw `buffer/` is scratch (and can contain
-unredacted command text) so it must never be committed. Gitignore the buffer for
-whichever data dir you use:
+unredacted command text), and `.capture-errors` is a scratch breadcrumb file (capture
+write/permission failures only, no command text) - neither should ever be committed.
+Gitignore both for whichever data dir you use:
 
 ```gitignore
 # default layout
 .claude/throughline/buffer/
+.claude/throughline/.capture-errors
 # or, if you set THROUGHLINE_DATA_DIR=.agent/handoff
 .agent/handoff/buffer/
+.agent/handoff/.capture-errors
 ```
 
 > **Heads-up for allowlist-style `.gitignore`.** If your repo ignores all of

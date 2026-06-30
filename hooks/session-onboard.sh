@@ -44,10 +44,12 @@ fi
 
 # Surface any breadcrumbed capture failures (mkdir/jq/write) from the swallowed
 # failure paths in session-capture.sh — that hook must never block a tool, so it
-# fails silently except for this trace file.
-if [ -f "$bufdir/.capture-errors" ]; then
-  errn=$(grep -c '.' "$bufdir/.capture-errors" 2>/dev/null | tr -d ' ')
-  echo "⚠️ $errn capture failure(s) recorded in \`${bufdir#"$root"/}/.capture-errors\` - some actions may be missing from the buffer. Check disk space / permissions on \`${bufdir#"$root"/}/\`, then clear the file once resolved."
+# fails silently except for this trace file. Lives at the data-dir root (not
+# under buffer/) so it survives even the failure mode where bufdir itself
+# couldn't be created.
+if [ -f "$data/.capture-errors" ]; then
+  errn=$(grep -c '.' "$data/.capture-errors" 2>/dev/null | tr -d ' ')
+  echo "⚠️ $errn capture failure(s) recorded in \`${data#"$root"/}/.capture-errors\` - some actions may be missing from the buffer. Check disk space / permissions on \`${data#"$root"/}/\`, then clear the file once resolved."
   echo
 fi
 

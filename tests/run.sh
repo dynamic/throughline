@@ -21,7 +21,8 @@ mkdir -p "$WORK/proj/.claude/throughline/buffer"
 CLAUDE_PROJECT_DIR="$WORK/proj"
 THROUGHLINE_DATA_DIR=".claude/throughline"
 export CLAUDE_PROJECT_DIR THROUGHLINE_DATA_DIR
-BUF="$WORK/proj/.claude/throughline/buffer"
+DATA="$WORK/proj/.claude/throughline"
+BUF="$DATA/buffer"
 
 ok()  { PASS=$((PASS + 1)); printf '  ok   %s\n' "$1"; }
 bad() { FAIL=$((FAIL + 1)); printf '  FAIL %s\n' "$1"; }
@@ -31,7 +32,7 @@ present(){ if [ -f "$2" ]; then ok "$1"; else bad "$1 (no file: $2)"; fi; }
 absent() { if [ -e "$2" ]; then bad "$1 (exists: $2)"; else ok "$1"; fi; }
 eq()     { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1 (got '$2', want '$3')"; fi; }
 cap()    { printf '%s' "$1" | sh "$H/session-capture.sh"; }
-reset_buf() { rm -f "$BUF"/session-*.md "$BUF"/.capture-errors; }
+reset_buf() { rm -f "$BUF"/session-*.md "$DATA"/.capture-errors; mkdir -p "$BUF"; chmod 755 "$BUF" 2>/dev/null; }
 
 echo "throughline hook tests"
 echo "----------------------"
@@ -231,13 +232,26 @@ if [ "$(id -u)" != "0" ]; then
   chmod 444 "$BUF/session-T2.md" 2>/dev/null
   printf '%s' '{"session_id":"T2","tool_name":"Bash","tool_input":{"description":"blocked","command":"id"}}' | sh "$H/session-capture.sh"
   chmod 644 "$BUF/session-T2.md" 2>/dev/null
-  present "a write failure breadcrumbs to .capture-errors" "$BUF/.capture-errors"
+  present "a write failure breadcrumbs to .capture-errors" "$DATA/.capture-errors"
   O6=$(printf '%s' '{"source":"startup","session_id":"X"}' | sh "$H/session-onboard.sh")
   has "onboard surfaces the capture-errors breadcrumb" "$O6" 'capture failure'
 else
   ok "write-failure breadcrumb test skipped (running as root)"
   ok "onboard capture-errors surfacing test skipped (running as root)"
 fi
+
+# 13b. the breadcrumb survives the failure mode it exists to report: bufdir
+#      itself cannot be created. Block "buffer" with a regular file (not a
+#      directory, not a permission change) so `mkdir -p "$bufdir"` fails while
+#      $data itself stays fully writable — proves the breadcrumb doesn't depend
+#      on the very directory whose creation just failed.
+reset_buf
+rm -rf "$BUF"
+printf 'not a directory' > "$BUF"
+printf '%s' '{"session_id":"T4","tool_name":"Bash","tool_input":{"description":"x","command":"id"}}' | sh "$H/session-capture.sh"
+present "mkdir failure still breadcrumbs (target is data-dir root, not buffer/)" "$DATA/.capture-errors"
+rm -f "$BUF"
+mkdir -p "$BUF"
 
 echo "----------------------"
 printf 'passed: %s   failed: %s\n' "$PASS" "$FAIL"

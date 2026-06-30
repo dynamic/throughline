@@ -29,9 +29,14 @@ bufdir="$data/buffer"
 # Best-effort breadcrumb for the swallowed-failure paths below: capture must
 # never block a tool, so every failure here still exits 0, but a write failure
 # (full disk, lost permissions) would otherwise drop an action with zero trace.
-# onboard surfaces this file's presence so the loss isn't silent forever.
+# onboard surfaces this file's presence so the loss isn't silent forever. Lives
+# at the data-dir root, NOT under buffer/: tl_active (checked above) guarantees
+# $data exists before this point, but $bufdir may not (mkdir below can fail) —
+# if the breadcrumb's own target depended on bufdir, the one failure mode this
+# exists to report (bufdir uncreatable) would silently defeat the breadcrumb
+# along with it.
 _tl_err() {
-  printf -- '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$1" >> "$bufdir/.capture-errors" 2>/dev/null
+  printf -- '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$1" >> "$data/.capture-errors" 2>/dev/null
 }
 
 mkdir -p "$bufdir" 2>/dev/null || { _tl_err "mkdir failed for buffer dir"; exit 0; }
@@ -72,6 +77,10 @@ line=$(printf '%s' "$input" | jq -r --arg root "$root" '
     | gsub("(?i)(?<k>\\w*(?:token|secret|password|passwd|api[_-]?key|access[_-]?key|credential|auth(?:orization)?|client[_-]?id))(?<s>\\s*[:=]\\s*|\\s+)(?<v>\"?[^\\s\"]+)"; "\(.k)\(.s)***");
   # Neutralize control chars (incl. newlines) and backticks so a captured
   # command cannot break the markdown list / code span it is embedded in.
+  # The control-char half (gsub("[[:cntrl:]]"; " ")) is duplicated inline in
+  # session-flush.sh and session-precompact.sh, which need the same protection
+  # for their reason/trigger fields but have no shared jq module to pull it
+  # from — keep all three in sync if this filter ever changes.
   def clean: gsub("[[:cntrl:]]"; " ") | gsub("`"; " ");
   # Observable outcome from the tool result. The Claude Code Bash tool_response
   # exposes "interrupted" but NOT an exit code, so a plain non-zero exit is not

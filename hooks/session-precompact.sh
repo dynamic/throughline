@@ -22,6 +22,9 @@ bufdir="$data/buffer"
 
 sid=$(printf '%s' "$input" | jq -r '.session_id // ""' 2>/dev/null)
 sid=$(tl_safe_sid "$sid")
+# Control-char neutralization here is duplicated in session-capture.sh's
+# `clean` def and session-flush.sh's reason gsub (no shared jq module exists
+# to factor it into) — keep all three in sync if it ever changes.
 trigger=$(printf '%s' "$input" | jq -r '(.trigger // .reason // "auto") | gsub("[[:cntrl:]]"; " ")' 2>/dev/null)
 [ -n "$sid" ] || exit 0
 buf="$bufdir/session-$sid.md"
