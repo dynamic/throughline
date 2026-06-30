@@ -32,10 +32,20 @@ refined by the next. Never run it more than once per unchanged state.
 
 1. Read **all** `DATA/buffer/session-*.md` — these are the continuously-captured
    actions (commands, file edits) for this and any unconsumed prior sessions.
-   They survive context compaction, so trust them over fuzzy recollection.
+   They survive context compaction, so trust them over fuzzy recollection. One
+   session is one file (keyed by a session id stable across compaction).
+   - Lines marked `` `[interrupted]` `` (or `` `[failed]` `` where a tool exposes
+     an error flag) are actions that did not complete cleanly; do not record them
+     as done. The Claude Code Bash result carries no exit code, so a plain failed
+     command is unmarked: cross-reference the conversation to judge its success.
+   - A `<!-- compaction-boundary ... -->` line marks where a compaction happened.
+     For actions **above** the most recent boundary, distill from the buffer text
+     itself: the conversation's account of *why* they were done has been
+     summarized away and your recall of it is no longer trustworthy.
 2. Read the current `DATA/HANDOFF.md` (create from the Phase 5 template if absent).
 3. Cross-reference the buffer against the live conversation: the buffer says *what
-   happened*; the conversation says *why*. Distillation needs both.
+   happened*; the conversation says *why*. Distillation needs both (subject to the
+   boundary caveat above).
 
 ---
 
@@ -131,6 +141,22 @@ Key paths, URLs, credential locations (names only).
 ## Reminders
 - **Distillation needs judgment** — that's why this is a skill, not a hook. Be terse,
   preserve structure, don't duplicate existing entries.
+- **Re-scan for secrets before writing.** Capture masks obvious credential shapes,
+  but it is best-effort pattern matching, not a guarantee — it has no entropy
+  analysis, so a bare opaque token with no recognizable keyword or prefix passes
+  through unmasked. Before writing anything into the committed `HANDOFF.md` or
+  `logs/`, scan your draft for token-shaped strings (case-insensitive
+  `token|key|secret|password|credential|auth`, `Bearer`, `ghp_`/`github_pat_`/
+  `gh[oprsu]_`/`sk-`/`AKIA`, URL userinfo) **and** for any other long, opaque,
+  random-looking string regardless of keyword — reduce all of them to key names
+  only. Two shapes capture's own redaction structurally cannot catch, so they
+  need a human/model eye specifically: (1) a credential attached to a bare CLI
+  flag with no keyword (`mysql -p<password>`, `curl -u user:pass`) — flags like
+  `-u`/`-p` are too overloaded across tools (e.g. `docker run -u uid:gid`) to
+  redact mechanically without false positives; (2) a value that's only
+  *partially* masked — seeing a `***` in a captured line doesn't mean the whole
+  secret was caught, so check what's still readable around it, not just whether
+  a mask is present. This is defense in depth, not the sole barrier.
 - **Report, then let the user review.** After writing, show the HANDOFF.md diff +
   session-log path. The review gate is post-write, not pre-write.
 - **Buffers are the source of truth for *what happened*** — they don't lie about

@@ -1,0 +1,87 @@
+# throughline v0.1.0 - Four-Lens Review
+
+## Executive summary
+
+throughline is a well-scoped session-memory plugin with a sound core architecture: cheap mechanical capture separated from judged distillation, and a SessionStart re-injection path that genuinely survives compaction. The code is clean and the failure-handling instinct (never block a tool) is correct. The dominant theme across all four lenses is silence: capture degrades to a no-op with zero signal in several conditions (missing jq, write failures, missing session_id), and the buffer records what ran but never whether it succeeded or whether secrets passed through it. The single most important thing to fix is the absence of any secret scrub at capture time combined with gitignore guidance that misses the documented `THROUGHLINE_DATA_DIR` layout: together they let raw command lines containing live credentials reach committed git history.
+
+## Critical
+
+None. No finding rises to data-corruption, RCE, or guaranteed-leak severity. The highest-impact items are conditional (override-dependent) leaks and product-adoption blockers, grouped under High.
+
+## High
+
+| Title | Lens | Location | Verification | Effort | Fix-summary |
+|---|---|---|---|---|---|
+| Gitignore guidance misses the `THROUGHLINE_DATA_DIR` override layout, staging raw buffers for commit | security | README.md:69-74, .gitignore:1-6 | unverified | small | Make the ignore rule relative to the configured data dir; show both default and `.agent/handoff/buffer/` layouts; for allowlist-style repos add an explicit re-exclusion. Ideally derive the ignore entry from the resolved data dir at install/handoff time. |
+| jq is a hard, undeclared dependency: absent jq silently disables all capture while the UI claims memory works | robustness + product | hooks/session-capture.sh:19-30, session-flush.sh:19-20 | unverified | small | Add `tl_have_jq` to _lib.sh; in onboard, if the project is active but jq is missing, inject a visible "capture DISABLED" line into the SessionStart block. Add a "Requirements: jq, git" line to README. |
+| Onboard never reads session_id, so post-compaction it cannot point at the live buffer (mislabels it as a dead prior session) | compaction | hooks/session-onboard.sh:28-33 | unverified | small | Have onboard read stdin, parse `source` and `session_id`. On `source==compact`, emit a distinct block naming `buffer/session-<id>.md` and instruct Claude to read it to recover the CURRENT session. Reserve the "prior unconsumed buffer" message for buffers whose id != current. |
+| Activation gate is a silent chicken-and-egg trap: a fresh install captures nothing until handoff bootstraps the dir | product | hooks/_lib.sh:30-33 | unverified | small | Document a one-line bootstrap prominently, or auto-activate on first PostToolUse in a git repo, or have onboard print a one-time "installed but not active - run X to enable" hint so it never looks broken. |
+| No visual proof of value: no example HANDOFF.md, SessionStart screenshot, or demo GIF | product | README.md | unverified | small | Lead the README with a rendered example HANDOFF.md, add a screenshot of the SessionStart injection, and a short asciinema/GIF of a handoff run reporting its diff. |
+| Wedge vs CLAUDE.md / native /memory / manual HANDOFF.md is asserted, not demonstrated | product | README.md:10-24 | unverified | small | Add a "Why not just X?" section: vs manual HANDOFF.md (reconstructed from compacted memory), vs CLAUDE.md (durable prefs, not per-session state), vs native /memory (global facts, not project work-state + live git). One concrete sentence each. |
+
+## Medium
+
+| Title | Lens | Location | Verification | Effort | Fix-summary |
+|---|---|---|---|---|---|
+| Bash command text captured verbatim with no secret scrub; handoff's "never values" rule is the only barrier to committed memory | security | hooks/session-capture.sh:23-24; skills/throughline-handoff/SKILL.md:51,86 | partial | medium | Add a capture-time redaction pass: mask common secret shapes (`[A-Z_]*(TOKEN\|KEY\|SECRET\|PASSWORD)=\S+`, `Bearer\s+\S+`, `://[^:]+:[^@]+@`, `ghp_\|sk-\|AKIA\|xox[baprs]-`), case-insensitive, broad alternations. Add a redact + re-scan step to the handoff skill so it is defense-in-depth, not the sole gate. Document residual risk. |
+| Capture records no tool outcome: failed and successful actions are indistinguishable | robustness | hooks/session-capture.sh:19-30 | partial | small | Read `.tool_response` and prefix a `[FAILED]`/`[interrupted]` marker when stderr is non-empty, an error flag is set, or `interrupted == true`. A coarse success/failure bit per line sharply raises buffer trustworthiness for post-crash distillation. |
+| No compaction-boundary marker: a later handoff cannot tell a compaction happened or what why-context was lost | compaction | hooks/session-capture.sh:37 (and absent PreCompact hook) | unverified | small | Stamp `<!-- compaction-boundary ... -->` into the live buffer at compaction (best via a PreCompact hook). Teach handoff to treat actions above the last boundary as "distill from buffer text alone, do not trust conversation recall for the why." |
+| No PreCompact hook: compaction survival is entirely passive, leaving an unmitigated why-context loss window | compaction | hooks/hooks.json (design) | unverified | medium | Add a PreCompact hook that stamps the boundary marker and nudges a checkpoint distillation while full context is still present. Soften "compaction-proof" wording (see Low item). |
+| file_path captured verbatim leaks absolute paths and OS username into committed logs | security | hooks/session-capture.sh:25-26 | unverified | small | Relativize file_path against CLAUDE_PROJECT_DIR/PWD at capture time (strip the project-root prefix, as onboard:23 already does), keeping the record machine-portable and PII-free. |
+| README default `.claude/throughline/` collides with projects that gitignore all of `.claude/` | product | README.md:56-74, hooks/_lib.sh:23 | unverified | small | Add a note: if a project gitignores all `.claude/`, either un-ignore `HANDOFF.md`+`logs/` or set `THROUGHLINE_DATA_DIR=.agent/handoff`. Consider recommending `.agent/handoff` for teams that commit handoffs. |
+| Multi-harness story under-sold: the strongest differentiator is one commented-out env var | product | README.md:59-62, _lib.sh:8-9 | unverified | trivial | Promote cross-harness portability to a named README feature and plugin keyword. State concretely what `.agent/handoff/HANDOFF.md` unlocks for non-Claude-Code tools. |
+| No tests, no CI, no CHANGELOG for hooks that run on every tool call | product | design | unverified | medium | Add `tests/` with fixture hook-input JSON piped through each script asserting expected output, plus a GitHub Actions job running shellcheck + those fixtures. Start a CHANGELOG. |
+| Install instructions are ambiguous and likely to fail on first try | product | README.md:47-52, plugin.json:9-10 | unverified | trivial | Confirm the public repo path matches; annotate the install block (`# add marketplace (this repo)` / `# install plugin@marketplace`); explain the identical marketplace/plugin name if intentional. |
+
+## Low
+
+| Title | Lens | Location | Verification | Effort | Fix-summary |
+|---|---|---|---|---|---|
+| Missing session_id writes `session-nosession.md`, which warns on every future onboard forever | robustness | session-capture.sh:20,33,37; session-flush.sh:19,23; session-onboard.sh:29-33 | partial | small | In capture, `exit 0` without writing when session_id is empty/missing rather than inventing a `nosession` sentinel that flush never stamps and onboard re-counts forever. |
+| Onboard "unconsumed buffer" warning counts already-ended buffers, not just orphaned ones | robustness | hooks/session-onboard.sh:29-33 | verified | small | Count only buffers lacking the `<!-- session-ended -->` stamp; soften wording to distinguish "ended cleanly, not yet distilled" from "ended without a flush." |
+| Captured commands injected into buffer markdown verbatim: backticks/control chars break the format | robustness | hooks/session-capture.sh:23-24,37 | verified | small | `gsub("\`";"'")` backticks and strip control chars in the jq before embedding. Treat the buffer as untrusted text in the distillation skill. |
+| session_id flows unsanitized into the buffer filename (path-traversal surface / silent line loss) | robustness + security | session-capture.sh:33,37; session-flush.sh:21,23-26 | partial | trivial | Sanitize sid to `[A-Za-z0-9._-]` and reject empty/`.`/`..` (e.g. `tr -c 'A-Za-z0-9._-' '_'`); apply identically in capture and flush. Fixes both the traversal surface and the silent dropped-line edge. |
+| sed root-stripping breaks when the project path contains regex-special chars | robustness | hooks/session-onboard.sh:23 | verified | trivial | Replace `sed "s\|$root/\|\|"` with POSIX parameter expansion `rel=${hf#"$root"/}` (literal prefix removal, no regex hazard). |
+| mkdir/append failures are silently swallowed: capture can no-op without any signal | robustness | hooks/session-capture.sh:17,37 | verified | small | Keep `exit 0` (correct), but on append/mkdir failure write a breadcrumb to `buffer/.capture-errors` that onboard surfaces. At minimum document capture as best-effort. |
+| Concurrent sessions sharing the nosession bucket interleave appends with no locking | robustness | hooks/session-capture.sh:37 | verified | small | Mainly fixed by eliminating the shared `nosession` bucket (see above). If multi-writer to one buffer is ever intended, use `flock` or write-temp-then-append. |
+| Buffer end-stamp can be suppressed by sentinel text in a captured command/description | security | session-flush.sh:25; session-capture.sh:23-24 | unverified | trivial | Anchor the guard: `grep -q '^<!-- session-ended'` (capture lines start with `` - ` `` so cannot match), or track ended-state out of band via a `session-<id>.ended` marker file. |
+| SessionEnd stamps "ended" on any exit reason, which can race a same-session resume | compaction | hooks/session-flush.sh:20-26 | unverified | small | Treat the latest trailing stamp as authoritative (ignore stamps followed by newer action lines), or append-past the stamp on resume. Document that "ended" is advisory, not terminal. |
+| Single-file-per-session correctly survives compaction, but the assumption is undocumented and unguarded | compaction | session-capture.sh:33-37; session-flush.sh:23-26 | unverified | small | Document "one logical session == one buffer file, predicated on stable session_id across compaction" in capture.sh and the handoff skill. Optionally make handoff robust to fragmentation. |
+| README "compaction-proof" claim is unqualified in three places and oversells the guarantee | compaction | README.md:30; session-capture.sh:5; SKILL.md:35,137 | unverified | trivial | Qualify consistently: the raw action buffer survives compaction; decision context survives only if a handoff ran before it. Pair with the PreCompact/boundary work so the claim becomes closer to true. |
+| README gitignore guidance is path-specific and silently wrong under the data-dir override | robustness | README.md:69-74 vs hooks/_lib.sh:17-24 | verified | trivial | Same fix as the High gitignore item; also ship a location-independent note that buffers may contain raw command text and must never be committed. |
+| SessionStart injects unconditionally on every start: context noise on quick repeat sessions | product | hooks/session-onboard.sh:19-43 | unverified | small | Collapse/suppress the block when there is no HANDOFF.md and a clean tree; gate the verbose git dump behind "uncommitted changes or pending buffers." Keep the full block for the resume case. |
+| Name "throughline" is evocative but non-descriptive for marketplace discovery | product | plugin.json:2, marketplace.json | unverified | trivial | Keep the name; front-load the literal benefit in the marketplace one-liner ("session memory / handoff continuity for Claude Code") before the poetry. |
+| Scope-creep risk: handoff reaches into the global native-memory dir, blurring the plugin boundary | product | skills/throughline-handoff/SKILL.md:96-103 | unverified | small | Mark the native-memory binding explicitly experimental and fenced; degrade gracefully if the layout differs. Consider whether v0.1.0 should ship it, or lead with the HANDOFF.md throughline fully owns. |
+
+## Nits
+
+| Title | Lens | Location | Verification | Effort | Fix-summary |
+|---|---|---|---|---|---|
+| Long commands truncated to 200 chars mid-token with no ellipsis marker | robustness | hooks/session-capture.sh:24 | verified | trivial | Detect length > 200 and append a visible `…[truncated]` marker outside the code span, or raise the cap. Truncating is fine; hiding it is not. |
+
+## Top recommendations (do these first)
+
+1. Add a capture-time secret-scrub regex pass in session-capture.sh, plus a redact + re-scan step in the handoff skill (closes the highest-impact leak path; medium effort, broad payoff).
+2. Fix the gitignore guidance to be relative to the resolved `THROUGHLINE_DATA_DIR`, with both layouts shown and an allowlist-style re-exclusion (turns a silent committed-secrets path into a non-issue).
+3. Detect missing jq in onboard and surface "capture DISABLED" in the SessionStart block; add a Requirements line to README (kills the worst silent-no-op).
+4. Make onboard read `source`/`session_id` and emit a compaction-specific recovery block pointing at the live buffer (delivers the actual compaction-survival promise).
+5. Fix the activation chicken-and-egg: document a one-line bootstrap or auto-activate on first PostToolUse, and have onboard say so when installed-but-inactive (stops it looking broken on day one).
+6. Lead the README with a rendered example HANDOFF.md plus a SessionStart screenshot and a short demo GIF (single biggest install driver for an invisible tool).
+7. Add a "Why not just X?" section contrasting throughline with CLAUDE.md, native /memory, and manual handoffs (converts skeptics).
+8. Capture `.tool_response` outcome and stamp `[FAILED]`/`[interrupted]` per line (cheap, large jump in buffer trustworthiness).
+
+## Bigger design calls
+
+These warrant a design decision rather than a quick patch:
+
+- **PreCompact hook.** PreCompact exists, can perform side-effects, and can block with exit 2, but its stdout is NOT injected into context. So it is the right place to stamp a compaction-boundary marker into the buffer and to nudge a checkpoint distillation while full context is still live, but it cannot itself inject recovery text. Decide whether to ship a PreCompact hook (boundary marker + nudge) paired with the onboard re-injection that does the actual context recovery.
+- **Capturing tool outcome (and, later, MCP mutations).** PostToolUse `tool_response` is available, so recording success/failure is feasible now. The larger question is how far capture should expand: today it records Bash/Edit/Write/NotebookEdit only. Whether to capture MCP tool mutations (which often carry the real state change in an agentic session) is a scope decision about what "the source of truth for what happened" actually means, and it interacts with the secret-scrub and redaction work above.
+- **Native-memory promotion.** Phase 4.3 writes into Claude Code's undocumented global memory layout. Decide whether v0.1.0 should ship this binding at all, or fence it as experimental and lead with the HANDOFF.md the plugin fully owns.
+
+## Compaction-proofness verdict
+
+The core mechanism holds up against the harness facts. A SessionStart hook with an empty matcher does fire on `source=compact`, so throughline's onboard hook genuinely re-injects its pointer and git state after every auto or manual compaction: the survival path is real, not aspirational. The raw action buffer is therefore compaction-proof in the literal sense - what ran and what files changed persist on disk and get re-surfaced. Two gaps keep it short of the unqualified "compaction-proof" claim. First, onboard never reads session_id, so post-compaction it mislabels the live buffer as a dead prior session and points nowhere; this is the highest-value compaction fix and is straightforward given the payload already carries `source` and `session_id`. Second, the why-context (decisions, dead ends) lives only in conversation and is exactly what compaction discards, with no boundary marker recording the seam. PreCompact can stamp that boundary and nudge a checkpoint (its side-effects run; only its stdout is non-injecting), and PostToolUse `tool_response` lets capture record outcomes so a post-crash distillation is not reading a buffer of commands with unknown fate. Ship those three (session_id-aware onboard, boundary marker, outcome capture) and the "compaction-proof" claim becomes close to true rather than reworded.
+
+## Review method & coverage
+
+Four lenses (robustness, security, compaction, product) generated 34 findings. Adversarial verification refuted 0 of them. 11 findings passed verification (marked "verified" or "partial" inline); 23 could not be verified because their verifier was lost to transient API rate-limiting, and are carried as "unverified" (flagged inline in every table) rather than dropped. Unverified does not mean refuted: these findings were not contradicted, only left unchecked. Treat unverified High/Medium items as credible-but-unconfirmed and spot-check before acting where the fix is non-trivial.
