@@ -64,7 +64,26 @@ comment-accuracy specialists) before merge.
   the three places that rule had to be kept in sync by hand. `session-capture.sh`
   keeps its own inline version (it applies control-char and backtick stripping
   together, per-field, inside the same jq pass that also redacts).
-- **12 additional test cases** (54 total) covering the above, plus
+- **Compound credential variable names are now redacted**: a fourth review
+  pass found that the generic keyword=value rule only matched when the keyword
+  was immediately followed by `:`/`=`/whitespace, so `SECRET_KEY=`,
+  `API_KEY_VALUE=`, and similar compound names fell through completely
+  unredacted (the keyword group had `\w*` before it but not after). Fixed by
+  adding a trailing `\w*` to the keyword group.
+- **The same rule no longer deletes trailing URL content past a credential**:
+  its value-capture group was unbounded except for whitespace/quotes, so when
+  a "token"/"secret" substring appeared inside a URL username (e.g.
+  `x-access-token` in a clone URL), the rule re-matched text the
+  URL-userinfo rule upstream had already safely redacted and then greedily
+  consumed everything through `@` and the rest of the path, replacing the
+  whole tail with `***` instead of just the credential. The value group now
+  also stops at `@`/`/`.
+- **`tl_safe_sid`'s lossy-collapse tradeoff is now documented**: two session
+  ids differing only in disallowed punctuation sanitize to the same filename.
+  Noted as currently unreachable (Claude Code session_ids are UUIDs, already
+  all-allowed characters) rather than restructured, since a collision-resistant
+  encoding would cost the human-readable filenames for no live attack path.
+- **16 additional test cases** (58 total) covering the above, plus
   previously-uncovered branches: the `tl_active` silent-exit/opt-in-silence
   path, Write/NotebookEdit capture (only Edit was tested), `tl_safe_sid`'s
   `.`/`..` rejection, `THROUGHLINE_DATA_DIR`'s absolute-path branch, command

@@ -94,6 +94,24 @@ hasnt "ghr_ refresh token not stored" "$(grep ghrtok "$BUF/session-T.md")" 'ghr_
 cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"credtest","command":"export DB_CREDENTIAL=s3cr3tHunter2value"}}'
 hasnt "DB_CREDENTIAL value not stored" "$(grep credtest "$BUF/session-T.md")" 's3cr3tHunter2value'
 
+# 2e2. compound variable names (keyword immediately followed by more word
+#      chars, not just preceded) are still redacted - these used to fall
+#      through entirely since the keyword group had no trailing \w*.
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"compoundkey","command":"export SECRET_KEY=foo123456789bar"}}'
+hasnt "SECRET_KEY value not stored" "$(grep compoundkey "$BUF/session-T.md")" 'foo123456789bar'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"compoundapi","command":"export API_KEY_VALUE=baz987654321qux"}}'
+hasnt "API_KEY_VALUE value not stored" "$(grep compoundapi "$BUF/session-T.md")" 'baz987654321qux'
+
+# 2e3. the generic keyword=value rule must not re-swallow text the URL-userinfo
+#      rule already redacted: a "token"/"secret" substring inside a URL
+#      username (e.g. "x-access-token") used to make the generic rule's
+#      unbounded value-capture eat through '@' and delete the trailing
+#      host/path, not just mask the credential.
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"clone","command":"git clone https://x-access-token:ghp_aaaaaaaaaaaaaaaaaaaaaaaa@github.com/foo/bar.git"}}'
+CLONE_LINE=$(grep clone "$BUF/session-T.md")
+hasnt "credential in URL userinfo is not stored" "$CLONE_LINE" 'ghp_aaaaaaaaaaaaaaaaaaaaaaaa'
+has   "URL host/path after the credential is preserved, not deleted" "$CLONE_LINE" 'github.com/foo/bar.git'
+
 # 2f. redaction applies to the Bash *description* field, not just command
 cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"deploy with ghp_abcdefghij1234567890","command":"true"}}'
 DESC_LINE=$(grep '\*\*bash\*\* deploy' "$BUF/session-T.md")

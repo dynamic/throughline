@@ -45,6 +45,11 @@ tl_have_jq() {
 # collapsing everything else to '_'. Rejects empty / '.' / '..' by printing
 # nothing (callers treat empty output as "no usable id"). Prevents slashes in a
 # session_id from creating stray subdirectories or escaping the buffer dir.
+# Known tradeoff: this collapse is lossy, so two different ids that disagree
+# only in disallowed characters (e.g. "abc/def" vs "abc:def") sanitize to the
+# same filename. Currently unreachable: Claude Code session_ids are UUIDs,
+# which already consist entirely of allowed characters and pass through
+# unchanged. Revisit if session_ids ever stop being UUID-shaped.
 tl_safe_sid() {
   _tl_s=$(printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '_')
   case "$_tl_s" in ''|.|..) printf '' ;; *) printf '%s' "$_tl_s" ;; esac
