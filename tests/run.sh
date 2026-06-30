@@ -31,7 +31,7 @@ present(){ if [ -f "$2" ]; then ok "$1"; else bad "$1 (no file: $2)"; fi; }
 absent() { if [ -e "$2" ]; then bad "$1 (exists: $2)"; else ok "$1"; fi; }
 eq()     { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1 (got '$2', want '$3')"; fi; }
 cap()    { printf '%s' "$1" | sh "$H/session-capture.sh"; }
-reset_buf() { rm -f "$BUF"/session-*.md; }
+reset_buf() { rm -f "$BUF"/session-*.md "$BUF"/.capture-errors; }
 
 echo "throughline hook tests"
 echo "----------------------"
@@ -43,11 +43,23 @@ cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"stopped",
 cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"errd","command":"deploy"},"tool_response":{"exit_code":1}}'
 B=$(cat "$BUF/session-T.md")
 has   "capture records the command" "$B" 'true'
-hasnt "real success (stderr non-empty, no flag) gets NO marker" "$(grep 'ok cmd' "$BUF/session-T.md")" '['
+OK_LINE=$(grep 'ok cmd' "$BUF/session-T.md")
+hasnt "real success gets no [failed] marker" "$OK_LINE" '`[failed]`'
+hasnt "real success gets no [interrupted] marker" "$OK_LINE" '`[interrupted]`'
 has   "interrupted action gets [interrupted] marker" "$(grep stopped "$BUF/session-T.md")" '`[interrupted]`'
-has   "explicit non-zero exit_code gets [failed] marker" "$(grep errd "$BUF/session-T.md")" '`[failed]`'
+has   "explicit non-zero exit_code gets [failed] marker (Bash only)" "$(grep errd "$BUF/session-T.md")" '`[failed]`'
+
+# 1b. the exit_code/error heuristic is scoped to Bash; other tool types only
+#     trust is_error/interrupted, so an unverified "error" field on Edit/Write
+#     does not false-positive a [failed] on completed work.
+reset_buf
+cap '{"session_id":"T","tool_name":"Edit","tool_input":{"file_path":"'"$WORK"'/proj/src/ok.js"},"tool_response":{"error":""}}'
+hasnt "Edit with a benign non-null 'error' field is NOT marked failed" "$(grep ok.js "$BUF/session-T.md")" '`[failed]`'
+cap '{"session_id":"T","tool_name":"Edit","tool_input":{"file_path":"'"$WORK"'/proj/src/bad.js"},"tool_response":{"is_error":true}}'
+has "Edit with is_error:true IS marked failed" "$(grep bad.js "$BUF/session-T.md")" '`[failed]`'
 
 # 2. secret redaction
+reset_buf
 cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"secret","command":"export API_KEY=ghp_abcdefghij1234567890 token"}}'
 S=$(grep 'secret' "$BUF/session-T.md")
 hasnt "token value is not stored" "$S" 'ghp_abcdefghij1234567890'
@@ -57,17 +69,56 @@ has   "token value is masked" "$S" '***'
 cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"gkey","command":"deploy --key AIzaSyD1234567890abcdefghijklmnopqrstuv"}}'
 hasnt "google api key not stored" "$(grep gkey "$BUF/session-T.md")" 'AIzaSyD1234567890abcdefghijklmnopqrstuv'
 cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"pem","command":"echo -----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAK\nABCDEF\n-----END RSA PRIVATE KEY-----"}}'
-hasnt "pem key body not stored" "$(grep pem "$BUF/session-T.md")" 'MIIEowIBAAK'
+hasnt "pem key body (with END marker) not stored" "$(grep pem "$BUF/session-T.md")" 'MIIEowIBAAK'
 cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"basicauth","command":"curl -H Authorization:Basic dXNlcjpwYXNzd29yZA=="}}'
 hasnt "basic-auth payload not stored" "$(grep basicauth "$BUF/session-T.md")" 'dXNlcjpwYXNzd29yZA'
 
-# 3. path relativization
+# 2c. PEM body with NO end marker (truncated/streamed key) is still redacted
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"pemnoeND","command":"echo -----BEGIN RSA PRIVATE KEY-----\nMIITRUNCATEDKEYBODY\nNOENDMARKERHERE"}}'
+hasnt "pem key body with NO end marker not stored" "$(grep pemnoeND "$BUF/session-T.md")" 'MIITRUNCATEDKEYBODY'
+
+# 2d. ghr_ refresh tokens are redacted (gh[oprsu]_ class, not gh[opsu]_)
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"ghrtok","command":"echo ghr_1234567890abcdefghij"}}'
+hasnt "ghr_ refresh token not stored" "$(grep ghrtok "$BUF/session-T.md")" 'ghr_1234567890abcdefghij'
+
+# 2e. broadened keyword alternation catches "credential" (not just token/secret/password)
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"credtest","command":"export DB_CREDENTIAL=s3cr3tHunter2value"}}'
+hasnt "DB_CREDENTIAL value not stored" "$(grep credtest "$BUF/session-T.md")" 's3cr3tHunter2value'
+
+# 2f. redaction applies to the Bash *description* field, not just command
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"deploy with ghp_abcdefghij1234567890","command":"true"}}'
+DESC_LINE=$(grep '\*\*bash\*\* deploy' "$BUF/session-T.md")
+hasnt "token in description is not stored" "$DESC_LINE" 'ghp_abcdefghij1234567890'
+has   "token in description is masked" "$DESC_LINE" '***'
+
+# 2g. redaction applies to Edit/Write/NotebookEdit file_path, not just Bash command
+cap '{"session_id":"T","tool_name":"Write","tool_input":{"file_path":"'"$WORK"'/proj/tmp/sk-abcdefghij1234567890.txt"}}'
+PATH_LINE=$(grep '\*\*Write\*\*' "$BUF/session-T.md")
+hasnt "token in file_path is not stored" "$PATH_LINE" 'sk-abcdefghij1234567890'
+has   "token in file_path is masked" "$PATH_LINE" '***'
+
+# 3. path relativization (Edit, Write, NotebookEdit, and the "?" fallback)
+reset_buf
 cap '{"session_id":"T","tool_name":"Edit","tool_input":{"file_path":"'"$WORK"'/proj/src/app.js"}}'
 E=$(grep Edit "$BUF/session-T.md")
 has   "Edit path is relativized to project root" "$E" 'src/app.js'
 hasnt "Edit path drops the absolute prefix" "$E" "$WORK"
+cap '{"session_id":"T","tool_name":"Write","tool_input":{"file_path":"'"$WORK"'/proj/src/new.js"}}'
+has "Write path is relativized to project root" "$(grep '\*\*Write\*\*' "$BUF/session-T.md")" 'src/new.js'
+cap '{"session_id":"T","tool_name":"NotebookEdit","tool_input":{"notebook_path":"'"$WORK"'/proj/nb/a.ipynb"}}'
+has "NotebookEdit uses notebook_path fallback" "$(grep NotebookEdit "$BUF/session-T.md")" 'nb/a.ipynb'
+cap '{"session_id":"T","tool_name":"Write","tool_input":{}}'
+has "Write with neither path key falls back to ?" "$(grep '\*\*Write\*\* ?' "$BUF/session-T.md")" '**Write** ?'
+
+# 3b. command truncation at 200 chars
+LONGCMD=$(printf 'echo %0.s1' $(seq 1 250))
+cap "$(printf '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"long","command":"%s"}}' "$LONGCMD")"
+LONG_LINE=$(grep '\*\*bash\*\* long' "$BUF/session-T.md")
+has   "long command is marked truncated" "$LONG_LINE" '…[truncated]'
+hasnt "long command does not store the full untruncated text" "$LONG_LINE" "$LONGCMD"
 
 # 4. missing session_id is dropped (no nosession bucket)
+reset_buf
 cap '{"tool_name":"Bash","tool_input":{"description":"x","command":"whoami"}}'
 absent "no nosession bucket created" "$BUF/session-nosession.md"
 
@@ -76,7 +127,35 @@ cap '{"session_id":"../evil","tool_name":"Bash","tool_input":{"description":"x",
 present "unsafe session_id sanitized to a flat filename" "$BUF/session-.._evil.md"
 absent  "no path traversal outside buffer/" "$WORK/proj/.claude/evil.md"
 
+# 5b. tl_safe_sid unit tests: '.', '..', and empty all reject to ""
+. "$H/_lib.sh"
+eq "tl_safe_sid rejects '.'" "$(tl_safe_sid '.')" ""
+eq "tl_safe_sid rejects '..'" "$(tl_safe_sid '..')" ""
+eq "tl_safe_sid rejects empty" "$(tl_safe_sid '')" ""
+
+# 5c. tl_data_dir honors an absolute THROUGHLINE_DATA_DIR override
+ABS_DIR="$WORK/abs-data"
+eq "tl_data_dir honors absolute THROUGHLINE_DATA_DIR" \
+  "$(THROUGHLINE_DATA_DIR="$ABS_DIR" CLAUDE_PROJECT_DIR="$WORK/proj" sh -c '. "'"$H"'/_lib.sh"; tl_data_dir')" \
+  "$ABS_DIR"
+
+# 5d. capture and flush derive the SAME sanitized filename for a session_id
+#     containing a tab character (regression: capture used to tab-split a
+#     combined jq output, desyncing it from how other hooks resolve the id).
+#     The JSON payload below carries a JSON-escaped \t (valid JSON); a literal
+#     tab byte is not legal inside a JSON string and jq would reject it.
+reset_buf
+TABSID_PAYLOAD='{"session_id":"A\tB","tool_name":"Bash","tool_input":{"description":"x","command":"id"}}'
+cap "$TABSID_PAYLOAD"
+printf '%s' '{"session_id":"A\tB","reason":"end"}' | sh "$H/session-flush.sh"
+RAW_SID=$(printf '%s' "$TABSID_PAYLOAD" | jq -r '.session_id')
+EXPECT_SID=$(tl_safe_sid "$RAW_SID")
+present "capture wrote the consistently-sanitized filename" "$BUF/session-$EXPECT_SID.md"
+has "flush stamped the SAME file capture wrote to" "$(cat "$BUF/session-$EXPECT_SID.md" 2>/dev/null)" '<!-- session-ended'
+
 # 6. PreCompact stamps a boundary marker
+reset_buf
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"x","command":"id"}}'
 printf '%s' '{"session_id":"T","trigger":"manual"}' | sh "$H/session-precompact.sh"
 has "PreCompact writes a compaction-boundary marker" "$(cat "$BUF/session-T.md")" '<!-- compaction-boundary'
 
@@ -96,10 +175,20 @@ printf -- '- x\n' > "$BUF/session-T.md"
 O2=$(printf '%s' '{"source":"startup","session_id":"T"}' | sh "$H/session-onboard.sh")
 hasnt "current session not flagged as unconsumed" "$O2" 'unconsumed session buffer'
 
-# 10. onboard surfaces a DIFFERENT prior session as unconsumed
-printf -- '- old\n' > "$BUF/session-OLD.md"
+# 10. onboard surfaces a prior session that ENDED (has the end-stamp) as
+#     "unconsumed" — wording asserts a fact it can actually verify.
+printf -- '- old\n<!-- session-ended 2024-01-01 00:00:00 (end) -->\n' > "$BUF/session-OLD.md"
 O3=$(printf '%s' '{"source":"startup","session_id":"T"}' | sh "$H/session-onboard.sh")
-has "prior session flagged as unconsumed" "$O3" 'unconsumed session buffer'
+has "ended prior session flagged as unconsumed" "$O3" 'unconsumed session buffer'
+
+# 10b. a prior session buffer with NO end-stamp gets hedged wording, not
+#      asserted as "ended" — it could be live in another terminal.
+reset_buf
+printf -- '- x\n' > "$BUF/session-T.md"
+printf -- '- new\n' > "$BUF/session-LIVE.md"
+O3b=$(printf '%s' '{"source":"startup","session_id":"T"}' | sh "$H/session-onboard.sh")
+has   "no-end-stamp buffer surfaced with hedged wording" "$O3b" 'no end-stamp'
+hasnt "no-end-stamp buffer NOT mislabeled as ended" "$O3b" 'ended without'
 
 # 11. missing jq surfaces a visible warning in onboard (curated PATH without jq)
 STUB="$WORK/bin"; mkdir -p "$STUB"
@@ -109,6 +198,46 @@ done
 O4=$(printf '%s' '{"source":"startup","session_id":"T"}' | PATH="$STUB" sh "$H/session-onboard.sh")
 has "onboard warns when jq is missing" "$O4" 'jq'
 has "onboard says capture is disabled without jq" "$O4" 'DISABLED'
+
+# 11b. missing jq makes capture/flush/precompact no-op silently, not crash
+reset_buf
+printf '%s' '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"x","command":"id"}}' | PATH="$STUB" sh "$H/session-capture.sh"
+absent "capture writes nothing when jq is missing" "$BUF/session-T.md"
+printf '%s' '{"session_id":"T","reason":"end"}' | PATH="$STUB" sh "$H/session-flush.sh"
+printf '%s' '{"session_id":"T","trigger":"manual"}' | PATH="$STUB" sh "$H/session-precompact.sh"
+ok "flush/precompact did not crash without jq"
+
+# 12. tl_active inactive path: a project with no data dir and no HANDOFF.md
+#     stays silent across every hook (the opt-in/silence guarantee).
+INACTIVE="$WORK/inactive"
+mkdir -p "$INACTIVE"
+( cd "$INACTIVE" && git init -q && git commit -q --allow-empty -m init ) 2>/dev/null
+O5=$(printf '%s' '{"source":"startup","session_id":"T"}' | CLAUDE_PROJECT_DIR="$INACTIVE" THROUGHLINE_DATA_DIR=".claude/throughline" sh "$H/session-onboard.sh")
+eq "onboard produces no output for an inactive project" "$O5" ""
+printf '%s' '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"x","command":"id"}}' | CLAUDE_PROJECT_DIR="$INACTIVE" THROUGHLINE_DATA_DIR=".claude/throughline" sh "$H/session-capture.sh"
+absent "capture writes nothing for an inactive project" "$INACTIVE/.claude/throughline/buffer/session-T.md"
+
+# 13. capture breadcrumbs a swallowed write failure and onboard surfaces it.
+#     Chmod the SESSION FILE itself read-only (not the directory): appending to
+#     an existing file is gated by the file's own write bit, independent of the
+#     directory's permissions, so this isolates the final-write failure path
+#     without also blocking the .capture-errors breadcrumb write that follows it.
+#     Note: a "Permission denied" line on stderr here is expected — the shell
+#     reports the failed >> redirection itself before the script's own
+#     2>/dev/null on that line takes effect; it does not affect the assertions.
+reset_buf
+cap '{"session_id":"T2","tool_name":"Bash","tool_input":{"description":"seed","command":"id"}}'
+if [ "$(id -u)" != "0" ]; then
+  chmod 444 "$BUF/session-T2.md" 2>/dev/null
+  printf '%s' '{"session_id":"T2","tool_name":"Bash","tool_input":{"description":"blocked","command":"id"}}' | sh "$H/session-capture.sh"
+  chmod 644 "$BUF/session-T2.md" 2>/dev/null
+  present "a write failure breadcrumbs to .capture-errors" "$BUF/.capture-errors"
+  O6=$(printf '%s' '{"source":"startup","session_id":"X"}' | sh "$H/session-onboard.sh")
+  has "onboard surfaces the capture-errors breadcrumb" "$O6" 'capture failure'
+else
+  ok "write-failure breadcrumb test skipped (running as root)"
+  ok "onboard capture-errors surfacing test skipped (running as root)"
+fi
 
 echo "----------------------"
 printf 'passed: %s   failed: %s\n' "$PASS" "$FAIL"

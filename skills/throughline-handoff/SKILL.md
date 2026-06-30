@@ -142,10 +142,14 @@ Key paths, URLs, credential locations (names only).
 - **Distillation needs judgment** — that's why this is a skill, not a hook. Be terse,
   preserve structure, don't duplicate existing entries.
 - **Re-scan for secrets before writing.** Capture masks obvious credential shapes,
-  but it is best-effort, not a guarantee. Before writing anything into the committed
-  `HANDOFF.md` or `logs/`, scan your draft for token-shaped strings (case-insensitive
-  `token|key|secret|password`, `Bearer`, `ghp_`/`sk-`/`AKIA`, URL userinfo) and
-  reduce them to key names only. This is defense in depth, not the sole barrier.
+  but it is best-effort pattern matching, not a guarantee — it has no entropy
+  analysis, so a bare opaque token with no recognizable keyword or prefix passes
+  through unmasked. Before writing anything into the committed `HANDOFF.md` or
+  `logs/`, scan your draft for token-shaped strings (case-insensitive
+  `token|key|secret|password|credential|auth`, `Bearer`, `ghp_`/`github_pat_`/
+  `gh[oprsu]_`/`sk-`/`AKIA`, URL userinfo) **and** for any other long, opaque,
+  random-looking string regardless of keyword — reduce all of them to key names
+  only. This is defense in depth, not the sole barrier.
 - **Report, then let the user review.** After writing, show the HANDOFF.md diff +
   session-log path. The review gate is post-write, not pre-write.
 - **Buffers are the source of truth for *what happened*** — they don't lie about

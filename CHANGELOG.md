@@ -6,7 +6,48 @@ All notable changes to throughline are documented here. Format loosely follows
 ## [0.2.0]
 
 A robustness, privacy, and compaction-survival pass driven by a four-lens review
-(see `docs/REVIEW-v0.1.0.md`).
+(see `docs/REVIEW-v0.1.0.md`), hardened by a follow-up adversarial pass against
+the PR itself (general code review plus silent-failure, test-coverage, and
+comment-accuracy specialists) before merge.
+
+### Added (hardening pass)
+- **Redaction now covers every captured field**, not just the Bash command:
+  the Bash `description` and the Edit/Write/NotebookEdit `file_path` previously
+  bypassed `redact` entirely (only control-char cleanup ran), so a credential in
+  either field was stored verbatim. Both are now redacted.
+- **`buffer/.capture-errors` breadcrumb**: the `mkdir`, `jq` filter, and final
+  buffer-write failure paths in capture were silently swallowed with zero trace
+  (a known gap called out, but not fixed, in the original v0.1.0 review). Each
+  now best-effort appends a one-line breadcrumb; onboard surfaces its presence
+  and count so a run of silent capture loss is no longer invisible.
+- **Broader redaction coverage**: the GitHub token class now includes `ghr_`
+  refresh tokens (was missing the `r` prefix); the generic keyword alternation
+  now also matches `credential`, `auth`/`authorization`, and `client_id`; PEM
+  private-key redaction now also catches a key body with no `-----END...-----`
+  marker (a truncated or streamed key). Documented limitation, unchanged: this
+  is pattern/keyword matching, not entropy analysis — a bare opaque token with
+  no recognizable shape still passes through.
+- **`[failed]` outcome marking scoped to verified schema**: the `exit_code` /
+  `error` / `code` heuristics were only ever validated against the real Bash
+  `tool_response` shape; they are now applied only when `tool_name == "Bash"`,
+  so an unverified field on Edit/Write/NotebookEdit's response can't
+  false-positive a `[failed]` marker onto completed work. `is_error` /
+  `interrupted` are still checked for every tool type.
+- **onboard's "unconsumed buffer" check distinguishes ended from unsure**: a
+  buffer carrying the `session-ended` stamp is reported as a confirmed,
+  undistilled, ended session; a buffer with no stamp (could be a session still
+  live in another terminal, or one that exited without a clean shutdown) now
+  gets hedged wording instead of being asserted as "ended" when that wasn't
+  actually known.
+- **Session id is derived consistently across all four hooks**: capture
+  previously tab-split a combined jq output to recover the session id, which
+  could desync from how flush/onboard/precompact derive it (e.g. for a
+  session_id containing a tab). Capture now resolves the session id via its own
+  dedicated jq call, identical to the other hooks.
+- **8 additional test cases** covering the above, plus previously-uncovered
+  branches: the `tl_active` silent-exit/opt-in-silence path, Write/NotebookEdit
+  capture (only Edit was tested), `tl_safe_sid`'s `.`/`..` rejection,
+  `THROUGHLINE_DATA_DIR`'s absolute-path branch, and command truncation.
 
 ### Added
 - **PreCompact hook** (`session-precompact.sh`): stamps a `compaction-boundary`

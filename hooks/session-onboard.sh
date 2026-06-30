@@ -42,6 +42,15 @@ if ! tl_have_jq; then
   echo
 fi
 
+# Surface any breadcrumbed capture failures (mkdir/jq/write) from the swallowed
+# failure paths in session-capture.sh — that hook must never block a tool, so it
+# fails silently except for this trace file.
+if [ -f "$bufdir/.capture-errors" ]; then
+  errn=$(grep -c '.' "$bufdir/.capture-errors" 2>/dev/null | tr -d ' ')
+  echo "⚠️ $errn capture failure(s) recorded in \`${bufdir#"$root"/}/.capture-errors\` - some actions may be missing from the buffer. Check disk space / permissions on \`${bufdir#"$root"/}/\`, then clear the file once resolved."
+  echo
+fi
+
 if [ -f "$hf" ]; then
   echo "Durable handoff exists at \`${hf#"$root"/}\` - read it before starting."
   grep -m1 -i "last updated" "$hf" 2>/dev/null
@@ -56,19 +65,33 @@ if [ "$src" = "compact" ] && [ -n "$sid" ] && [ -f "$bufdir/session-$sid.md" ]; 
   echo "🧷 Context was just compacted. This session's action buffer survived at \`${bufdir#"$root"/}/session-$sid.md\` - read it to recover what you did before the compaction. The raw actions persist even though the conversation summary dropped detail."
 fi
 
-# Surface unconsumed buffers from OTHER sessions (a prior exit/crash before a
-# handoff distilled them). Exclude the current session's own live buffer so a
-# mid-session compaction is never mislabeled as "a prior session."
+# Surface unconsumed buffers from OTHER sessions. Exclude the current session's
+# own live buffer so a mid-session compaction is never mislabeled as "a prior
+# session." Among the rest: a buffer carrying the session-ended stamp (written
+# by session-flush.sh on SessionEnd) is a confirmed-ended session that was never
+# distilled — report those plainly. A buffer with NO stamp could be the same
+# (the process was killed and SessionEnd never fired), but it could just as
+# easily be a session still running live in another terminal, so it gets hedged
+# wording instead of being asserted as "ended" when that isn't actually known.
 if [ -d "$bufdir" ]; then
-  pending=0
+  ended=0
+  unsure=0
   for f in "$bufdir"/session-*.md; do
     [ -f "$f" ] || continue
     [ -n "$sid" ] && [ "$f" = "$bufdir/session-$sid.md" ] && continue
-    pending=$((pending + 1))
+    if grep -q '^<!-- session-ended' "$f" 2>/dev/null; then
+      ended=$((ended + 1))
+    else
+      unsure=$((unsure + 1))
+    fi
   done
-  if [ "$pending" -ne 0 ]; then
+  if [ "$ended" -ne 0 ]; then
     echo
-    echo "⚠️ $pending unconsumed session buffer(s) in \`${bufdir#"$root"/}/\` from earlier sessions, not yet distilled into a handoff. Consider running the handoff to fold them in."
+    echo "⚠️ $ended unconsumed session buffer(s) in \`${bufdir#"$root"/}/\` from sessions that ended without being distilled into a handoff. Consider running the handoff to fold them in."
+  fi
+  if [ "$unsure" -ne 0 ]; then
+    echo
+    echo "ℹ️ $unsure other session buffer(s) in \`${bufdir#"$root"/}/\` with no end-stamp - could be live in another terminal, or could have exited without a clean shutdown. If none are still running, consider running the handoff."
   fi
 fi
 

@@ -25,70 +25,91 @@ input=$(cat)
 data=$(tl_data_dir)
 root=$(tl_root)
 bufdir="$data/buffer"
-mkdir -p "$bufdir" 2>/dev/null || exit 0
 
-out=$(printf '%s' "$input" | jq -r --arg root "$root" '
+# Best-effort breadcrumb for the swallowed-failure paths below: capture must
+# never block a tool, so every failure here still exits 0, but a write failure
+# (full disk, lost permissions) would otherwise drop an action with zero trace.
+# onboard surfaces this file's presence so the loss isn't silent forever.
+_tl_err() {
+  printf -- '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$1" >> "$bufdir/.capture-errors" 2>/dev/null
+}
+
+mkdir -p "$bufdir" 2>/dev/null || { _tl_err "mkdir failed for buffer dir"; exit 0; }
+
+# Session id is resolved independently of the formatted line below (rather than
+# splitting both out of one combined jq call) so it is derived identically to
+# how flush/onboard/precompact resolve it — a session_id containing a tab would
+# otherwise desync the two derivations and point them at different filenames.
+sid=$(printf '%s' "$input" | jq -r '.session_id // ""' 2>/dev/null)
+sid=$(tl_safe_sid "$sid")
+# Drop records with no usable session id rather than poisoning a shared
+# "nosession" bucket that flush never stamps and onboard re-warns about forever.
+[ -n "$sid" ] || exit 0
+
+line=$(printf '%s' "$input" | jq -r --arg root "$root" '
   # Mask common secret shapes so raw credentials never sit in the buffer. The
   # buffer is gitignored, but a later handoff distills it into committed logs;
   # this is defense-in-depth, not the only barrier (the skill scrubs too).
+  # Best-effort: this is pattern/keyword matching, not entropy analysis, so a
+  # bare opaque token with no recognizable shape or keyword will not be caught.
+  # Shape-specific patterns run BEFORE the generic keyword=value catch-all below,
+  # so e.g. "Authorization:Basic <base64>" is fully consumed by the Basic-auth
+  # rule rather than the generic "auth" keyword rule eating just the "Basic"
+  # token and leaving the base64 payload exposed.
   def redact:
     gsub("-----BEGIN [A-Z ]*PRIVATE KEY-----[\\s\\S]*?-----END [A-Z ]*PRIVATE KEY-----"; "***private-key-redacted***")
-    | gsub("(?i)(?<k>\\w*(?:token|secret|password|passwd|api[_-]?key|access[_-]?key))(?<s>\\s*[:=]\\s*|\\s+)(?<v>\"?[^\\s\"]+)"; "\(.k)\(.s)***")
+    | gsub("-----BEGIN [A-Z ]*PRIVATE KEY-----[\\s\\S]*"; "***private-key-redacted***")
     | gsub("(?i)bearer\\s+(?<t>[A-Za-z0-9._\\-]+)"; "Bearer ***")
     | gsub("(?<pfx>://[^:@/\\s]+):(?<pw>[^@/\\s]+)@"; "\(.pfx):***@")
     | gsub("ghp_[A-Za-z0-9]{10,}"; "ghp_***")
     | gsub("github_pat_[A-Za-z0-9_]{10,}"; "github_pat_***")
-    | gsub("gh[opsu]_[A-Za-z0-9]{10,}"; "gh_***")
+    | gsub("gh[oprsu]_[A-Za-z0-9]{10,}"; "gh_***")
     | gsub("xox[baprs]-[A-Za-z0-9-]{6,}"; "xox-***")
     | gsub("sk-[A-Za-z0-9]{10,}"; "sk-***")
     | gsub("AKIA[0-9A-Z]{12,}"; "AKIA***")
     | gsub("AIza[0-9A-Za-z_\\-]{35}"; "AIza***")
-    | gsub("(?i)\\bbasic\\s+[A-Za-z0-9+/=]{8,}"; "Basic ***");
+    | gsub("(?i)\\bbasic\\s+[A-Za-z0-9+/=]{8,}"; "Basic ***")
+    | gsub("(?i)(?<k>\\w*(?:token|secret|password|passwd|api[_-]?key|access[_-]?key|credential|auth(?:orization)?|client[_-]?id))(?<s>\\s*[:=]\\s*|\\s+)(?<v>\"?[^\\s\"]+)"; "\(.k)\(.s)***");
   # Neutralize control chars (incl. newlines) and backticks so a captured
   # command cannot break the markdown list / code span it is embedded in.
   def clean: gsub("[[:cntrl:]]"; " ") | gsub("`"; " ");
   # Observable outcome from the tool result. The Claude Code Bash tool_response
   # exposes "interrupted" but NOT an exit code, so a plain non-zero exit is not
   # visible to a PostToolUse hook and is deliberately left unmarked rather than
-  # guessed from stderr (which is noisy and often non-empty on success). The
-  # is_error / error / exit_code checks are forward-compatible with tool types
-  # or future versions that do surface an explicit failure. Never false-positive.
-  def outcome:
+  # guessed from stderr (which is noisy and often non-empty on success).
+  # is_error / interrupted are checked for every tool type. exit_code / error /
+  # code are Bash-specific assumptions, verified only against the real Bash
+  # tool_response schema — scoped to $t == "Bash" so an unverified field shape
+  # on another tool type cannot false-positive a [failed] on completed work.
+  def outcome($t):
     (.tool_response) as $r
     | if ($r | type) != "object" then ""
       elif ($r.interrupted? // false) == true then " `[interrupted]`"
-      elif (($r.is_error? // false) == true)
-        or (($r.error? // null) != null)
-        or ((($r.exit_code? // $r.code? // $r.returncode? // 0)) != 0)
+      elif (($r.is_error? // false) == true) then " `[failed]`"
+      elif ($t == "Bash") and
+        ((($r.error? // null) != null)
+          or ((($r.exit_code? // $r.code? // $r.returncode? // 0)) != 0))
       then " `[failed]`"
       else "" end;
-  (.session_id // "") + "\t" +
   (.tool_name as $t |
     if $t == "Bash" then
-      "**bash** " + ((.tool_input.description // "") | clean) + outcome + " - `" +
+      "**bash** " + ((.tool_input.description // "") | redact | clean) + outcome($t) + " - `" +
       (((.tool_input.command // "") | redact | clean) as $c
         | ($c[0:200]) + (if ($c | length) > 200 then "…[truncated]" else "" end)) + "`"
     elif ($t == "Edit" or $t == "Write" or $t == "NotebookEdit") then
       "**" + $t + "** " +
-      (((.tool_input.file_path // .tool_input.notebook_path // "?") | ltrimstr($root + "/")) | clean) +
-      outcome
+      ((.tool_input.file_path // .tool_input.notebook_path // "?") | ltrimstr($root + "/") | redact | clean) +
+      outcome($t)
     else
       "**" + $t + "**"
     end)
-' 2>/dev/null) || exit 0
+' 2>/dev/null) || { _tl_err "jq filter failed"; exit 0; }
 
-[ -n "$out" ] || exit 0
-sid=${out%%	*}
-line=${out#*	}
-
-# Drop records with no usable session id rather than poisoning a shared
-# "nosession" bucket that flush never stamps and onboard re-warns about forever.
-sid=$(tl_safe_sid "$sid")
-[ -n "$sid" ] || exit 0
+[ -n "$line" ] || exit 0
 
 ts=$(date '+%Y-%m-%d %H:%M:%S')
 # Backticks here are literal markdown and %s are printf specifiers; single quotes
 # are intentional (no shell expansion wanted).
 # shellcheck disable=SC2016
-printf -- '- `%s` %s\n' "$ts" "$line" >> "$bufdir/session-$sid.md" 2>/dev/null
+printf -- '- `%s` %s\n' "$ts" "$line" >> "$bufdir/session-$sid.md" 2>/dev/null || _tl_err "write failed for session-$sid"
 exit 0
