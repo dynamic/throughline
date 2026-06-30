@@ -1,0 +1,5 @@
+.DS_Store
+*.log
+
+# This repo ships the plugin; it does not store user session data.
+# (In a consuming project, gitignore .claude/throughline/buffer/ instead.)
