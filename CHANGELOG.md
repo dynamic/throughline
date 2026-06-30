@@ -18,8 +18,13 @@ A robustness, privacy, and compaction-survival pass driven by a four-lens review
   current session.
 - **Missing-jq warning**: when `jq` is absent, capture is impossible; onboard now
   says so loudly instead of letting capture no-op in silence.
-- **Tool outcome capture**: failed / interrupted actions are now marked
-  `[failed]` in the buffer (read from the PostToolUse `tool_response`).
+- **Tool outcome capture**: interrupted actions are marked `[interrupted]` in
+  the buffer (from `tool_response.interrupted`); explicit error flags / non-zero
+  exit codes are marked `[failed]` where a tool surfaces them. Note: the Claude
+  Code Bash result exposes no exit code, so a plain non-zero command exit is not
+  markable from a hook and is left for the handoff to cross-reference against the
+  conversation. (Found during review: the original synthetic test asserted an
+  `is_error` field that the real payload does not have.)
 - **Capture-time secret redaction**: common credential shapes (KEY=VALUE tokens,
   `Bearer` tokens, URL userinfo passwords, `ghp_`/`github_pat_`/`xox`/`sk-`/`AKIA`,
   Google `AIza` keys, `Basic` auth payloads, and inline PEM private-key blocks) are

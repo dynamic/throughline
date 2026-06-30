@@ -36,13 +36,16 @@ reset_buf() { rm -f "$BUF"/session-*.md; }
 echo "throughline hook tests"
 echo "----------------------"
 
-# 1. capture: successful vs failed action
-cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"ok cmd","command":"true"},"tool_response":{"is_error":false}}'
-cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"bad cmd","command":"false"},"tool_response":{"is_error":true}}'
+# 1. capture: outcome marking against the REAL Bash tool_response schema
+#    (keys: interrupted, isImage, noOutputExpected, stderr, stdout — no exit code).
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"ok cmd","command":"true"},"tool_response":{"interrupted":false,"isImage":false,"stderr":"\nShell cwd was reset to /x","stdout":"ok"}}'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"stopped","command":"sleep 99"},"tool_response":{"interrupted":true,"isImage":false,"stderr":"","stdout":""}}'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"errd","command":"deploy"},"tool_response":{"exit_code":1}}'
 B=$(cat "$BUF/session-T.md")
-has  "capture records the command" "$B" 'true'
-has  "failed action gets [failed] marker" "$B" '`[failed]`'
-hasnt "successful action has no marker" "$(grep 'ok cmd' "$BUF/session-T.md")" '[failed]'
+has   "capture records the command" "$B" 'true'
+hasnt "real success (stderr non-empty, no flag) gets NO marker" "$(grep 'ok cmd' "$BUF/session-T.md")" '['
+has   "interrupted action gets [interrupted] marker" "$(grep stopped "$BUF/session-T.md")" '`[interrupted]`'
+has   "explicit non-zero exit_code gets [failed] marker" "$(grep errd "$BUF/session-T.md")" '`[failed]`'
 
 # 2. secret redaction
 cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"secret","command":"export API_KEY=ghp_abcdefghij1234567890 token"}}'

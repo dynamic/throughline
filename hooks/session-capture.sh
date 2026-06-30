@@ -47,16 +47,21 @@ out=$(printf '%s' "$input" | jq -r --arg root "$root" '
   # Neutralize control chars (incl. newlines) and backticks so a captured
   # command cannot break the markdown list / code span it is embedded in.
   def clean: gsub("[[:cntrl:]]"; " ") | gsub("`"; " ");
-  # Best-effort success/failure bit from the tool result. Conservative: only
-  # marks failure on explicit error signals, never on stderr presence alone, so
-  # a successful command that writes to stderr is not mislabeled.
+  # Observable outcome from the tool result. The Claude Code Bash tool_response
+  # exposes "interrupted" but NOT an exit code, so a plain non-zero exit is not
+  # visible to a PostToolUse hook and is deliberately left unmarked rather than
+  # guessed from stderr (which is noisy and often non-empty on success). The
+  # is_error / error / exit_code checks are forward-compatible with tool types
+  # or future versions that do surface an explicit failure. Never false-positive.
   def outcome:
     (.tool_response) as $r
-    | if ($r | type) == "object"
-        and ((($r.is_error? // false) == true)
-          or (($r.interrupted? // false) == true)
-          or (($r.error? // null) != null))
-      then " `[failed]`" else "" end;
+    | if ($r | type) != "object" then ""
+      elif ($r.interrupted? // false) == true then " `[interrupted]`"
+      elif (($r.is_error? // false) == true)
+        or (($r.error? // null) != null)
+        or ((($r.exit_code? // $r.code? // $r.returncode? // 0)) != 0)
+      then " `[failed]`"
+      else "" end;
   (.session_id // "") + "\t" +
   (.tool_name as $t |
     if $t == "Bash" then

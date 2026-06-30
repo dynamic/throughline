@@ -40,9 +40,9 @@ handoff, and binds into Claude Code's native memory system.
 Three layers, each doing what it's actually capable of:
 
 1. **Continuous capture** (`PostToolUse` hook) - appends a structured one-liner per
-   mutating action to a per-session buffer: the command or file, whether it
-   succeeded, with obvious secrets masked before anything is written. Mechanical and
-   cheap. You never see it; it just protects you.
+   mutating action to a per-session buffer: the command or file, flagged if it was
+   interrupted, with obvious secrets masked before anything is written. Mechanical
+   and cheap. You never see it; it just protects you.
 2. **Judged handoff** (`throughline-handoff` skill) - at wrap-up, the agent distills
    the buffer + context into a durable `HANDOFF.md` and a timestamped session log,
    and promotes any durable facts into native memory. This is the judgment layer, so

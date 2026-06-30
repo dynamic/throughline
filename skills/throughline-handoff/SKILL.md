@@ -34,8 +34,10 @@ refined by the next. Never run it more than once per unchanged state.
    actions (commands, file edits) for this and any unconsumed prior sessions.
    They survive context compaction, so trust them over fuzzy recollection. One
    session is one file (keyed by a session id stable across compaction).
-   - Lines marked `` `[failed]` `` are actions that errored or were interrupted;
-     do not record them as completed work.
+   - Lines marked `` `[interrupted]` `` (or `` `[failed]` `` where a tool exposes
+     an error flag) are actions that did not complete cleanly; do not record them
+     as done. The Claude Code Bash result carries no exit code, so a plain failed
+     command is unmarked: cross-reference the conversation to judge its success.
    - A `<!-- compaction-boundary ... -->` line marks where a compaction happened.
      For actions **above** the most recent boundary, distill from the buffer text
      itself: the conversation's account of *why* they were done has been
