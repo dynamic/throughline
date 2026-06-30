@@ -53,7 +53,7 @@ comment-accuracy specialists) before merge.
   README's gitignore guidance updated to match.
 - **`[failed]` no longer false-positives on a benign empty-string `error`**: a
   third review pass found that jq's `//` operator only treats `null`/`false` as
-  "absent" — a Bash `tool_response` with `exit_code:0` and `error:""` (a
+  "absent": a Bash `tool_response` with `exit_code:0` and `error:""` (a
   genuinely successful run) was matched by `(.error? // null) != null` and
   permanently mismarked `[failed]`, exactly the false-positive the prior fix's
   Bash-only scoping was meant to rule out. Now checked as `(.error? // "") !=
@@ -105,7 +105,27 @@ comment-accuracy specialists) before merge.
   `-u`/`-p` are too overloaded across tools, e.g. `docker run -u uid:gid`, to
   redact generically without false positives), and the fact that seeing a
   `***` in a captured line doesn't guarantee the *whole* secret was masked.
-- **20 additional test cases** (62 total) covering the above, plus
+- **The generic rule now masks the real secret, not an intervening word**: a
+  seventh review pass found two more ways the actual credential could survive
+  in plaintext. First, natural-language phrasing like `password is X` masked
+  the linking word `is` instead of `X` (the separator group only recognized
+  `:`/`=`/bare whitespace) - now also accepts `is`/`was`/`are`. Second,
+  `Authorization: Token <key>` (a common DRF/GitLab auth-header style) masked
+  the scheme word `Token` itself, leaving the real key exposed right after it
+  - now has its own dedicated rule alongside the existing Bearer/Basic ones.
+- **Fixed another `@`-boundary over-correction**: the value-capture group
+  excluded `@` outright to stop the URL-userinfo edge case, which also
+  under-redacted a literal secret that happens to contain `@` (a common shape
+  for human-chosen passwords). It now only treats `@` as a boundary when it
+  immediately follows an already-redacted `***` (the exact mark the
+  URL-userinfo rule leaves), so a genuine `@`-containing secret with no
+  preceding `***` still falls through to the fully-masked general case.
+- **`[failed]` no longer mis-fires on a string-valued `exit_code`**: jq's `!=`
+  never considers a string equal to a number, so `exit_code: "0"` (e.g. from a
+  wrapper that JSON-stringifies fields) compared unequal to `0` and falsely
+  marked a successful command failed. Both sides are now normalized through
+  `tostring` before comparing.
+- **24 additional test cases** (68 total) covering the above, plus
   previously-uncovered branches: the `tl_active` silent-exit/opt-in-silence
   path, Write/NotebookEdit capture (only Edit was tested), `tl_safe_sid`'s
   `.`/`..` rejection, `THROUGHLINE_DATA_DIR`'s absolute-path branch, command

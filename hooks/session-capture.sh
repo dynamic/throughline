@@ -69,20 +69,26 @@ line=$(printf '%s' "$input" | jq -r --arg root "$root" '
   # Shape-specific patterns run BEFORE the generic keyword=value catch-all below,
   # so e.g. "Authorization:Basic <base64>" is fully consumed by the Basic-auth
   # rule rather than the generic auth keyword rule eating just the Basic token
-  # and leaving the base64 payload exposed. The generic keyword group has
-  # trailing \w* too (not just leading) so compound names like SECRET_KEY= or
-  # API_KEY_VALUE= still match - a keyword immediately followed by more word
-  # characters used to fall through unredacted entirely. Its value group stops
-  # at @ (not /, which legitimate secrets like AWS keys commonly contain): the
-  # URL-userinfo rule above already bounds and masks a credential inside a URL
-  # and always inserts *** immediately before the @, so stopping the
-  # value-capture at @ is sufficient to keep this rule from re-consuming the
-  # host/path past an already-redacted URL credential, without under-redacting
-  # a slash-containing secret in the non-URL case.
+  # and leaving the base64 payload exposed. Same reasoning for the dedicated
+  # Token rule just below (DRF/GitLab-style "Authorization: Token <value>"
+  # headers): without it, the generic rule treats the scheme word "Token"
+  # itself as the value to mask and leaves the real key in plaintext right
+  # after it. The generic keyword group has trailing \w* too (not just
+  # leading) so compound names like SECRET_KEY= or API_KEY_VALUE= still match
+  # - a keyword immediately followed by more word characters used to fall
+  # through unredacted entirely. Its separator group also accepts a copula
+  # (is/was/are) in addition to :/=/bare-whitespace, so natural-language
+  # phrasing like "password is X" masks X rather than the word "is". Its value
+  # group prefers matching an already-redacted *** immediately before an @ (left
+  # by the URL-userinfo rule above) over the general unbounded match: that lets
+  # it stop right at the URL boundary without deleting the host/path, while a
+  # genuine secret containing a literal @ (which does not have *** right
+  # before it) still falls through to the general branch and gets fully masked.
   def redact:
     gsub("-----BEGIN [A-Z ]*PRIVATE KEY-----[\\s\\S]*?-----END [A-Z ]*PRIVATE KEY-----"; "***private-key-redacted***")
     | gsub("-----BEGIN [A-Z ]*PRIVATE KEY-----[\\s\\S]*"; "***private-key-redacted***")
     | gsub("(?i)bearer\\s+(?<t>[A-Za-z0-9._\\-]+)"; "Bearer ***")
+    | gsub("(?i)\\btoken\\s+(?<t>[A-Za-z0-9._\\-]+)"; "Token ***")
     | gsub("(?<pfx>://[^:@/\\s]+):(?<pw>[^@/\\s]+)@"; "\(.pfx):***@")
     | gsub("ghp_[A-Za-z0-9]{10,}"; "ghp_***")
     | gsub("github_pat_[A-Za-z0-9_]{10,}"; "github_pat_***")
@@ -92,7 +98,7 @@ line=$(printf '%s' "$input" | jq -r --arg root "$root" '
     | gsub("AKIA[0-9A-Z]{12,}"; "AKIA***")
     | gsub("AIza[0-9A-Za-z_\\-]{35}"; "AIza***")
     | gsub("(?i)\\bbasic\\s+[A-Za-z0-9+/=]{8,}"; "Basic ***")
-    | gsub("(?i)(?<k>\\w*(?:token|secret|password|passwd|api[_-]?key|access[_-]?key|credential|auth(?:orization)?|client[_-]?id)\\w*)(?<s>\\s*[:=]\\s*|\\s+)(?<v>\"?[^\\s\"@]+)"; "\(.k)\(.s)***");
+    | gsub("(?i)(?<k>\\w*(?:token|secret|password|passwd|api[_-]?key|access[_-]?key|credential|auth(?:orization)?|client[_-]?id)\\w*)(?<s>\\s*[:=]\\s*|\\s+(?:is|was|are)\\s+|\\s+)(?<v>\"?(?:\\*\\*\\*(?=@)|[^\\s\"]+))"; "\(.k)\(.s)***");
   # Neutralize control chars (incl. newlines) and backticks so a captured
   # command cannot break the markdown list / code span it is embedded in. The
   # control-char half mirrors the shared `tl_clean_ctrl` shell helper in
@@ -116,7 +122,7 @@ line=$(printf '%s' "$input" | jq -r --arg root "$root" '
       elif (($r.is_error? // false) == true) then " `[failed]`"
       elif ($t == "Bash") and
         ((($r.error? // "") != "")
-          or ((($r.exit_code? // $r.code? // $r.returncode? // 0)) != 0))
+          or ((($r.exit_code? // $r.code? // $r.returncode? // 0) | tostring) != "0"))
       then " `[failed]`"
       else "" end;
   (.tool_name as $t |

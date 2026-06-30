@@ -58,6 +58,15 @@ hasnt "Bash with exit_code:0 and error:\"\" is NOT marked failed" "$(grep 'deplo
 cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"deploy bad","command":"true"},"tool_response":{"exit_code":0,"error":"boom"}}'
 has "Bash with a genuinely non-empty error string IS marked failed" "$(grep 'deploy bad' "$BUF/session-T.md")" '`[failed]`'
 
+# 1a3. exit_code surfaced as a STRING "0" (e.g. from a wrapper that
+#      JSON-stringifies fields) must not false-positive [failed]: jq's `!=`
+#      never considers a string equal to a number regardless of value, so
+#      "0" != 0 was true before normalizing both sides via tostring.
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"strcode ok","command":"true"},"tool_response":{"exit_code":"0"}}'
+hasnt "Bash with exit_code as the STRING \"0\" is NOT marked failed" "$(grep 'strcode ok' "$BUF/session-T.md")" '`[failed]`'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"strcode bad","command":"true"},"tool_response":{"exit_code":"1"}}'
+has "Bash with exit_code as the STRING \"1\" IS marked failed" "$(grep 'strcode bad' "$BUF/session-T.md")" '`[failed]`'
+
 # 1b. the exit_code/error heuristic is scoped to Bash; other tool types only
 #     trust is_error/interrupted, so an unverified "error" field on Edit/Write
 #     does not false-positive a [failed] on completed work.
@@ -125,6 +134,29 @@ hasnt "AWS secret value is not even partially stored" "$AWS_LINE" 'K7MDENG'
 #      only allowed alnum and rejected the internal dashes.
 cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"anthropickey","command":"export ANTHROPIC_API_KEY=sk-ant-api03-AbCdEfGh1234567890XYZ"}}'
 hasnt "sk-ant- key is not stored" "$(grep anthropickey "$BUF/session-T.md")" 'sk-ant-api03-AbCdEfGh1234567890XYZ'
+
+# 2e6. natural-language "keyword is X" phrasing masks the real value X, not
+#      the linking word "is" - the separator group used to only recognize
+#      :/=/bare-whitespace, so the generic value-capture grabbed whatever
+#      single word came right after the keyword regardless of what it was.
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"prose","command":"my password is hunter3verylongsecretvalue"}}'
+hasnt "secret value after a copula (is/was/are) is not stored" "$(grep prose "$BUF/session-T.md")" 'hunter3verylongsecretvalue'
+
+# 2e7. "Authorization: Token <value>" (DRF/GitLab-style auth header) masks the
+#      real key, not the scheme word "Token" itself - needs its own dedicated
+#      rule alongside Bearer/Basic, since the generic rule would otherwise
+#      treat "Token" as the value to redact and leave the real key exposed.
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"drfauth","command":"curl -H Authorization: Token abc123def456ghi789"}}'
+hasnt "DRF-style Token value is not stored" "$(grep drfauth "$BUF/session-T.md")" 'abc123def456ghi789'
+
+# 2e8. a secret value that legitimately contains a literal @ (common in
+#      human-chosen passwords) is fully masked, not truncated at the first @ -
+#      regression check for the @-exclusion fix two rounds back, which only
+#      needs to apply right before an already-redacted *** (URL-userinfo
+#      case), not to an unredacted value that happens to contain @.
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"atpass","command":"export PASSWORD=my@pass123"}}'
+hasnt "password value containing @ is not stored" "$(grep atpass "$BUF/session-T.md")" 'my@pass123'
+hasnt "password value containing @ is not even partially stored" "$(grep atpass "$BUF/session-T.md")" 'pass123'
 
 # 2f. redaction applies to the Bash *description* field, not just command
 cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"deploy with ghp_abcdefghij1234567890","command":"true"}}'
