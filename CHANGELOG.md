@@ -51,7 +51,20 @@ comment-accuracy specialists) before merge.
   breadcrumb along with it. `tl_active` already guarantees the data dir itself
   exists before any hook proceeds, so the breadcrumb now targets that instead.
   README's gitignore guidance updated to match.
-- **10 additional test cases** (52 total) covering the above, plus
+- **`[failed]` no longer false-positives on a benign empty-string `error`**: a
+  third review pass found that jq's `//` operator only treats `null`/`false` as
+  "absent" — a Bash `tool_response` with `exit_code:0` and `error:""` (a
+  genuinely successful run) was matched by `(.error? // null) != null` and
+  permanently mismarked `[failed]`, exactly the false-positive the prior fix's
+  Bash-only scoping was meant to rule out. Now checked as `(.error? // "") !=
+  ""`, so only a non-empty error string counts.
+- **Control-char stripping shared via a real helper, not just a comment**:
+  `session-flush.sh` and `session-precompact.sh` now call a new `tl_clean_ctrl`
+  in `_lib.sh` instead of duplicating the same inline jq `gsub`, removing two of
+  the three places that rule had to be kept in sync by hand. `session-capture.sh`
+  keeps its own inline version (it applies control-char and backtick stripping
+  together, per-field, inside the same jq pass that also redacts).
+- **12 additional test cases** (54 total) covering the above, plus
   previously-uncovered branches: the `tl_active` silent-exit/opt-in-silence
   path, Write/NotebookEdit capture (only Edit was tested), `tl_safe_sid`'s
   `.`/`..` rejection, `THROUGHLINE_DATA_DIR`'s absolute-path branch, command

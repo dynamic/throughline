@@ -50,6 +50,14 @@ hasnt "real success gets no [interrupted] marker" "$OK_LINE" '`[interrupted]`'
 has   "interrupted action gets [interrupted] marker" "$(grep stopped "$BUF/session-T.md")" '`[interrupted]`'
 has   "explicit non-zero exit_code gets [failed] marker (Bash only)" "$(grep errd "$BUF/session-T.md")" '`[failed]`'
 
+# 1a2. a Bash tool_response with an EMPTY-STRING error (jq's `//` only treats
+#      null/false as "absent", so "" previously slipped through as "present"
+#      and false-positived a [failed] on a genuinely successful command).
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"deploy ok","command":"true"},"tool_response":{"exit_code":0,"stdout":"done","error":""}}'
+hasnt "Bash with exit_code:0 and error:\"\" is NOT marked failed" "$(grep 'deploy ok' "$BUF/session-T.md")" '`[failed]`'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"deploy bad","command":"true"},"tool_response":{"exit_code":0,"error":"boom"}}'
+has "Bash with a genuinely non-empty error string IS marked failed" "$(grep 'deploy bad' "$BUF/session-T.md")" '`[failed]`'
+
 # 1b. the exit_code/error heuristic is scoped to Bash; other tool types only
 #     trust is_error/interrupted, so an unverified "error" field on Edit/Write
 #     does not false-positive a [failed] on completed work.

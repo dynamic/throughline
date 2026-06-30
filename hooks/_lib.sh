@@ -49,3 +49,14 @@ tl_safe_sid() {
   _tl_s=$(printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '_')
   case "$_tl_s" in ''|.|..) printf '' ;; *) printf '%s' "$_tl_s" ;; esac
 }
+
+# Replace control characters (including newlines) with a space. Shared by
+# session-flush.sh and session-precompact.sh so their reason/trigger fields
+# can't break the `<!-- ... -->` marker they're embedded in. (capture.sh's `clean`
+# def duplicates this rule rather than calling it: capture applies control-char
+# AND backtick stripping together, per-field, inside one jq pipeline that also
+# does redaction — pulling just the control-char half out to a separate shell
+# call there would mean an extra process per field for no real safety gain.)
+tl_clean_ctrl() {
+  printf '%s' "$1" | tr '[:cntrl:]' ' '
+}

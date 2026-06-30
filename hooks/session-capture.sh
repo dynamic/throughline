@@ -76,11 +76,12 @@ line=$(printf '%s' "$input" | jq -r --arg root "$root" '
     | gsub("(?i)\\bbasic\\s+[A-Za-z0-9+/=]{8,}"; "Basic ***")
     | gsub("(?i)(?<k>\\w*(?:token|secret|password|passwd|api[_-]?key|access[_-]?key|credential|auth(?:orization)?|client[_-]?id))(?<s>\\s*[:=]\\s*|\\s+)(?<v>\"?[^\\s\"]+)"; "\(.k)\(.s)***");
   # Neutralize control chars (incl. newlines) and backticks so a captured
-  # command cannot break the markdown list / code span it is embedded in.
-  # The control-char half (gsub("[[:cntrl:]]"; " ")) is duplicated inline in
-  # session-flush.sh and session-precompact.sh, which need the same protection
-  # for their reason/trigger fields but have no shared jq module to pull it
-  # from — keep all three in sync if this filter ever changes.
+  # command cannot break the markdown list / code span it is embedded in. The
+  # control-char half mirrors the shared `tl_clean_ctrl` shell helper in
+  # _lib.sh (used by session-flush.sh / session-precompact.sh for their
+  # reason/trigger fields) but stays inline here: this runs inside a jq
+  # pipeline applied per-field alongside redaction and backtick-stripping in
+  # one pass, so factoring it out would mean an extra subprocess per field.
   def clean: gsub("[[:cntrl:]]"; " ") | gsub("`"; " ");
   # Observable outcome from the tool result. The Claude Code Bash tool_response
   # exposes "interrupted" but NOT an exit code, so a plain non-zero exit is not
@@ -96,7 +97,7 @@ line=$(printf '%s' "$input" | jq -r --arg root "$root" '
       elif ($r.interrupted? // false) == true then " `[interrupted]`"
       elif (($r.is_error? // false) == true) then " `[failed]`"
       elif ($t == "Bash") and
-        ((($r.error? // null) != null)
+        ((($r.error? // "") != "")
           or ((($r.exit_code? // $r.code? // $r.returncode? // 0)) != 0))
       then " `[failed]`"
       else "" end;

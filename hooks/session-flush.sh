@@ -21,10 +21,8 @@ bufdir="$data/buffer"
 # right buffer (and never on a "nosession" file capture refuses to create).
 sid=$(printf '%s' "$input" | jq -r '.session_id // ""' 2>/dev/null)
 sid=$(tl_safe_sid "$sid")
-# Control-char neutralization here is duplicated in session-capture.sh's
-# `clean` def and session-precompact.sh's trigger gsub (no shared jq module
-# exists to factor it into) — keep all three in sync if it ever changes.
-reason=$(printf '%s' "$input" | jq -r '(.reason // "end") | gsub("[[:cntrl:]]"; " ")' 2>/dev/null)
+reason=$(printf '%s' "$input" | jq -r '.reason // "end"' 2>/dev/null)
+reason=$(tl_clean_ctrl "$reason")
 buf="$bufdir/session-$sid.md"
 
 if [ -n "$sid" ] && [ -f "$buf" ]; then
