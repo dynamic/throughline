@@ -151,12 +151,22 @@ hasnt "DRF-style Token value is not stored" "$(grep drfauth "$BUF/session-T.md")
 
 # 2e8. a secret value that legitimately contains a literal @ (common in
 #      human-chosen passwords) is fully masked, not truncated at the first @ -
-#      regression check for the @-exclusion fix two rounds back, which only
-#      needs to apply right before an already-redacted *** (URL-userinfo
-#      case), not to an unredacted value that happens to contain @.
+#      the generic rule's value-capture has no @ exclusion at all now (the
+#      sentinel-based redesign below removed the need for one), so this value
+#      falls straight to the fully-unbounded branch and is masked whole.
 cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"atpass","command":"export PASSWORD=my@pass123"}}'
 hasnt "password value containing @ is not stored" "$(grep atpass "$BUF/session-T.md")" 'my@pass123'
 hasnt "password value containing @ is not even partially stored" "$(grep atpass "$BUF/session-T.md")" 'pass123'
+
+# 2e9. a URL credential with NO keyword anywhere nearby (so the generic rule
+#      never visits that part of the line at all) still gets its internal
+#      sentinel converted to *** by redact's own final catch-all pass, not
+#      left as a raw, never-cleaned-up internal marker in the buffer.
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"plainclone","command":"curl https://user:hunter2@example.com/data"}}'
+PLAIN_LINE=$(grep plainclone "$BUF/session-T.md")
+hasnt "URL credential with no nearby keyword is not stored" "$PLAIN_LINE" 'hunter2'
+hasnt "internal sentinel never leaks into the buffer" "$PLAIN_LINE" 'TLREDACTSENTINEL'
+has   "URL host/path is preserved" "$PLAIN_LINE" 'example.com/data'
 
 # 2f. redaction applies to the Bash *description* field, not just command
 cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"deploy with ghp_abcdefghij1234567890","command":"true"}}'

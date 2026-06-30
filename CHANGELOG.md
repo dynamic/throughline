@@ -130,6 +130,24 @@ comment-accuracy specialists) before merge.
   path, Write/NotebookEdit capture (only Edit was tested), `tl_safe_sid`'s
   `.`/`..` rejection, `THROUGHLINE_DATA_DIR`'s absolute-path branch, command
   truncation, and the breadcrumb surviving a `buffer/`-creation failure.
+- **Structural rework of the URL/generic-rule hand-off, replacing the
+  boundary-character guessing game**: across rounds five through seven, the
+  generic keyword=value rule's relationship to the URL-userinfo rule was
+  patched three times by inferring "already redacted" from a boundary
+  character right after the `***` mark - first `@`+`/`, reverted to just `@`,
+  each version either deleting real trailing URL content or under-redacting a
+  genuine secret that happened to contain that same character. The
+  URL-userinfo rule now marks its own output with an internal sentinel
+  (`TLREDACTSENTINEL`, never written to the buffer) instead of the literal
+  `***`; the generic rule recognizes that sentinel explicitly instead of
+  inferring it from context, and a final pass converts any sentinel - whether
+  the generic rule touched it or not - to the user-facing `***`. The value
+  group is now fully unbounded except whitespace/quote in every other case, so
+  this removes the `@`-vs-`/` tradeoff entirely rather than picking a side.
+- **3 additional test cases** (71 total): a URL credential with no nearby
+  keyword at all (proving the final sentinel-to-`***` pass works
+  independently of the generic rule), plus a check that the internal sentinel
+  itself never leaks into the buffer.
 
 ### Added
 - **PreCompact hook** (`session-precompact.sh`): stamps a `compaction-boundary`
