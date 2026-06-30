@@ -1,0 +1,307 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>throughline - continuous, state-aware session memory for Claude Code</title>
+<meta name="description" content="throughline captures what you did and what is - commands, file changes, decisions, live git/PR state - then hands it off with judgment when a Claude Code session wraps. Readable, committable, yours." />
+<meta property="og:title" content="throughline - session memory for Claude Code" />
+<meta property="og:description" content="Continuous capture, judged handoff, automatic orientation. Memory that survives compaction because it lives on disk, not in the transcript." />
+<meta property="og:type" content="website" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<style>
+  :root {
+    --bg: #0b0d10;
+    --bg-soft: #12151a;
+    --panel: #161a21;
+    --border: #232a34;
+    --text: #e6e9ee;
+    --muted: #9aa4b2;
+    --faint: #6b7480;
+    --accent: #5eead4;
+    --accent-2: #7dd3fc;
+    --warn: #fbbf24;
+    --radius: 14px;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", "Fira Code", Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: radial-gradient(1200px 600px at 50% -10%, #14202a 0%, var(--bg) 55%) no-repeat;
+    color: var(--text);
+    font-family: var(--sans);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent-2); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .wrap { max-width: 960px; margin: 0 auto; padding: 0 24px; }
+  code, pre, .mono { font-family: var(--mono); }
+
+  /* Header */
+  header.site {
+    position: sticky; top: 0; z-index: 10;
+    backdrop-filter: blur(10px);
+    background: rgba(11,13,16,0.72);
+    border-bottom: 1px solid var(--border);
+  }
+  header.site .wrap { display: flex; align-items: center; justify-content: space-between; height: 60px; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 600; letter-spacing: -0.01em; }
+  .brand .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 16px var(--accent); }
+  .nav a { color: var(--muted); margin-left: 22px; font-size: 14px; }
+  .nav a:hover { color: var(--text); text-decoration: none; }
+
+  /* Hero */
+  .hero { padding: 84px 0 56px; text-align: center; }
+  .eyebrow {
+    display: inline-block; font-family: var(--mono); font-size: 12.5px; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--accent); border: 1px solid var(--border);
+    background: var(--bg-soft); padding: 6px 12px; border-radius: 999px; margin-bottom: 22px;
+  }
+  .hero h1 { font-size: clamp(34px, 6vw, 58px); line-height: 1.05; margin: 0 0 18px; letter-spacing: -0.03em; }
+  .hero h1 .grad { background: linear-gradient(90deg, var(--accent), var(--accent-2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .hero p.lead { font-size: clamp(17px, 2.4vw, 20px); color: var(--muted); max-width: 680px; margin: 0 auto 32px; }
+  .cta { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px; font-weight: 600; font-size: 15px;
+    padding: 12px 20px; border-radius: 10px; border: 1px solid var(--border); cursor: pointer;
+  }
+  .btn.primary { background: linear-gradient(180deg, #1c8d7e, #15756a); border-color: #1c8d7e; color: #eafffb; }
+  .btn.primary:hover { text-decoration: none; filter: brightness(1.08); }
+  .btn.ghost { background: var(--panel); color: var(--text); }
+  .btn.ghost:hover { text-decoration: none; border-color: var(--faint); }
+
+  .install {
+    margin: 36px auto 0; max-width: 560px; text-align: left;
+    background: #0e1318; border: 1px solid var(--border); border-radius: 12px; overflow: hidden;
+  }
+  .install .bar { display: flex; gap: 7px; padding: 11px 14px; border-bottom: 1px solid var(--border); background: var(--bg-soft); }
+  .install .bar i { width: 11px; height: 11px; border-radius: 50%; display: inline-block; }
+  .install .bar i:nth-child(1){ background:#ff5f57; } .install .bar i:nth-child(2){ background:#febc2e; } .install .bar i:nth-child(3){ background:#28c840; }
+  .install pre { margin: 0; padding: 16px 18px; font-size: 13.5px; color: #cbd5e1; overflow-x: auto; }
+  .install pre .c { color: var(--faint); }
+  .install pre .g { color: var(--accent); }
+
+  /* Sections */
+  section { padding: 56px 0; border-top: 1px solid var(--border); }
+  section h2 { font-size: clamp(24px, 4vw, 34px); letter-spacing: -0.02em; margin: 0 0 10px; }
+  section .sub { color: var(--muted); margin: 0 0 32px; max-width: 640px; }
+
+  /* Three layers */
+  .layers { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 22px; }
+  .card .num { font-family: var(--mono); font-size: 12px; color: var(--accent); letter-spacing: 0.1em; }
+  .card h3 { margin: 8px 0 8px; font-size: 18px; }
+  .card .tag { font-family: var(--mono); font-size: 11.5px; color: var(--faint); }
+  .card p { color: var(--muted); font-size: 14.5px; margin: 10px 0 0; }
+
+  /* Compaction callout */
+  .callout {
+    margin-top: 28px; display: flex; gap: 16px; align-items: flex-start;
+    background: linear-gradient(180deg, #13201d, #101814); border: 1px solid #1f3a33;
+    border-radius: var(--radius); padding: 22px 24px;
+  }
+  .callout .ic { font-size: 22px; line-height: 1; }
+  .callout h3 { margin: 0 0 6px; font-size: 17px; color: var(--accent); }
+  .callout p { margin: 0; color: var(--muted); font-size: 14.5px; }
+
+  /* Comparison table */
+  .tablewrap { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius); }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; min-width: 620px; }
+  th, td { text-align: left; padding: 13px 16px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  thead th { background: var(--bg-soft); color: var(--faint); font-weight: 600; font-size: 12.5px; letter-spacing: 0.03em; text-transform: uppercase; }
+  tbody tr:last-child td { border-bottom: none; }
+  td.feature { color: var(--muted); }
+  td.them { color: var(--faint); }
+  td.us { color: var(--text); }
+  td.us strong { color: var(--accent); font-weight: 600; }
+  th.us-col { color: var(--accent); }
+
+  /* Config / steps */
+  .steps { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  .steps .card h3 { font-size: 16px; }
+  .steps pre { background: #0e1318; border: 1px solid var(--border); border-radius: 10px; padding: 14px; margin: 12px 0 0; font-size: 13px; color: #cbd5e1; overflow-x: auto; }
+  .steps pre .c { color: var(--faint); }
+
+  /* Footer */
+  footer { border-top: 1px solid var(--border); padding: 36px 0 56px; color: var(--faint); font-size: 13.5px; }
+  footer .wrap { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+
+  @media (max-width: 720px) {
+    .layers, .steps { grid-template-columns: 1fr; }
+    .nav { display: none; }
+  }
+</style>
+</head>
+<body>
+<header class="site">
+  <div class="wrap">
+    <div class="brand"><span class="dot"></span> throughline</div>
+    <nav class="nav">
+      <a href="#why">Why</a>
+      <a href="#how">How it works</a>
+      <a href="#install">Install</a>
+      <a href="https://github.com/dynamic/throughline">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <section class="hero" style="border-top:none">
+    <div class="wrap">
+      <span class="eyebrow">Claude Code plugin</span>
+      <h1>Session memory that remembers<br /><span class="grad">the work, not just the chat.</span></h1>
+      <p class="lead">
+        throughline captures what you <em>did</em> and what <em>is</em> (commands, file changes,
+        decisions, live git and PR state), then hands it off with judgment when the session wraps.
+        Your artifacts stay readable, editable, and yours.
+      </p>
+      <div class="cta">
+        <a class="btn primary" href="#install">Install it</a>
+        <a class="btn ghost" href="https://github.com/dynamic/throughline">View on GitHub</a>
+      </div>
+      <div class="install">
+        <div class="bar"><i></i><i></i><i></i></div>
+        <pre><span class="c"># add the marketplace and install</span>
+/plugin marketplace add <span class="g">dynamic/throughline</span>
+/plugin install <span class="g">throughline@throughline</span></pre>
+      </div>
+    </div>
+  </section>
+
+  <section id="why">
+    <div class="wrap">
+      <h2>Why throughline</h2>
+      <p class="sub">
+        Most memory tools for AI agents replay the <em>conversation</em>. throughline captures the
+        <strong>work and the state</strong>, separates cheap automatic capture from deliberate curated
+        handoff, and binds into Claude Code's native memory.
+      </p>
+      <div class="tablewrap">
+        <table>
+          <thead>
+            <tr><th>&nbsp;</th><th>Conversation-replay tools</th><th class="us-col">throughline</th></tr>
+          </thead>
+          <tbody>
+            <tr><td class="feature">What it captures</td><td class="them">Chat transcript, lossy summaries</td><td class="us"><strong>Actions and state</strong>: commands, files, decisions, git/PR</td></tr>
+            <tr><td class="feature">Capture vs. distill</td><td class="them">One lossy step</td><td class="us"><strong>Separated</strong>: continuous capture, judged handoff</td></tr>
+            <tr><td class="feature">Project state</td><td class="them">None</td><td class="us"><strong>Live git, branch, PR, issue</strong> at load</td></tr>
+            <tr><td class="feature">Artifacts</td><td class="them">Opaque blobs</td><td class="us"><strong>Human-readable</strong>, editable, committable</td></tr>
+            <tr><td class="feature">Storage</td><td class="them">Per-machine, pollutes git</td><td class="us"><strong>Configurable</strong>, clean gitignore, team-shareable</td></tr>
+            <tr><td class="feature">Native memory</td><td class="them">Ignored</td><td class="us"><strong>Binds</strong> to Claude Code's memory</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="layers" style="margin-top:28px">
+        <div class="card">
+          <h3>Why not a manual HANDOFF.md?</h3>
+          <p>You have to remember to write it, and you write it from memory, which after a long session is itself reconstructed from a compacted transcript. throughline captures continuously and distills from a buffer that does not forget.</p>
+        </div>
+        <div class="card">
+          <h3>Why not CLAUDE.md?</h3>
+          <p>That is for durable preferences and conventions, the things true every session. throughline is for per-session work state: what you did today, where you stopped, what is still open.</p>
+        </div>
+        <div class="card">
+          <h3>Why not native /memory?</h3>
+          <p>Native memory holds global facts. throughline holds project work state and live git/PR context, and it promotes the genuinely durable facts up into native memory rather than competing with it.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="how">
+    <div class="wrap">
+      <h2>How it works</h2>
+      <p class="sub">Three layers, each doing what it is actually capable of.</p>
+      <div class="layers">
+        <div class="card">
+          <div class="num">01 / CAPTURE</div>
+          <h3>Continuous capture</h3>
+          <div class="tag">PostToolUse hook</div>
+          <p>Appends a structured one-liner per mutating action to a per-session buffer: the command or file, whether it succeeded, with obvious secrets masked first. Mechanical and cheap. You never see it; it just protects you.</p>
+        </div>
+        <div class="card">
+          <div class="num">02 / HANDOFF</div>
+          <h3>Judged handoff</h3>
+          <div class="tag">throughline-handoff skill</div>
+          <p>At wrap-up the agent distills the buffer plus context into a durable HANDOFF.md and a timestamped log, and promotes durable facts into native memory. Judgment, so it is a skill, not a hook.</p>
+        </div>
+        <div class="card">
+          <div class="num">03 / SAFETY NET</div>
+          <h3>Safety-net flush</h3>
+          <div class="tag">SessionEnd hook</div>
+          <p>Stamps the buffer on exit, so a session that ended without a handoff is surfaced next time for retroactive distillation. Nothing is ever silently lost.</p>
+        </div>
+      </div>
+
+      <div class="callout">
+        <div class="ic">🧷</div>
+        <div>
+          <h3>Built to survive compaction</h3>
+          <p>
+            When Claude Code compacts a long conversation, the transcript is summarized and detail is lost.
+            The action buffer does not care: it lives on disk, appended after every action, independent of the
+            context window. A <strong>PreCompact</strong> hook stamps a boundary marker at the seam, and
+            <strong>SessionStart re-fires on compact</strong> to point the agent back at the surviving buffer.
+            Honest scope: the <em>what</em> survives on disk; the <em>why</em> lives in the conversation, so run
+            a handoff before a long session compacts to keep the reasoning too.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="install">
+    <div class="wrap">
+      <h2>Install and configure</h2>
+      <p class="sub">No build step, no account, no server. It is hooks and skills, all local.</p>
+      <div class="steps">
+        <div class="card">
+          <h3>1. Install the plugin</h3>
+          <pre><span class="c"># in Claude Code</span>
+/plugin marketplace add dynamic/throughline
+/plugin install throughline@throughline
+<span class="c"># then reload or restart the session</span>
+/reload-plugins</pre>
+        </div>
+        <div class="card">
+          <h3>2. Choose where state lives</h3>
+          <pre><span class="c"># default: .claude/throughline/ per project</span>
+<span class="c"># or unify with a portable .agent/ convention</span>
+export THROUGHLINE_DATA_DIR=.agent/handoff</pre>
+        </div>
+        <div class="card">
+          <h3>3. Keep the buffer out of git</h3>
+          <pre><span class="c"># in your project's .gitignore</span>
+.claude/throughline/buffer/</pre>
+        </div>
+        <div class="card">
+          <h3>4. Reinforce auto-handoff (optional)</h3>
+          <pre><span class="c"># add to project or global CLAUDE.md</span>
+When a session winds down, run the
+throughline-handoff skill and report
+the diff, don't wait to be asked.</pre>
+        </div>
+      </div>
+      <p class="sub" style="margin-top:28px">
+        throughline stays silent in a project until you opt that project in: the data dir exists, or a
+        HANDOFF.md is present. No noise in unrelated repos. The durable HANDOFF.md and logs/ are meant to be
+        committed so teammates and fresh clones get oriented; the raw buffer/ is scratch, so gitignore it.
+        Requires <code>git</code> and <code>jq</code> on your PATH; without jq, capture cannot run and the
+        SessionStart block says so instead of failing silently.
+      </p>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div>throughline - MIT © Dynamic Agency</div>
+    <div><a href="https://github.com/dynamic/throughline">github.com/dynamic/throughline</a></div>
+  </div>
+</footer>
+</body>
+</html>

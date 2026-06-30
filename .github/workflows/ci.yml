@@ -1,0 +1,23 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  shell:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install shellcheck and jq
+        run: sudo apt-get update && sudo apt-get install -y shellcheck jq
+      - name: Lint hooks and tests
+        run: shellcheck -s sh hooks/*.sh tests/*.sh
+      - name: Validate JSON manifests
+        run: |
+          jq -e '.hooks | keys' hooks/hooks.json >/dev/null
+          jq -e '.name and .version' .claude-plugin/plugin.json >/dev/null
+          jq -e '.plugins' .claude-plugin/marketplace.json >/dev/null
+      - name: Run hook tests
+        run: sh tests/run.sh

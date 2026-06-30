@@ -1,0 +1,57 @@
+# Changelog
+
+All notable changes to throughline are documented here. Format loosely follows
+[Keep a Changelog](https://keepachangelog.com/); this project uses semantic versioning.
+
+## [0.2.0]
+
+A robustness, privacy, and compaction-survival pass driven by a four-lens review
+(see `docs/REVIEW-v0.1.0.md`).
+
+### Added
+- **PreCompact hook** (`session-precompact.sh`): stamps a `compaction-boundary`
+  marker into the live buffer just before a context compaction, so a later
+  handoff knows the seam and distills above-the-line actions from the buffer
+  text rather than from lost conversation recall.
+- **Compaction recovery in onboard**: on `source=compact`, onboard now reads the
+  session id and points Claude back at the surviving on-disk buffer for the
+  current session.
+- **Missing-jq warning**: when `jq` is absent, capture is impossible; onboard now
+  says so loudly instead of letting capture no-op in silence.
+- **Tool outcome capture**: failed / interrupted actions are now marked
+  `[failed]` in the buffer (read from the PostToolUse `tool_response`).
+- **Capture-time secret redaction**: common credential shapes (KEY=VALUE tokens,
+  `Bearer` tokens, URL userinfo passwords, `ghp_`/`github_pat_`/`xox`/`sk-`/`AKIA`,
+  Google `AIza` keys, `Basic` auth payloads, and inline PEM private-key blocks) are
+  masked before anything is written to the buffer. Defense in depth alongside the
+  handoff skill's "key names only" rule.
+- **Test harness** (`tests/run.sh`) and **CI** (`.github/workflows/ci.yml`):
+  shellcheck plus fixture-driven hook tests on every push and PR.
+
+### Changed
+- **session_id is sanitized** to a safe, flat filename in capture and flush
+  (no path traversal, no stray subdirectories).
+- **Edit/Write paths are relativized** to the project root before capture, so
+  committed logs no longer leak absolute paths or the OS username.
+- **Captured commands are sanitized**: control characters and backticks are
+  neutralized so a command can never break the buffer's markdown.
+- **Long commands** are marked `…[truncated]` instead of being silently cut.
+- **onboard "unconsumed buffer" warning** no longer counts the current session
+  (which previously made a mid-session compaction look like "a prior session
+  ended without a handoff"); wording clarified.
+- **flush end-stamp guard** is anchored to the start of a line, so captured text
+  containing the marker cannot suppress a real stamp.
+- README "compaction-proof" wording qualified: the raw action buffer survives
+  compaction; the reasoning behind it survives only if a handoff ran first.
+
+### Fixed
+- **Missing session_id no longer poisons** a shared `session-nosession.md` that
+  flush never stamped and onboard re-warned about forever. Such records are now
+  dropped.
+- onboard root-prefix stripping uses POSIX parameter expansion instead of `sed`,
+  fixing breakage when the project path contains regex-special characters.
+
+## [0.1.0]
+
+- Initial release: continuous PostToolUse capture, judged handoff skill,
+  SessionStart orientation, SessionEnd safety-net flush, onboard skill.

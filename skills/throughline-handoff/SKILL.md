@@ -32,10 +32,18 @@ refined by the next. Never run it more than once per unchanged state.
 
 1. Read **all** `DATA/buffer/session-*.md` — these are the continuously-captured
    actions (commands, file edits) for this and any unconsumed prior sessions.
-   They survive context compaction, so trust them over fuzzy recollection.
+   They survive context compaction, so trust them over fuzzy recollection. One
+   session is one file (keyed by a session id stable across compaction).
+   - Lines marked `` `[failed]` `` are actions that errored or were interrupted;
+     do not record them as completed work.
+   - A `<!-- compaction-boundary ... -->` line marks where a compaction happened.
+     For actions **above** the most recent boundary, distill from the buffer text
+     itself: the conversation's account of *why* they were done has been
+     summarized away and your recall of it is no longer trustworthy.
 2. Read the current `DATA/HANDOFF.md` (create from the Phase 5 template if absent).
 3. Cross-reference the buffer against the live conversation: the buffer says *what
-   happened*; the conversation says *why*. Distillation needs both.
+   happened*; the conversation says *why*. Distillation needs both (subject to the
+   boundary caveat above).
 
 ---
 
@@ -131,6 +139,11 @@ Key paths, URLs, credential locations (names only).
 ## Reminders
 - **Distillation needs judgment** — that's why this is a skill, not a hook. Be terse,
   preserve structure, don't duplicate existing entries.
+- **Re-scan for secrets before writing.** Capture masks obvious credential shapes,
+  but it is best-effort, not a guarantee. Before writing anything into the committed
+  `HANDOFF.md` or `logs/`, scan your draft for token-shaped strings (case-insensitive
+  `token|key|secret|password`, `Bearer`, `ghp_`/`sk-`/`AKIA`, URL userinfo) and
+  reduce them to key names only. This is defense in depth, not the sole barrier.
 - **Report, then let the user review.** After writing, show the HANDOFF.md diff +
   session-log path. The review gate is post-write, not pre-write.
 - **Buffers are the source of truth for *what happened*** — they don't lie about
