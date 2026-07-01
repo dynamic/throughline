@@ -35,10 +35,29 @@ tl_data_dir() {
 # Returns non-zero (stay silent) if the opt-out marker is present, or if the
 # bootstrap mkdir fails - so any hook that proceeds past this call is guaranteed
 # a data dir on disk (session-capture.sh's breadcrumb path depends on that).
+#
+# Also sets $_tl_active_reason to "ignored" or "bootstrap-failed" on the
+# non-zero paths (unset/stale on the zero path - callers that care check it
+# immediately after calling tl_active, before any other _tl_-prefixed call
+# might overwrite it). A failed bootstrap must never look identical to a
+# deliberate opt-out: onboard is the one hook with a visible voice and uses
+# this to warn when auto-activation itself failed (permissions, disk full),
+# so that failure doesn't silently masquerade as "user opted out."
 tl_active() {
-  [ -f "$(tl_root)/.throughlineignore" ] && return 1
+  unset _tl_active_reason
+  if [ -f "$(tl_root)/.throughlineignore" ]; then
+    _tl_active_reason="ignored"
+    return 1
+  fi
   _tl_d=$(tl_data_dir)
-  [ -d "$_tl_d" ] || [ -f "$_tl_d/HANDOFF.md" ] || mkdir -p "$_tl_d" 2>/dev/null
+  if [ -d "$_tl_d" ] || [ -f "$_tl_d/HANDOFF.md" ]; then
+    return 0
+  fi
+  if mkdir -p "$_tl_d" 2>/dev/null; then
+    return 0
+  fi
+  _tl_active_reason="bootstrap-failed"
+  return 1
 }
 
 # jq is a hard dependency for capture (it parses the hook payload). When it is

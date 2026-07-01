@@ -25,19 +25,43 @@ a silent chicken-and-egg trap" finding raised in the original v0.1.0 review
 
 ### Added
 - **`.throughlineignore` opt-out marker.** An empty file named
-  `.throughlineignore` at the project root disables throughline for that project
-  unconditionally - no data dir is created and all four hooks no-op - regardless
-  of `THROUGHLINE_DATA_DIR` or any pre-existing data dir/`HANDOFF.md`. The opt-out
-  is checked first in `tl_active`, so it wins even for a project that was
-  previously active; existing `HANDOFF.md`/`logs/` are left untouched, throughline
-  simply stops touching the project. Documented under "Opting a project out" in
-  the README.
-- **6 new test cases** (77 total) covering auto-activation with
+  `.throughlineignore` at the project root disables new activation for that
+  project unconditionally - no data dir is created, and `onboard`/`capture` stop
+  adding new content - regardless of `THROUGHLINE_DATA_DIR` or any pre-existing
+  data dir/`HANDOFF.md`. The opt-out is checked first in `tl_active`, so it wins
+  even for a project that was previously active; existing `HANDOFF.md`/`logs/`
+  are left untouched, throughline simply stops adding to the project. Documented
+  under "Opting a project out" in the README.
+- **A failed auto-activation is distinguishable from a deliberate opt-out.** A
+  review pass found that a bootstrap `mkdir` failure (permissions, disk full)
+  made `tl_active` return non-zero identically to the `.throughlineignore` path,
+  so the very "no more silent chicken-and-egg trap" this release exists to fix
+  had a silent failure mode of its own. `tl_active` now sets an internal reason
+  the caller can inspect; `onboard` (the one hook with a visible voice) surfaces
+  a distinct warning naming the data dir it could not create.
+- **First activation nudges toward gitignoring the buffer.** Auto-activation can
+  now be the very first thing that happens in a project, with no manual opt-in
+  step to naturally prompt the user to set up `.gitignore` first. `onboard`
+  checks with `git check-ignore` (not a hand-rolled pattern match) and warns
+  once, only when the buffer isn't already covered.
+- **`flush`/`precompact` no longer let a mid-session `.throughlineignore` corrupt
+  an already-tracked session's bookkeeping.** Both used to gate on the same
+  `tl_active` as `onboard`/`capture`, so if the opt-out marker appeared between a
+  session's start and its end, the end-stamp (or compaction-boundary marker)
+  would be silently skipped for a session that had already legitimately
+  captured - permanently mislabeling a completed session as "could be live
+  elsewhere" instead of "confirmed ended." Both hooks now check only for an
+  existing data dir (no ignore-file veto, no bootstrap) before finalizing
+  bookkeeping for a buffer that already exists; `capture` is unaffected and
+  still stops recording new actions the moment the opt-out appears.
+- **12 new test cases** (83 total) covering auto-activation with
   `THROUGHLINE_DATA_DIR` set and unset (via onboard), auto-activation via
   `session-capture.sh` called first (proving the bootstrap lives in the shared
-  `tl_active` helper, not one specific hook), and the `.throughlineignore`
-  opt-out. The v0.2.0 "inactive project stays silent" test is rewritten to the
-  new model.
+  `tl_active` helper, not one specific hook), the `.throughlineignore` opt-out,
+  a failed bootstrap surfacing its distinct warning, the gitignore nudge firing
+  only when needed, and `flush`/`precompact` still finalizing an already-tracked
+  session despite a mid-session `.throughlineignore`. The v0.2.0 "inactive
+  project stays silent" test is rewritten to the new model.
 
 ## [0.2.0]
 

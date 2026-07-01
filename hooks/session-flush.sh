@@ -9,7 +9,15 @@
 DIR=$(unset CDPATH; cd -- "$(dirname -- "$0")" && pwd)
 . "${CLAUDE_PLUGIN_ROOT:-$DIR/..}/hooks/_lib.sh" 2>/dev/null || . "$DIR/_lib.sh"
 
-tl_active || exit 0
+# Deliberately NOT tl_active(): that gate also gives .throughlineignore veto
+# power and auto-bootstraps a data dir, both wrong here. This hook's job is to
+# finalize bookkeeping for a session that already legitimately captured (its
+# buffer file already exists), not to decide whether tracking should start or
+# continue - if .throughlineignore appears mid-session, capture stops adding
+# new entries immediately (it does use tl_active), but the already-recorded
+# session still deserves its end-stamp rather than being silently corrupted by
+# a decision made after the fact. No bootstrap: if the data dir was never
+# created, this session was never tracked, so there is nothing to finalize.
 tl_have_jq || exit 0
 
 input=$(cat 2>/dev/null)

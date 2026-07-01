@@ -12,7 +12,10 @@
 DIR=$(unset CDPATH; cd -- "$(dirname -- "$0")" && pwd)
 . "${CLAUDE_PLUGIN_ROOT:-$DIR/..}/hooks/_lib.sh" 2>/dev/null || . "$DIR/_lib.sh"
 
-tl_active || exit 0
+# Deliberately NOT tl_active() - see session-flush.sh for the full reasoning:
+# this hook finalizes bookkeeping for an already-existing buffer, so a
+# mid-session .throughlineignore should not veto stamping it, and there is no
+# reason to bootstrap a data dir that was never created for this session.
 tl_have_jq || exit 0
 
 input=$(cat 2>/dev/null)

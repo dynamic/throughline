@@ -342,6 +342,64 @@ mkdir -p "$FRESH_D"
 printf '%s' '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"x","command":"id"}}' | CLAUDE_PROJECT_DIR="$FRESH_D" sh "$H/session-capture.sh"
 present "capture-first auto-activates and writes a buffer entry" "$FRESH_D/.claude/throughline/buffer/session-T.md"
 
+# 12e. a FAILED bootstrap must not look identical to a deliberate
+#      .throughlineignore opt-out: onboard surfaces a distinct warning rather
+#      than staying silent, so the failure is diagnosable instead of
+#      masquerading as "user opted out."
+FRESH_E="$WORK/fresh-e"
+mkdir -p "$FRESH_E"
+( cd "$FRESH_E" && git init -q && git commit -q --allow-empty -m init ) 2>/dev/null
+if [ "$(id -u)" != "0" ]; then
+  chmod 555 "$FRESH_E" 2>/dev/null
+  O8=$(printf '%s' '{"source":"startup","session_id":"T"}' | CLAUDE_PROJECT_DIR="$FRESH_E" sh "$H/session-onboard.sh")
+  chmod 755 "$FRESH_E" 2>/dev/null
+  has    "failed bootstrap surfaces a distinct warning" "$O8" 'could not create its data directory'
+  absent "failed bootstrap does not create the data dir" "$FRESH_E/.claude"
+else
+  ok "failed-bootstrap warning test skipped (running as root)"
+  ok "failed-bootstrap no-dir-created test skipped (running as root)"
+fi
+
+# 12f. first activation nudges toward gitignoring the buffer - but only when
+#      it is not already covered, using git's own ignore resolution rather
+#      than a hand-rolled pattern match.
+FRESH_F="$WORK/fresh-f"
+mkdir -p "$FRESH_F"
+( cd "$FRESH_F" && git init -q && git commit -q --allow-empty -m init ) 2>/dev/null
+O9=$(printf '%s' '{"source":"startup","session_id":"T"}' | CLAUDE_PROJECT_DIR="$FRESH_F" sh "$H/session-onboard.sh")
+has "first activation nudges to gitignore the buffer when not covered" "$O9" 'not gitignored yet'
+
+FRESH_G="$WORK/fresh-g"
+mkdir -p "$FRESH_G"
+printf '.claude/throughline/buffer/\n' > "$FRESH_G/.gitignore"
+( cd "$FRESH_G" && git init -q && git add .gitignore && git commit -q -m init ) 2>/dev/null
+O10=$(printf '%s' '{"source":"startup","session_id":"T"}' | CLAUDE_PROJECT_DIR="$FRESH_G" sh "$H/session-onboard.sh")
+hasnt "no gitignore nudge when the buffer is already covered" "$O10" 'not gitignored yet'
+
+# 12g. flush still stamps an ALREADY-EXISTING buffer even if .throughlineignore
+#      appears mid-session: its job is to finalize a session that legitimately
+#      captured, not to decide whether tracking should continue. Without this,
+#      a later opt-out decision would silently corrupt an already-recorded
+#      session's bookkeeping.
+FRESH_H="$WORK/fresh-h"
+mkdir -p "$FRESH_H"
+( cd "$FRESH_H" && git init -q && git commit -q --allow-empty -m init ) 2>/dev/null
+printf '%s' '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"x","command":"id"}}' | CLAUDE_PROJECT_DIR="$FRESH_H" sh "$H/session-capture.sh"
+: > "$FRESH_H/.throughlineignore"
+printf '%s' '{"session_id":"T","reason":"end"}' | CLAUDE_PROJECT_DIR="$FRESH_H" sh "$H/session-flush.sh"
+has "flush still stamps a session that was already tracked, despite a new .throughlineignore" \
+  "$(cat "$FRESH_H/.claude/throughline/buffer/session-T.md" 2>/dev/null)" '<!-- session-ended'
+
+# 12h. same reasoning, for precompact's boundary marker.
+FRESH_I="$WORK/fresh-i"
+mkdir -p "$FRESH_I"
+( cd "$FRESH_I" && git init -q && git commit -q --allow-empty -m init ) 2>/dev/null
+printf '%s' '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"x","command":"id"}}' | CLAUDE_PROJECT_DIR="$FRESH_I" sh "$H/session-capture.sh"
+: > "$FRESH_I/.throughlineignore"
+printf '%s' '{"session_id":"T","trigger":"manual"}' | CLAUDE_PROJECT_DIR="$FRESH_I" sh "$H/session-precompact.sh"
+has "precompact still stamps a session that was already tracked, despite a new .throughlineignore" \
+  "$(cat "$FRESH_I/.claude/throughline/buffer/session-T.md" 2>/dev/null)" '<!-- compaction-boundary'
+
 # 13. capture breadcrumbs a swallowed write failure and onboard surfaces it.
 #     Chmod the SESSION FILE itself read-only (not the directory): appending to
 #     an existing file is gated by the file's own write bit, independent of the

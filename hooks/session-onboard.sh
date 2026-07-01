@@ -14,7 +14,17 @@
 DIR=$(unset CDPATH; cd -- "$(dirname -- "$0")" && pwd)
 . "${CLAUDE_PLUGIN_ROOT:-$DIR/..}/hooks/_lib.sh" 2>/dev/null || . "$DIR/_lib.sh"
 
-tl_active || exit 0
+if ! tl_active; then
+  # Distinguish a deliberate .throughlineignore opt-out (stay silent, as
+  # designed) from a failed auto-activation bootstrap (permissions, disk
+  # full) - the latter must not look identical to the former, or the very
+  # "no more silent chicken-and-egg trap" this auto-activation exists to fix
+  # becomes a new, harder-to-diagnose silent failure of its own.
+  if [ "${_tl_active_reason:-}" = "bootstrap-failed" ]; then
+    echo "⚠️ throughline could not create its data directory (\`$(tl_data_dir)\`) - check permissions/disk space on the project root. Capture will not run until this is resolved."
+  fi
+  exit 0
+fi
 
 root=$(tl_root)
 data=$(tl_data_dir)
@@ -58,6 +68,17 @@ if [ -f "$hf" ]; then
   grep -m1 -i "last updated" "$hf" 2>/dev/null
 else
   echo "No HANDOFF.md yet for this project. One will be written at the next handoff."
+  # First activation (no handoff has run yet): nudge toward gitignoring the
+  # buffer before anything gets committed. Auto-activation means this can now
+  # be the very first thing to happen in a project, with no manual opt-in step
+  # that would have naturally prompted the user to set this up first. Uses
+  # git's own ignore resolution (a trailing slash lets it match a directory
+  # pattern even before the buffer dir itself exists) rather than a hand-
+  # rolled pattern match, so this only fires when it is actually needed.
+  if git -C "$root" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
+    && ! git -C "$root" check-ignore -q "$bufdir/" 2>/dev/null; then
+    echo "⚠️ \`${bufdir#"$root"/}/\` is not gitignored yet - it can contain raw command/path text (best-effort redacted only). Add it to \`.gitignore\` before committing."
+  fi
 fi
 
 # Post-compaction recovery: the conversation was just summarized, but this
