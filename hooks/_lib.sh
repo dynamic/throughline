@@ -26,12 +26,55 @@ tl_data_dir() {
   fi
 }
 
-# True when this project should be tracked: the data dir already exists, or a
-# HANDOFF.md is present in it. Keeps throughline silent in unrelated repos until
-# the user opts a project in by running the handoff once.
-tl_active() {
+# True when a data dir already exists for this project, or a HANDOFF.md is
+# present in it - independent of .throughlineignore. Kept separate from
+# tl_active (which also decides whether to bootstrap and honors the opt-out)
+# because two different needs already required a query without the mutation:
+# session-flush.sh/session-precompact.sh need to finalize bookkeeping for a
+# buffer that already exists regardless of a mid-session opt-out, and
+# session-onboard.sh needs to keep orienting toward EXISTING content (a
+# HANDOFF.md pointer, unconsumed buffers) even when .throughlineignore is
+# present - the opt-out means "stop adding new content," not "stop telling me
+# what already exists." A prior version bundled both into tl_active alone,
+# which forced those callers to re-derive this check inline with a comment
+# explaining why they could not just call tl_active - a future caller reaching
+# for tl_active by name (it reads as a plain predicate) could easily miss the
+# bootstrap side effect and reintroduce that exact bug.
+tl_data_exists() {
   _tl_d=$(tl_data_dir)
   [ -d "$_tl_d" ] || [ -f "$_tl_d/HANDOFF.md" ]
+}
+
+# Activation decision for this project, in strict precedence:
+#   1. .throughlineignore at the project root -> OFF for NEW tracking
+#      unconditionally (existing data, per tl_data_exists, is unaffected).
+#   2. data dir already exists, or a HANDOFF.md is present -> already active.
+#   3. otherwise auto-activate: bootstrap the data dir. Every project touched by
+#      Claude Code with throughline installed activates on the first hook fire.
+# Returns non-zero (stay silent) if the opt-out marker is present, or if the
+# bootstrap mkdir fails - so any hook that proceeds past this call is guaranteed
+# a data dir on disk (session-capture.sh's breadcrumb path depends on that).
+#
+# Also sets $_tl_active_reason to "ignored" or "bootstrap-failed" on the
+# non-zero paths (unset/stale on the zero path - callers that care check it
+# immediately after calling tl_active, before any other _tl_-prefixed call
+# might overwrite it). A failed bootstrap must never look identical to a
+# deliberate opt-out: onboard is the one hook with a visible voice and uses
+# this to warn when auto-activation itself failed (permissions, disk full),
+# so that failure doesn't silently masquerade as "user opted out."
+tl_active() {
+  unset _tl_active_reason
+  if [ -f "$(tl_root)/.throughlineignore" ]; then
+    _tl_active_reason="ignored"
+    return 1
+  fi
+  tl_data_exists && return 0
+  _tl_d=$(tl_data_dir)
+  if mkdir -p "$_tl_d" 2>/dev/null; then
+    return 0
+  fi
+  _tl_active_reason="bootstrap-failed"
+  return 1
 }
 
 # jq is a hard dependency for capture (it parses the hook payload). When it is

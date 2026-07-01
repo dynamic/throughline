@@ -287,9 +287,10 @@ the diff, don't wait to be asked.</pre>
         </div>
       </div>
       <p class="sub" style="margin-top:28px">
-        throughline stays silent in a project until you opt that project in: the data dir exists, or a
-        HANDOFF.md is present. No noise in unrelated repos. The durable HANDOFF.md and logs/ are meant to be
-        committed so teammates and fresh clones get oriented; the raw buffer/ is scratch, so gitignore it.
+        throughline activates automatically the first time any hook fires in a project - no manual opt-in
+        step. To keep it out of a specific project, drop an empty <code>.throughlineignore</code> file at
+        the project root. The durable HANDOFF.md and logs/ are meant to be committed so teammates and fresh
+        clones get oriented; the raw buffer/ is scratch, so gitignore it.
         Requires <code>git</code> and <code>jq</code> on your PATH; without jq, capture cannot run and the
         SessionStart block says so instead of failing silently.
       </p>

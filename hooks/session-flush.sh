@@ -9,7 +9,17 @@
 DIR=$(unset CDPATH; cd -- "$(dirname -- "$0")" && pwd)
 . "${CLAUDE_PLUGIN_ROOT:-$DIR/..}/hooks/_lib.sh" 2>/dev/null || . "$DIR/_lib.sh"
 
-tl_active || exit 0
+# Deliberately NOT tl_active() or tl_data_exists(): this hook's job is to
+# finalize bookkeeping for a session that already legitimately captured (its
+# buffer file already exists), not to decide whether tracking should start or
+# continue - if .throughlineignore appears mid-session, capture stops adding
+# new entries immediately (it does use tl_active), but the already-recorded
+# session still deserves its end-stamp rather than being silently corrupted by
+# a decision made after the fact. The bufdir check below is deliberately
+# narrower than tl_data_exists (which checks the data dir, not buffer/): if
+# the data dir exists but capture never actually ran, there is still nothing
+# to finalize here. No bootstrap: if the data dir was never created, this
+# session was never tracked either.
 tl_have_jq || exit 0
 
 input=$(cat 2>/dev/null)

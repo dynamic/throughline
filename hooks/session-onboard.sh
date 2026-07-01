@@ -14,12 +14,36 @@
 DIR=$(unset CDPATH; cd -- "$(dirname -- "$0")" && pwd)
 . "${CLAUDE_PLUGIN_ROOT:-$DIR/..}/hooks/_lib.sh" 2>/dev/null || . "$DIR/_lib.sh"
 
-tl_active || exit 0
-
 root=$(tl_root)
 data=$(tl_data_dir)
+
+# tl_data_exists (not tl_active) gates whether there is anything to report:
+# existing state deserves orientation even when .throughlineignore is present
+# - the opt-out means "stop adding new content," not "stop telling me what
+# already exists" (a mid-life opt-out on an already-tracked project used to
+# silence the HANDOFF.md pointer, capture-errors, and unconsumed-buffer
+# warnings too, which was never the intent). Only fall through to tl_active
+# (which does honor the opt-out, and bootstraps) when there is nothing yet.
+if ! tl_data_exists && ! tl_active; then
+  # Distinguish a deliberate .throughlineignore opt-out (stay silent, as
+  # designed) from a failed auto-activation bootstrap (permissions, disk
+  # full) - the latter must not look identical to the former, or the very
+  # "no more silent chicken-and-egg trap" this auto-activation exists to fix
+  # becomes a new, harder-to-diagnose silent failure of its own.
+  if [ "${_tl_active_reason:-}" = "bootstrap-failed" ]; then
+    echo "⚠️ throughline could not create its data directory (\`${data#"$root"/}\`) - check permissions/disk space on the project root. Capture will not run until this is resolved."
+  fi
+  exit 0
+fi
 hf="$data/HANDOFF.md"
 bufdir="$data/buffer"
+# Computed once and reused below (the gitignore nudge and the live-git-state
+# block both need it) rather than spawning git twice per SessionStart.
+if git -C "$root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  in_worktree=1
+else
+  in_worktree=0
+fi
 
 # Parse the SessionStart payload (best-effort; jq may be absent). `source` is one
 # of startup|resume|clear|compact; `session_id` keys this session's buffer.
@@ -60,6 +84,36 @@ else
   echo "No HANDOFF.md yet for this project. One will be written at the next handoff."
 fi
 
+# Nudge toward gitignoring the buffer before anything gets committed.
+# Deliberately NOT gated on "no HANDOFF.md yet": that used to be its only
+# guard, which meant the nudge permanently stopped firing the moment the
+# first handoff ran, even if the buffer was still never actually gitignored.
+# Auto-activation means this can now be the very first thing to happen in a
+# project, with no manual opt-in step that would have naturally prompted the
+# user to set this up first. Skipped on `compact` re-fires so it does not
+# repeat within one already-running session as it compacts - it still fires
+# on every new session start until the buffer is actually covered. Uses git's
+# own ignore resolution (a trailing slash lets it match a directory pattern
+# even before the buffer dir itself exists) rather than a hand-rolled pattern
+# match, so this only fires when it is actually needed. Skipped entirely when
+# $data lives outside the project's own git tree (an absolute
+# THROUGHLINE_DATA_DIR pointed at a shared, cross-harness location - a
+# documented, supported configuration): `git check-ignore` on a path outside
+# the repo fails with a fatal error rather than "not ignored", which the
+# negated check here would otherwise treat identically to "not gitignored" -
+# printing an unsatisfiable warning on every single SessionStart forever,
+# since a path outside the repo can never be matched by that repo's
+# .gitignore in the way check-ignore verifies.
+case "$data" in
+  "$root"/*)
+    if [ "$src" != "compact" ] && [ "$in_worktree" = "1" ] \
+      && ! git -C "$root" check-ignore -q "$bufdir/" 2>/dev/null; then
+      echo
+      echo "⚠️ \`${bufdir#"$root"/}/\` is not gitignored yet - it can contain raw command/path text (best-effort redacted only). Add it to \`.gitignore\` before committing."
+    fi
+    ;;
+esac
+
 # Post-compaction recovery: the conversation was just summarized, but this
 # session's buffer is intact on disk. Point Claude at it explicitly.
 if [ "$src" = "compact" ] && [ -n "$sid" ] && [ -f "$bufdir/session-$sid.md" ]; then
@@ -97,7 +151,7 @@ if [ -d "$bufdir" ]; then
   fi
 fi
 
-if git -C "$root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+if [ "$in_worktree" = "1" ]; then
   echo
   echo "### Live git state"
   echo '```'

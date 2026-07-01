@@ -29,6 +29,7 @@ bad() { FAIL=$((FAIL + 1)); printf '  FAIL %s\n' "$1"; }
 has()    { case "$2" in *"$3"*) ok "$1" ;; *) bad "$1 (missing: $3)"; printf '       got: %s\n' "$2" ;; esac; }
 hasnt()  { case "$2" in *"$3"*) bad "$1 (unexpected: $3)"; printf '       got: %s\n' "$2" ;; *) ok "$1" ;; esac; }
 present(){ if [ -f "$2" ]; then ok "$1"; else bad "$1 (no file: $2)"; fi; }
+dir_present(){ if [ -d "$2" ]; then ok "$1"; else bad "$1 (no dir: $2)"; fi; }
 absent() { if [ -e "$2" ]; then bad "$1 (exists: $2)"; else ok "$1"; fi; }
 eq()     { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1 (got '$2', want '$3')"; fi; }
 cap()    { printf '%s' "$1" | sh "$H/session-capture.sh"; }
@@ -292,15 +293,164 @@ printf '%s' '{"session_id":"T","reason":"end"}' | PATH="$STUB" sh "$H/session-fl
 printf '%s' '{"session_id":"T","trigger":"manual"}' | PATH="$STUB" sh "$H/session-precompact.sh"
 ok "flush/precompact did not crash without jq"
 
-# 12. tl_active inactive path: a project with no data dir and no HANDOFF.md
-#     stays silent across every hook (the opt-in/silence guarantee).
-INACTIVE="$WORK/inactive"
-mkdir -p "$INACTIVE"
-( cd "$INACTIVE" && git init -q && git commit -q --allow-empty -m init ) 2>/dev/null
-O5=$(printf '%s' '{"source":"startup","session_id":"T"}' | CLAUDE_PROJECT_DIR="$INACTIVE" THROUGHLINE_DATA_DIR=".claude/throughline" sh "$H/session-onboard.sh")
-eq "onboard produces no output for an inactive project" "$O5" ""
-printf '%s' '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"x","command":"id"}}' | CLAUDE_PROJECT_DIR="$INACTIVE" THROUGHLINE_DATA_DIR=".claude/throughline" sh "$H/session-capture.sh"
-absent "capture writes nothing for an inactive project" "$INACTIVE/.claude/throughline/buffer/session-T.md"
+# 12. tl_active auto-activation: a fresh project with no prior state and no
+#     .throughlineignore activates the moment any hook fires, rather than
+#     staying silent forever (the old opt-in-by-directory-existence gate was a
+#     chicken-and-egg trap: capture never started until a handoff ran, but a
+#     handoff had nothing to distill until capture had run).
+
+# 12a. onboard on a totally fresh project, THROUGHLINE_DATA_DIR set (inherits
+#      the harness's export) -> auto-activates, dir gets created, onboard is
+#      no longer silent.
+FRESH_A="$WORK/fresh-a"
+mkdir -p "$FRESH_A"
+( cd "$FRESH_A" && git init -q && git commit -q --allow-empty -m init ) 2>/dev/null
+O5=$(printf '%s' '{"source":"startup","session_id":"T"}' | CLAUDE_PROJECT_DIR="$FRESH_A" sh "$H/session-onboard.sh")
+has     "onboard is no longer silent on a fresh project" "$O5" 'throughline'
+dir_present "auto-activation created the configured data dir" "$FRESH_A/.claude/throughline"
+
+# 12b. same, but THROUGHLINE_DATA_DIR UNSET -> auto-activates at the plugin's
+#      own default path. Must explicitly unset in a subshell: the harness's
+#      global export (set once at the top of this file for every other test's
+#      convenience) would otherwise mask this exact case.
+FRESH_B="$WORK/fresh-b"
+mkdir -p "$FRESH_B"
+( cd "$FRESH_B" && git init -q && git commit -q --allow-empty -m init ) 2>/dev/null
+O6=$(printf '%s' '{"source":"startup","session_id":"T"}' | (unset THROUGHLINE_DATA_DIR; CLAUDE_PROJECT_DIR="$FRESH_B" sh "$H/session-onboard.sh"))
+has     "onboard auto-activates at the default path when unset" "$O6" 'throughline'
+dir_present "default .claude/throughline/ dir created when unset" "$FRESH_B/.claude/throughline"
+
+# 12c. a .throughlineignore marker at the project root disables throughline
+#      unconditionally, even though auto-activation would otherwise apply -
+#      the opt-out escape hatch.
+FRESH_C="$WORK/fresh-c"
+mkdir -p "$FRESH_C"
+( cd "$FRESH_C" && git init -q && git commit -q --allow-empty -m init ) 2>/dev/null
+: > "$FRESH_C/.throughlineignore"
+O7=$(printf '%s' '{"source":"startup","session_id":"T"}' | CLAUDE_PROJECT_DIR="$FRESH_C" sh "$H/session-onboard.sh")
+eq "onboard stays silent when .throughlineignore is present" "$O7" ""
+absent "no data dir created under an ignored project" "$FRESH_C/.claude"
+printf '%s' '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"x","command":"id"}}' | CLAUDE_PROJECT_DIR="$FRESH_C" sh "$H/session-capture.sh"
+absent "capture writes nothing under an ignored project" "$FRESH_C/.claude/throughline/buffer/session-T.md"
+
+# 12d. capture.sh called FIRST (no prior onboard call) on a fresh project also
+#      auto-activates - proving the bootstrap lives in the shared tl_active
+#      helper, not wired to one specific hook.
+FRESH_D="$WORK/fresh-d"
+mkdir -p "$FRESH_D"
+( cd "$FRESH_D" && git init -q && git commit -q --allow-empty -m init ) 2>/dev/null
+printf '%s' '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"x","command":"id"}}' | CLAUDE_PROJECT_DIR="$FRESH_D" sh "$H/session-capture.sh"
+present "capture-first auto-activates and writes a buffer entry" "$FRESH_D/.claude/throughline/buffer/session-T.md"
+
+# 12e. a FAILED bootstrap must not look identical to a deliberate
+#      .throughlineignore opt-out: onboard surfaces a distinct warning rather
+#      than staying silent, so the failure is diagnosable instead of
+#      masquerading as "user opted out."
+FRESH_E="$WORK/fresh-e"
+mkdir -p "$FRESH_E"
+( cd "$FRESH_E" && git init -q && git commit -q --allow-empty -m init ) 2>/dev/null
+if [ "$(id -u)" != "0" ]; then
+  chmod 555 "$FRESH_E" 2>/dev/null
+  O8=$(printf '%s' '{"source":"startup","session_id":"T"}' | CLAUDE_PROJECT_DIR="$FRESH_E" sh "$H/session-onboard.sh")
+  chmod 755 "$FRESH_E" 2>/dev/null
+  has    "failed bootstrap surfaces a distinct warning" "$O8" 'could not create its data directory'
+  absent "failed bootstrap does not create the data dir" "$FRESH_E/.claude"
+  hasnt  "failed bootstrap warning does not leak the absolute project path" "$O8" "$FRESH_E"
+else
+  ok "failed-bootstrap warning test skipped (running as root)"
+  ok "failed-bootstrap no-dir-created test skipped (running as root)"
+  ok "failed-bootstrap path-relativization test skipped (running as root)"
+fi
+
+# 12f. first activation nudges toward gitignoring the buffer - but only when
+#      it is not already covered, using git's own ignore resolution rather
+#      than a hand-rolled pattern match.
+FRESH_F="$WORK/fresh-f"
+mkdir -p "$FRESH_F"
+( cd "$FRESH_F" && git init -q && git commit -q --allow-empty -m init ) 2>/dev/null
+O9=$(printf '%s' '{"source":"startup","session_id":"T"}' | CLAUDE_PROJECT_DIR="$FRESH_F" sh "$H/session-onboard.sh")
+has "first activation nudges to gitignore the buffer when not covered" "$O9" 'not gitignored yet'
+
+FRESH_G="$WORK/fresh-g"
+mkdir -p "$FRESH_G"
+printf '.claude/throughline/buffer/\n' > "$FRESH_G/.gitignore"
+( cd "$FRESH_G" && git init -q && git add .gitignore && git commit -q -m init ) 2>/dev/null
+O10=$(printf '%s' '{"source":"startup","session_id":"T"}' | CLAUDE_PROJECT_DIR="$FRESH_G" sh "$H/session-onboard.sh")
+hasnt "no gitignore nudge when the buffer is already covered" "$O10" 'not gitignored yet'
+
+# 12g. flush still stamps an ALREADY-EXISTING buffer even if .throughlineignore
+#      appears mid-session: its job is to finalize a session that legitimately
+#      captured, not to decide whether tracking should continue. Without this,
+#      a later opt-out decision would silently corrupt an already-recorded
+#      session's bookkeeping.
+FRESH_H="$WORK/fresh-h"
+mkdir -p "$FRESH_H"
+( cd "$FRESH_H" && git init -q && git commit -q --allow-empty -m init ) 2>/dev/null
+printf '%s' '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"x","command":"id"}}' | CLAUDE_PROJECT_DIR="$FRESH_H" sh "$H/session-capture.sh"
+: > "$FRESH_H/.throughlineignore"
+printf '%s' '{"session_id":"T","reason":"end"}' | CLAUDE_PROJECT_DIR="$FRESH_H" sh "$H/session-flush.sh"
+has "flush still stamps a session that was already tracked, despite a new .throughlineignore" \
+  "$(cat "$FRESH_H/.claude/throughline/buffer/session-T.md" 2>/dev/null)" '<!-- session-ended'
+
+# 12h. same reasoning, for precompact's boundary marker.
+FRESH_I="$WORK/fresh-i"
+mkdir -p "$FRESH_I"
+( cd "$FRESH_I" && git init -q && git commit -q --allow-empty -m init ) 2>/dev/null
+printf '%s' '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"x","command":"id"}}' | CLAUDE_PROJECT_DIR="$FRESH_I" sh "$H/session-capture.sh"
+: > "$FRESH_I/.throughlineignore"
+printf '%s' '{"session_id":"T","trigger":"manual"}' | CLAUDE_PROJECT_DIR="$FRESH_I" sh "$H/session-precompact.sh"
+has "precompact still stamps a session that was already tracked, despite a new .throughlineignore" \
+  "$(cat "$FRESH_I/.claude/throughline/buffer/session-T.md" 2>/dev/null)" '<!-- compaction-boundary'
+
+# 12i. a project that was ALREADY active (has a HANDOFF.md) still gets full
+#      onboard orientation - the HANDOFF.md pointer, capture-errors surfacing,
+#      unconsumed-buffer warnings - even after .throughlineignore appears.
+#      .throughlineignore means "stop adding new content", not "stop telling
+#      me what already exists"; tl_data_exists (not tl_active) gates whether
+#      there is anything to report.
+FRESH_J="$WORK/fresh-j"
+mkdir -p "$FRESH_J/.claude/throughline"
+printf -- '# Test\n**Last Updated:** 2024-01-01\n' > "$FRESH_J/.claude/throughline/HANDOFF.md"
+( cd "$FRESH_J" && git init -q && git commit -q --allow-empty -m init ) 2>/dev/null
+: > "$FRESH_J/.throughlineignore"
+O11=$(printf '%s' '{"source":"startup","session_id":"T"}' | CLAUDE_PROJECT_DIR="$FRESH_J" sh "$H/session-onboard.sh")
+has "onboard still points to an existing HANDOFF.md despite .throughlineignore" "$O11" 'Durable handoff exists'
+
+# 12j. the gitignore nudge fires even AFTER a HANDOFF.md exists, as long as
+#      the buffer genuinely still is not covered - it used to be nested only
+#      inside the "no HANDOFF.md yet" branch, so it permanently stopped firing
+#      the moment the first handoff ran regardless of gitignore state.
+FRESH_K="$WORK/fresh-k"
+mkdir -p "$FRESH_K/.claude/throughline"
+printf -- '# Test\n**Last Updated:** 2024-01-01\n' > "$FRESH_K/.claude/throughline/HANDOFF.md"
+( cd "$FRESH_K" && git init -q && git commit -q --allow-empty -m init ) 2>/dev/null
+O12=$(printf '%s' '{"source":"startup","session_id":"T"}' | CLAUDE_PROJECT_DIR="$FRESH_K" sh "$H/session-onboard.sh")
+has "gitignore nudge still fires after a handoff has already run" "$O12" 'not gitignored yet'
+
+# 12k. the gitignore nudge does not repeat on a `compact` re-fire within the
+#      same already-running session - it still fires on genuinely new session
+#      starts until the buffer is actually covered.
+FRESH_L="$WORK/fresh-l"
+mkdir -p "$FRESH_L"
+( cd "$FRESH_L" && git init -q && git commit -q --allow-empty -m init ) 2>/dev/null
+mkdir -p "$FRESH_L/.claude/throughline"
+O13=$(printf '%s' '{"source":"compact","session_id":"T"}' | CLAUDE_PROJECT_DIR="$FRESH_L" sh "$H/session-onboard.sh")
+hasnt "gitignore nudge is suppressed on a compact re-fire" "$O13" 'not gitignored yet'
+
+# 12l. the gitignore nudge is skipped entirely when THROUGHLINE_DATA_DIR is an
+#      absolute path OUTSIDE the project's own git tree (a documented,
+#      supported cross-harness configuration) - `git check-ignore` on a path
+#      outside the repo fails with a fatal error rather than "not ignored",
+#      which the negated check would otherwise treat identically to "not
+#      gitignored", printing an unsatisfiable warning on every SessionStart
+#      forever (a path outside the repo can never be matched by that repo's
+#      .gitignore).
+FRESH_M="$WORK/fresh-m"
+OUTSIDE_DATA="$WORK/outside-data"
+mkdir -p "$FRESH_M"
+( cd "$FRESH_M" && git init -q && git commit -q --allow-empty -m init ) 2>/dev/null
+O14=$(printf '%s' '{"source":"startup","session_id":"T"}' | CLAUDE_PROJECT_DIR="$FRESH_M" THROUGHLINE_DATA_DIR="$OUTSIDE_DATA" sh "$H/session-onboard.sh")
+hasnt "no gitignore nudge when the data dir is outside the git tree" "$O14" 'not gitignored yet'
 
 # 13. capture breadcrumbs a swallowed write failure and onboard surfaces it.
 #     Chmod the SESSION FILE itself read-only (not the directory): appending to
