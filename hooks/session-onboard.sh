@@ -31,7 +31,7 @@ if ! tl_data_exists && ! tl_active; then
   # "no more silent chicken-and-egg trap" this auto-activation exists to fix
   # becomes a new, harder-to-diagnose silent failure of its own.
   if [ "${_tl_active_reason:-}" = "bootstrap-failed" ]; then
-    echo "⚠️ throughline could not create its data directory (\`$data\`) - check permissions/disk space on the project root. Capture will not run until this is resolved."
+    echo "⚠️ throughline could not create its data directory (\`${data#"$root"/}\`) - check permissions/disk space on the project root. Capture will not run until this is resolved."
   fi
   exit 0
 fi
@@ -95,12 +95,24 @@ fi
 # on every new session start until the buffer is actually covered. Uses git's
 # own ignore resolution (a trailing slash lets it match a directory pattern
 # even before the buffer dir itself exists) rather than a hand-rolled pattern
-# match, so this only fires when it is actually needed.
-if [ "$src" != "compact" ] && [ "$in_worktree" = "1" ] \
-  && ! git -C "$root" check-ignore -q "$bufdir/" 2>/dev/null; then
-  echo
-  echo "⚠️ \`${bufdir#"$root"/}/\` is not gitignored yet - it can contain raw command/path text (best-effort redacted only). Add it to \`.gitignore\` before committing."
-fi
+# match, so this only fires when it is actually needed. Skipped entirely when
+# $data lives outside the project's own git tree (an absolute
+# THROUGHLINE_DATA_DIR pointed at a shared, cross-harness location - a
+# documented, supported configuration): `git check-ignore` on a path outside
+# the repo fails with a fatal error rather than "not ignored", which the
+# negated check here would otherwise treat identically to "not gitignored" -
+# printing an unsatisfiable warning on every single SessionStart forever,
+# since a path outside the repo can never be matched by that repo's
+# .gitignore in the way check-ignore verifies.
+case "$data" in
+  "$root"/*)
+    if [ "$src" != "compact" ] && [ "$in_worktree" = "1" ] \
+      && ! git -C "$root" check-ignore -q "$bufdir/" 2>/dev/null; then
+      echo
+      echo "⚠️ \`${bufdir#"$root"/}/\` is not gitignored yet - it can contain raw command/path text (best-effort redacted only). Add it to \`.gitignore\` before committing."
+    fi
+    ;;
+esac
 
 # Post-compaction recovery: the conversation was just summarized, but this
 # session's buffer is intact on disk. Point Claude at it explicitly.

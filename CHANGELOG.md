@@ -57,9 +57,12 @@ a silent chicken-and-egg trap" finding raised in the original v0.1.0 review
   would be silently skipped for a session that had already legitimately
   captured - permanently mislabeling a completed session as "could be live
   elsewhere" instead of "confirmed ended." Both hooks now check only for an
-  existing data dir (no ignore-file veto, no bootstrap) before finalizing
-  bookkeeping for a buffer that already exists; `capture` is unaffected and
-  still stops recording new actions the moment the opt-out appears.
+  existing *buffer* directory - narrower than the data dir itself, and
+  deliberately not `tl_data_exists`: a data dir that was bootstrapped but never
+  actually captured anything (no buffer/ ever created) has nothing to finalize
+  either - with no ignore-file veto and no bootstrap, before finalizing
+  bookkeeping for a session file that already exists; `capture` is unaffected
+  and still stops recording new actions the moment the opt-out appears.
 - **A mid-life `.throughlineignore` no longer silences orientation toward
   content that already exists.** A review pass found that adding the opt-out
   marker to a project that was *already* tracked (had a committed `HANDOFF.md`)
@@ -70,13 +73,27 @@ a silent chicken-and-egg trap" finding raised in the original v0.1.0 review
   data dir or `HANDOFF.md`, independent of the opt-out) now gates whether
   `onboard` has anything to report; `tl_active` (which does honor the opt-out,
   and bootstraps) is only consulted when there is nothing yet.
-- **15 new test cases** (86 total) covering auto-activation with
+- **The gitignore nudge no longer nags forever when the data dir lives outside
+  the git tree.** An absolute `THROUGHLINE_DATA_DIR` pointed at a shared,
+  cross-harness location (a documented, supported configuration) made
+  `git check-ignore` fail with a fatal error instead of "not ignored"; the
+  negated check treated that identically to "not gitignored," so the nudge
+  printed on every single `SessionStart` forever, with no way to satisfy it (a
+  path outside the repo can never be matched by that repo's `.gitignore`). The
+  nudge is now skipped entirely when the data dir isn't under the project root.
+- **The bootstrap-failure warning no longer leaks the absolute project path.**
+  Every other message in `onboard` strips to a repo-relative path before
+  printing; this one interpolated the raw (absolute) path, the one place
+  throughline's output surfaced local machine/username details into the
+  transcript. Fixed to match the rest of the file.
+- **17 new test cases** (88 total) covering auto-activation with
   `THROUGHLINE_DATA_DIR` set and unset (via onboard), auto-activation via
   `session-capture.sh` called first (proving the bootstrap lives in the shared
   `tl_active` helper, not one specific hook), the `.throughlineignore` opt-out,
-  a failed bootstrap surfacing its distinct warning, the gitignore nudge firing
-  only when needed (including after a handoff has already run, and not
-  repeating on a `compact` re-fire), `flush`/`precompact` still finalizing an
+  a failed bootstrap surfacing its distinct warning with a relativized path,
+  the gitignore nudge firing only when needed (including after a handoff has
+  already run, not repeating on a `compact` re-fire, and not firing when the
+  data dir is outside the git tree), `flush`/`precompact` still finalizing an
   already-tracked session despite a mid-session `.throughlineignore`, and
   `onboard` still orienting toward existing content despite a mid-life
   `.throughlineignore`. The v0.2.0 "inactive project stays silent" test is

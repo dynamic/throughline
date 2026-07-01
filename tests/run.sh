@@ -355,9 +355,11 @@ if [ "$(id -u)" != "0" ]; then
   chmod 755 "$FRESH_E" 2>/dev/null
   has    "failed bootstrap surfaces a distinct warning" "$O8" 'could not create its data directory'
   absent "failed bootstrap does not create the data dir" "$FRESH_E/.claude"
+  hasnt  "failed bootstrap warning does not leak the absolute project path" "$O8" "$FRESH_E"
 else
   ok "failed-bootstrap warning test skipped (running as root)"
   ok "failed-bootstrap no-dir-created test skipped (running as root)"
+  ok "failed-bootstrap path-relativization test skipped (running as root)"
 fi
 
 # 12f. first activation nudges toward gitignoring the buffer - but only when
@@ -434,6 +436,21 @@ mkdir -p "$FRESH_L"
 mkdir -p "$FRESH_L/.claude/throughline"
 O13=$(printf '%s' '{"source":"compact","session_id":"T"}' | CLAUDE_PROJECT_DIR="$FRESH_L" sh "$H/session-onboard.sh")
 hasnt "gitignore nudge is suppressed on a compact re-fire" "$O13" 'not gitignored yet'
+
+# 12l. the gitignore nudge is skipped entirely when THROUGHLINE_DATA_DIR is an
+#      absolute path OUTSIDE the project's own git tree (a documented,
+#      supported cross-harness configuration) - `git check-ignore` on a path
+#      outside the repo fails with a fatal error rather than "not ignored",
+#      which the negated check would otherwise treat identically to "not
+#      gitignored", printing an unsatisfiable warning on every SessionStart
+#      forever (a path outside the repo can never be matched by that repo's
+#      .gitignore).
+FRESH_M="$WORK/fresh-m"
+OUTSIDE_DATA="$WORK/outside-data"
+mkdir -p "$FRESH_M"
+( cd "$FRESH_M" && git init -q && git commit -q --allow-empty -m init ) 2>/dev/null
+O14=$(printf '%s' '{"source":"startup","session_id":"T"}' | CLAUDE_PROJECT_DIR="$FRESH_M" THROUGHLINE_DATA_DIR="$OUTSIDE_DATA" sh "$H/session-onboard.sh")
+hasnt "no gitignore nudge when the data dir is outside the git tree" "$O14" 'not gitignored yet'
 
 # 13. capture breadcrumbs a swallowed write failure and onboard surfaces it.
 #     Chmod the SESSION FILE itself read-only (not the directory): appending to
