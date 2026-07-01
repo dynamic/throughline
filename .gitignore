@@ -1,7 +1,11 @@
 .DS_Store
 *.log
 
-# This repo ships the plugin; it does not store user session data.
-# (In a consuming project, gitignore .claude/throughline/buffer/ instead.)
-.claude/throughline/
-.agent/handoff/
+# Scratch state only, per throughline's own documented commit policy (README
+# "Commit policy"): HANDOFF.md and logs/ ARE meant to be committed - this repo
+# now dogfoods itself via THROUGHLINE_DATA_DIR=.agent/handoff, so its own
+# HANDOFF.md is tracked like any consuming project's would be.
+.claude/throughline/buffer/
+.claude/throughline/.capture-errors
+.agent/handoff/buffer/
+.agent/handoff/.capture-errors

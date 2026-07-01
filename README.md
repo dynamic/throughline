@@ -113,12 +113,16 @@ project, add an empty marker file at the project root:
 touch .throughlineignore
 ```
 
-With that file present, throughline stays completely silent there - no data dir is
-created, and all four hooks no-op - regardless of `THROUGHLINE_DATA_DIR` or any
-pre-existing `.claude/throughline/`. The opt-out wins even over a project that was
-already active: existing `HANDOFF.md`/`logs/` are left in place, throughline just
-stops touching the project. Remove the file to re-enable. Commit it like
-`.gitignore` so the policy is shared with teammates.
+With that file present, no new data dir is created, and `onboard`/`capture` stop
+adding anything new - regardless of `THROUGHLINE_DATA_DIR` or any pre-existing
+`.claude/throughline/`. The opt-out wins even over a project that was already
+active: existing `HANDOFF.md`/`logs/` are left in place, and no *new* activity is
+recorded. One nuance: if a session was already being captured when the file
+appears, `flush`/`precompact` still finalize that one session's already-existing
+buffer (its end-stamp or compaction marker) rather than leaving it in a permanent
+"still live?" limbo - they don't create anything new, they just avoid corrupting
+bookkeeping for work that had already legitimately started. Remove the file to
+re-enable. Commit it like `.gitignore` so the policy is shared with teammates.
 
 **Cross-harness handoffs.** The data dir is the one knob that makes throughline
 portable. Point it at `.agent/handoff` and the durable `HANDOFF.md` it produces lives

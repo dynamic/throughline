@@ -30,6 +30,13 @@ root=$(tl_root)
 data=$(tl_data_dir)
 hf="$data/HANDOFF.md"
 bufdir="$data/buffer"
+# Computed once and reused below (the gitignore nudge and the live-git-state
+# block both need it) rather than spawning git twice per SessionStart.
+if git -C "$root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  in_worktree=1
+else
+  in_worktree=0
+fi
 
 # Parse the SessionStart payload (best-effort; jq may be absent). `source` is one
 # of startup|resume|clear|compact; `session_id` keys this session's buffer.
@@ -75,8 +82,7 @@ else
   # git's own ignore resolution (a trailing slash lets it match a directory
   # pattern even before the buffer dir itself exists) rather than a hand-
   # rolled pattern match, so this only fires when it is actually needed.
-  if git -C "$root" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
-    && ! git -C "$root" check-ignore -q "$bufdir/" 2>/dev/null; then
+  if [ "$in_worktree" = "1" ] && ! git -C "$root" check-ignore -q "$bufdir/" 2>/dev/null; then
     echo "⚠️ \`${bufdir#"$root"/}/\` is not gitignored yet - it can contain raw command/path text (best-effort redacted only). Add it to \`.gitignore\` before committing."
   fi
 fi
@@ -118,7 +124,7 @@ if [ -d "$bufdir" ]; then
   fi
 fi
 
-if git -C "$root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+if [ "$in_worktree" = "1" ]; then
   echo
   echo "### Live git state"
   echo '```'

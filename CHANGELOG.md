@@ -39,11 +39,13 @@ a silent chicken-and-egg trap" finding raised in the original v0.1.0 review
   had a silent failure mode of its own. `tl_active` now sets an internal reason
   the caller can inspect; `onboard` (the one hook with a visible voice) surfaces
   a distinct warning naming the data dir it could not create.
-- **First activation nudges toward gitignoring the buffer.** Auto-activation can
-  now be the very first thing that happens in a project, with no manual opt-in
-  step to naturally prompt the user to set up `.gitignore` first. `onboard`
-  checks with `git check-ignore` (not a hand-rolled pattern match) and warns
-  once, only when the buffer isn't already covered.
+- **Nudges toward gitignoring the buffer before a handoff has run.** Auto-
+  activation can now be the very first thing that happens in a project, with no
+  manual opt-in step to naturally prompt the user to set up `.gitignore` first.
+  `onboard` checks with `git check-ignore` (not a hand-rolled pattern match) and
+  warns only when the buffer isn't already covered - on every `SessionStart`
+  until either the buffer gets gitignored or the first handoff writes a
+  `HANDOFF.md`, not just a single one-time notice.
 - **`flush`/`precompact` no longer let a mid-session `.throughlineignore` corrupt
   an already-tracked session's bookkeeping.** Both used to gate on the same
   `tl_active` as `onboard`/`capture`, so if the opt-out marker appeared between a
