@@ -3,6 +3,42 @@
 All notable changes to throughline are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); this project uses semantic versioning.
 
+## [0.3.0]
+
+A deliberate reversal of the "silent until opted in" activation model. Through
+v0.2.0, throughline only tracked a project once a data dir already existed - which
+in practice meant only once a handoff had already run once. That was a
+chicken-and-egg trap (capture never started until a handoff ran, but a handoff had
+nothing to distill until capture had run), and it is the exact "activation gate is
+a silent chicken-and-egg trap" finding raised in the original v0.1.0 review
+(`docs/REVIEW-v0.1.0.md`) - never actually fixed until now.
+
+### Changed
+- **throughline now auto-activates in every project.** The first time any hook
+  fires, `tl_active` creates the data dir on demand, so continuous capture works
+  from the first session with no manual opt-in - whether `THROUGHLINE_DATA_DIR` is
+  set or the default `.claude/throughline/` is used. This is a **behavior
+  reversal, not a bug fix**: the previous "stays silent in unrelated repos until
+  opted in" guarantee (previously advertised in the README) is intentionally
+  removed, and this affects every consumer of the published plugin, not just one
+  repo. The `SessionStart` onboard block now appears in every non-ignored project.
+
+### Added
+- **`.throughlineignore` opt-out marker.** An empty file named
+  `.throughlineignore` at the project root disables throughline for that project
+  unconditionally - no data dir is created and all four hooks no-op - regardless
+  of `THROUGHLINE_DATA_DIR` or any pre-existing data dir/`HANDOFF.md`. The opt-out
+  is checked first in `tl_active`, so it wins even for a project that was
+  previously active; existing `HANDOFF.md`/`logs/` are left untouched, throughline
+  simply stops touching the project. Documented under "Opting a project out" in
+  the README.
+- **6 new test cases** (77 total) covering auto-activation with
+  `THROUGHLINE_DATA_DIR` set and unset (via onboard), auto-activation via
+  `session-capture.sh` called first (proving the bootstrap lives in the shared
+  `tl_active` helper, not one specific hook), and the `.throughlineignore`
+  opt-out. The v0.2.0 "inactive project stays silent" test is rewritten to the
+  new model.
+
 ## [0.2.0]
 
 A robustness, privacy, and compaction-survival pass driven by a four-lens review

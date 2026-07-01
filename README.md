@@ -99,8 +99,26 @@ export THROUGHLINE_DATA_DIR=.agent/handoff
 ```
 
 - Relative values resolve against the project root; absolute values are used as-is.
-- throughline stays silent in a project until that project is opted in (the data dir
-  exists, or a HANDOFF.md is present) - no noise in unrelated repos.
+- throughline auto-activates in every project: the first time any hook fires it
+  creates its data dir on demand, so capture starts working immediately with no
+  manual opt-in. To keep it out of a specific project, drop an empty
+  `.throughlineignore` file at the project root (see "Opting a project out" below).
+
+### Opting a project out
+
+throughline activates automatically in every project. To disable it for one
+project, add an empty marker file at the project root:
+
+```sh
+touch .throughlineignore
+```
+
+With that file present, throughline stays completely silent there - no data dir is
+created, and all four hooks no-op - regardless of `THROUGHLINE_DATA_DIR` or any
+pre-existing `.claude/throughline/`. The opt-out wins even over a project that was
+already active: existing `HANDOFF.md`/`logs/` are left in place, throughline just
+stops touching the project. Remove the file to re-enable. Commit it like
+`.gitignore` so the policy is shared with teammates.
 
 **Cross-harness handoffs.** The data dir is the one knob that makes throughline
 portable. Point it at `.agent/handoff` and the durable `HANDOFF.md` it produces lives

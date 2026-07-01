@@ -26,12 +26,19 @@ tl_data_dir() {
   fi
 }
 
-# True when this project should be tracked: the data dir already exists, or a
-# HANDOFF.md is present in it. Keeps throughline silent in unrelated repos until
-# the user opts a project in by running the handoff once.
+# Activation decision for this project, in strict precedence:
+#   1. .throughlineignore at the project root -> OFF unconditionally (wins even
+#      over an existing data dir; existing data is left untouched, not deleted).
+#   2. data dir already exists, or a HANDOFF.md is present -> already active.
+#   3. otherwise auto-activate: bootstrap the data dir. Every project touched by
+#      Claude Code with throughline installed activates on the first hook fire.
+# Returns non-zero (stay silent) if the opt-out marker is present, or if the
+# bootstrap mkdir fails - so any hook that proceeds past this call is guaranteed
+# a data dir on disk (session-capture.sh's breadcrumb path depends on that).
 tl_active() {
+  [ -f "$(tl_root)/.throughlineignore" ] && return 1
   _tl_d=$(tl_data_dir)
-  [ -d "$_tl_d" ] || [ -f "$_tl_d/HANDOFF.md" ]
+  [ -d "$_tl_d" ] || [ -f "$_tl_d/HANDOFF.md" ] || mkdir -p "$_tl_d" 2>/dev/null
 }
 
 # jq is a hard dependency for capture (it parses the hook payload). When it is
