@@ -1,11 +1,15 @@
 .DS_Store
 *.log
 
-# Scratch state only, per throughline's own documented commit policy (README
-# "Commit policy"): HANDOFF.md and logs/ ARE meant to be committed - this repo
-# now dogfoods itself via THROUGHLINE_DATA_DIR=.agent/handoff, so its own
-# HANDOFF.md is tracked like any consuming project's would be.
-.claude/throughline/buffer/
-.claude/throughline/.capture-errors
-.agent/handoff/buffer/
-.agent/handoff/.capture-errors
+# This repo is throughline's own public source, not a project consuming the
+# plugin - the README's "Commit policy" (HANDOFF.md/logs/ should be committed,
+# only buffer/ and .capture-errors are scratch) is guidance for consuming
+# projects, not a rule for this repo. Here, all session data - however
+# THROUGHLINE_DATA_DIR is configured - stays purely local; the maintainer's
+# own dev notes aren't tracked in the public repo. Deliberate choice, not an
+# oversight (a prior version of this file scoped only buffer/ and
+# .capture-errors here too, which silently blocked committing this repo's own
+# already-written HANDOFF.md - if that policy ever changes, narrow these back
+# to match the README's documented pattern).
+.claude/throughline/
+.agent/handoff/
