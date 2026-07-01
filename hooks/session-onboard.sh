@@ -14,20 +14,27 @@
 DIR=$(unset CDPATH; cd -- "$(dirname -- "$0")" && pwd)
 . "${CLAUDE_PLUGIN_ROOT:-$DIR/..}/hooks/_lib.sh" 2>/dev/null || . "$DIR/_lib.sh"
 
-if ! tl_active; then
+root=$(tl_root)
+data=$(tl_data_dir)
+
+# tl_data_exists (not tl_active) gates whether there is anything to report:
+# existing state deserves orientation even when .throughlineignore is present
+# - the opt-out means "stop adding new content," not "stop telling me what
+# already exists" (a mid-life opt-out on an already-tracked project used to
+# silence the HANDOFF.md pointer, capture-errors, and unconsumed-buffer
+# warnings too, which was never the intent). Only fall through to tl_active
+# (which does honor the opt-out, and bootstraps) when there is nothing yet.
+if ! tl_data_exists && ! tl_active; then
   # Distinguish a deliberate .throughlineignore opt-out (stay silent, as
   # designed) from a failed auto-activation bootstrap (permissions, disk
   # full) - the latter must not look identical to the former, or the very
   # "no more silent chicken-and-egg trap" this auto-activation exists to fix
   # becomes a new, harder-to-diagnose silent failure of its own.
   if [ "${_tl_active_reason:-}" = "bootstrap-failed" ]; then
-    echo "⚠️ throughline could not create its data directory (\`$(tl_data_dir)\`) - check permissions/disk space on the project root. Capture will not run until this is resolved."
+    echo "⚠️ throughline could not create its data directory (\`$data\`) - check permissions/disk space on the project root. Capture will not run until this is resolved."
   fi
   exit 0
 fi
-
-root=$(tl_root)
-data=$(tl_data_dir)
 hf="$data/HANDOFF.md"
 bufdir="$data/buffer"
 # Computed once and reused below (the gitignore nudge and the live-git-state
@@ -75,16 +82,24 @@ if [ -f "$hf" ]; then
   grep -m1 -i "last updated" "$hf" 2>/dev/null
 else
   echo "No HANDOFF.md yet for this project. One will be written at the next handoff."
-  # First activation (no handoff has run yet): nudge toward gitignoring the
-  # buffer before anything gets committed. Auto-activation means this can now
-  # be the very first thing to happen in a project, with no manual opt-in step
-  # that would have naturally prompted the user to set this up first. Uses
-  # git's own ignore resolution (a trailing slash lets it match a directory
-  # pattern even before the buffer dir itself exists) rather than a hand-
-  # rolled pattern match, so this only fires when it is actually needed.
-  if [ "$in_worktree" = "1" ] && ! git -C "$root" check-ignore -q "$bufdir/" 2>/dev/null; then
-    echo "⚠️ \`${bufdir#"$root"/}/\` is not gitignored yet - it can contain raw command/path text (best-effort redacted only). Add it to \`.gitignore\` before committing."
-  fi
+fi
+
+# Nudge toward gitignoring the buffer before anything gets committed.
+# Deliberately NOT gated on "no HANDOFF.md yet": that used to be its only
+# guard, which meant the nudge permanently stopped firing the moment the
+# first handoff ran, even if the buffer was still never actually gitignored.
+# Auto-activation means this can now be the very first thing to happen in a
+# project, with no manual opt-in step that would have naturally prompted the
+# user to set this up first. Skipped on `compact` re-fires so it does not
+# repeat within one already-running session as it compacts - it still fires
+# on every new session start until the buffer is actually covered. Uses git's
+# own ignore resolution (a trailing slash lets it match a directory pattern
+# even before the buffer dir itself exists) rather than a hand-rolled pattern
+# match, so this only fires when it is actually needed.
+if [ "$src" != "compact" ] && [ "$in_worktree" = "1" ] \
+  && ! git -C "$root" check-ignore -q "$bufdir/" 2>/dev/null; then
+  echo
+  echo "⚠️ \`${bufdir#"$root"/}/\` is not gitignored yet - it can contain raw command/path text (best-effort redacted only). Add it to \`.gitignore\` before committing."
 fi
 
 # Post-compaction recovery: the conversation was just summarized, but this

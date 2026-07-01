@@ -400,6 +400,41 @@ printf '%s' '{"session_id":"T","trigger":"manual"}' | CLAUDE_PROJECT_DIR="$FRESH
 has "precompact still stamps a session that was already tracked, despite a new .throughlineignore" \
   "$(cat "$FRESH_I/.claude/throughline/buffer/session-T.md" 2>/dev/null)" '<!-- compaction-boundary'
 
+# 12i. a project that was ALREADY active (has a HANDOFF.md) still gets full
+#      onboard orientation - the HANDOFF.md pointer, capture-errors surfacing,
+#      unconsumed-buffer warnings - even after .throughlineignore appears.
+#      .throughlineignore means "stop adding new content", not "stop telling
+#      me what already exists"; tl_data_exists (not tl_active) gates whether
+#      there is anything to report.
+FRESH_J="$WORK/fresh-j"
+mkdir -p "$FRESH_J/.claude/throughline"
+printf -- '# Test\n**Last Updated:** 2024-01-01\n' > "$FRESH_J/.claude/throughline/HANDOFF.md"
+( cd "$FRESH_J" && git init -q && git commit -q --allow-empty -m init ) 2>/dev/null
+: > "$FRESH_J/.throughlineignore"
+O11=$(printf '%s' '{"source":"startup","session_id":"T"}' | CLAUDE_PROJECT_DIR="$FRESH_J" sh "$H/session-onboard.sh")
+has "onboard still points to an existing HANDOFF.md despite .throughlineignore" "$O11" 'Durable handoff exists'
+
+# 12j. the gitignore nudge fires even AFTER a HANDOFF.md exists, as long as
+#      the buffer genuinely still is not covered - it used to be nested only
+#      inside the "no HANDOFF.md yet" branch, so it permanently stopped firing
+#      the moment the first handoff ran regardless of gitignore state.
+FRESH_K="$WORK/fresh-k"
+mkdir -p "$FRESH_K/.claude/throughline"
+printf -- '# Test\n**Last Updated:** 2024-01-01\n' > "$FRESH_K/.claude/throughline/HANDOFF.md"
+( cd "$FRESH_K" && git init -q && git commit -q --allow-empty -m init ) 2>/dev/null
+O12=$(printf '%s' '{"source":"startup","session_id":"T"}' | CLAUDE_PROJECT_DIR="$FRESH_K" sh "$H/session-onboard.sh")
+has "gitignore nudge still fires after a handoff has already run" "$O12" 'not gitignored yet'
+
+# 12k. the gitignore nudge does not repeat on a `compact` re-fire within the
+#      same already-running session - it still fires on genuinely new session
+#      starts until the buffer is actually covered.
+FRESH_L="$WORK/fresh-l"
+mkdir -p "$FRESH_L"
+( cd "$FRESH_L" && git init -q && git commit -q --allow-empty -m init ) 2>/dev/null
+mkdir -p "$FRESH_L/.claude/throughline"
+O13=$(printf '%s' '{"source":"compact","session_id":"T"}' | CLAUDE_PROJECT_DIR="$FRESH_L" sh "$H/session-onboard.sh")
+hasnt "gitignore nudge is suppressed on a compact re-fire" "$O13" 'not gitignored yet'
+
 # 13. capture breadcrumbs a swallowed write failure and onboard surfaces it.
 #     Chmod the SESSION FILE itself read-only (not the directory): appending to
 #     an existing file is gated by the file's own write bit, independent of the

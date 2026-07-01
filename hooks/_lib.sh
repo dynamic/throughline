@@ -26,9 +26,28 @@ tl_data_dir() {
   fi
 }
 
+# True when a data dir already exists for this project, or a HANDOFF.md is
+# present in it - independent of .throughlineignore. Kept separate from
+# tl_active (which also decides whether to bootstrap and honors the opt-out)
+# because two different needs already required a query without the mutation:
+# session-flush.sh/session-precompact.sh need to finalize bookkeeping for a
+# buffer that already exists regardless of a mid-session opt-out, and
+# session-onboard.sh needs to keep orienting toward EXISTING content (a
+# HANDOFF.md pointer, unconsumed buffers) even when .throughlineignore is
+# present - the opt-out means "stop adding new content," not "stop telling me
+# what already exists." A prior version bundled both into tl_active alone,
+# which forced those callers to re-derive this check inline with a comment
+# explaining why they could not just call tl_active - a future caller reaching
+# for tl_active by name (it reads as a plain predicate) could easily miss the
+# bootstrap side effect and reintroduce that exact bug.
+tl_data_exists() {
+  _tl_d=$(tl_data_dir)
+  [ -d "$_tl_d" ] || [ -f "$_tl_d/HANDOFF.md" ]
+}
+
 # Activation decision for this project, in strict precedence:
-#   1. .throughlineignore at the project root -> OFF unconditionally (wins even
-#      over an existing data dir; existing data is left untouched, not deleted).
+#   1. .throughlineignore at the project root -> OFF for NEW tracking
+#      unconditionally (existing data, per tl_data_exists, is unaffected).
 #   2. data dir already exists, or a HANDOFF.md is present -> already active.
 #   3. otherwise auto-activate: bootstrap the data dir. Every project touched by
 #      Claude Code with throughline installed activates on the first hook fire.
@@ -49,10 +68,8 @@ tl_active() {
     _tl_active_reason="ignored"
     return 1
   fi
+  tl_data_exists && return 0
   _tl_d=$(tl_data_dir)
-  if [ -d "$_tl_d" ] || [ -f "$_tl_d/HANDOFF.md" ]; then
-    return 0
-  fi
   if mkdir -p "$_tl_d" 2>/dev/null; then
     return 0
   fi

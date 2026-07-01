@@ -39,13 +39,17 @@ a silent chicken-and-egg trap" finding raised in the original v0.1.0 review
   had a silent failure mode of its own. `tl_active` now sets an internal reason
   the caller can inspect; `onboard` (the one hook with a visible voice) surfaces
   a distinct warning naming the data dir it could not create.
-- **Nudges toward gitignoring the buffer before a handoff has run.** Auto-
-  activation can now be the very first thing that happens in a project, with no
-  manual opt-in step to naturally prompt the user to set up `.gitignore` first.
-  `onboard` checks with `git check-ignore` (not a hand-rolled pattern match) and
-  warns only when the buffer isn't already covered - on every `SessionStart`
-  until either the buffer gets gitignored or the first handoff writes a
-  `HANDOFF.md`, not just a single one-time notice.
+- **Nudges toward gitignoring the buffer.** Auto-activation can now be the very
+  first thing that happens in a project, with no manual opt-in step to naturally
+  prompt the user to set up `.gitignore` first. `onboard` checks with
+  `git check-ignore` (not a hand-rolled pattern match) and warns only when the
+  buffer isn't already covered. A follow-up review pass found this was nested
+  only inside the "no `HANDOFF.md` yet" branch, so it permanently stopped firing
+  the moment the first handoff ran, whether or not the buffer was ever actually
+  gitignored - moved out to fire independently of `HANDOFF.md`'s existence.
+  Skipped on `compact` re-fires so it doesn't repeat within one already-running
+  session as it compacts; it still fires on every new session start until the
+  buffer is actually covered.
 - **`flush`/`precompact` no longer let a mid-session `.throughlineignore` corrupt
   an already-tracked session's bookkeeping.** Both used to gate on the same
   `tl_active` as `onboard`/`capture`, so if the opt-out marker appeared between a
@@ -56,14 +60,27 @@ a silent chicken-and-egg trap" finding raised in the original v0.1.0 review
   existing data dir (no ignore-file veto, no bootstrap) before finalizing
   bookkeeping for a buffer that already exists; `capture` is unaffected and
   still stops recording new actions the moment the opt-out appears.
-- **12 new test cases** (83 total) covering auto-activation with
+- **A mid-life `.throughlineignore` no longer silences orientation toward
+  content that already exists.** A review pass found that adding the opt-out
+  marker to a project that was *already* tracked (had a committed `HANDOFF.md`)
+  made `onboard` exit silently before ever reaching the `HANDOFF.md` pointer,
+  capture-errors surfacing, or unconsumed-buffer warnings - `.throughlineignore`
+  is meant to mean "stop adding new content," not "stop telling me what already
+  exists." Split the query from the mutation: a new `tl_data_exists` (existing
+  data dir or `HANDOFF.md`, independent of the opt-out) now gates whether
+  `onboard` has anything to report; `tl_active` (which does honor the opt-out,
+  and bootstraps) is only consulted when there is nothing yet.
+- **15 new test cases** (86 total) covering auto-activation with
   `THROUGHLINE_DATA_DIR` set and unset (via onboard), auto-activation via
   `session-capture.sh` called first (proving the bootstrap lives in the shared
   `tl_active` helper, not one specific hook), the `.throughlineignore` opt-out,
   a failed bootstrap surfacing its distinct warning, the gitignore nudge firing
-  only when needed, and `flush`/`precompact` still finalizing an already-tracked
-  session despite a mid-session `.throughlineignore`. The v0.2.0 "inactive
-  project stays silent" test is rewritten to the new model.
+  only when needed (including after a handoff has already run, and not
+  repeating on a `compact` re-fire), `flush`/`precompact` still finalizing an
+  already-tracked session despite a mid-session `.throughlineignore`, and
+  `onboard` still orienting toward existing content despite a mid-life
+  `.throughlineignore`. The v0.2.0 "inactive project stays silent" test is
+  rewritten to the new model.
 
 ## [0.2.0]
 
