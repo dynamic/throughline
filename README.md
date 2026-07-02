@@ -56,6 +56,14 @@ Orientation is automated too: a `SessionStart` hook injects a HANDOFF.md pointer
 live git state, complementing Claude Code's native `MEMORY.md` load. The
 `throughline-onboard` skill does the full pass (open PRs/issues, deep read) on demand.
 
+And over months, the same lesson can appear in session log after session log without
+ever graduating. The `throughline-consolidate` skill is the periodic pass (monthly,
+or on demand) that mines the handoff logs for lessons recurring 2+ times and proposes
+promoting each one - to a global CLAUDE.md rule, an issue on the owning skill's
+source repo, a durable project section, or native memory - with every promotion
+gated on explicit per-item approval. Session logs stay untouched as historical
+records; only the durable copy moves.
+
 ## Surviving compaction
 
 When Claude Code compacts a long conversation, the transcript is summarized and
@@ -174,8 +182,9 @@ throughline/
 │  ├─ session-precompact.sh  # PreCompact: stamp the compaction-boundary marker
 │  └─ session-flush.sh       # SessionEnd: safety-net stamp
 ├─ skills/
-│  ├─ throughline-onboard/SKILL.md   # full orientation
-│  └─ throughline-handoff/SKILL.md   # judged distillation + memory binding
+│  ├─ throughline-onboard/SKILL.md     # full orientation
+│  ├─ throughline-handoff/SKILL.md     # judged distillation + memory binding
+│  └─ throughline-consolidate/SKILL.md # periodic promotion of recurring lessons
 ├─ tests/run.sh              # fixture-driven hook tests (shellcheck + CI)
 ├─ docs/                     # promo site + review report
 └─ CHANGELOG.md
