@@ -3,6 +3,33 @@
 All notable changes to throughline are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); this project uses semantic versioning.
 
+## [0.4.0]
+
+Capture and handoff answer "what happened this session?"; nothing answered "what
+keeps happening?" A lesson could recur in session log after session log without
+ever graduating to the durable layer where it stops needing to be re-learned.
+This release adds the missing periodic pass (#3).
+
+### Added
+- **`throughline-consolidate` skill**: a periodic (monthly or on-demand)
+  consolidation pass over the timestamped handoff session logs. Four phases:
+  determine scope (logs since the last recorded pass; the pass history lives in
+  a "Consolidation passes" section of `HANDOFF.md`), extract candidate lessons
+  (anything recurring in 2+ sessions - workflow corrections, tool quirks,
+  environment gotchas, conventions - each carrying its evidence logs and a
+  recurred-N-times confidence), propose promotions (global `CLAUDE.md` rule, an
+  issue filed on the owning skill's source repo - never a direct cross-repo
+  edit - a durable project `CLAUDE.md`/`HANDOFF.md` section, or an auto-memory
+  entry), and apply + record. The gate is **pre-write and per-item**: the full
+  promotion list is presented and nothing is applied without explicit approval,
+  unlike handoff's post-write review - promotions touch always-loaded files,
+  where one wrong line costs every future session. Session logs are never
+  pruned; they are historical records and the evidence trail for each
+  promotion. Mines `DATA/logs/` plus `.agent/handoffs/` when that portable
+  convention is present. Complements (does not duplicate) the anthropic
+  `consolidate-memory` skill: that one owns the auto-memory files, this one
+  owns the handoff logs.
+
 ## [0.3.0]
 
 A deliberate reversal of the "silent until opted in" activation model. Through
