@@ -14,6 +14,11 @@
 DIR=$(unset CDPATH; cd -- "$(dirname -- "$0")" && pwd)
 . "${CLAUDE_PLUGIN_ROOT:-$DIR/..}/hooks/_lib.sh" 2>/dev/null || . "$DIR/_lib.sh"
 
+# Machine-wide kill switch: fully silent, even about existing data. The
+# per-project .throughlineignore keeps orienting toward existing content;
+# the global disable does not - "off" must mean off.
+tl_disabled && exit 0
+
 root=$(tl_root)
 data=$(tl_data_dir)
 
@@ -56,7 +61,20 @@ fi
 # missing-jq case itself, returning "".
 sid=$(tl_resolve_sid "$input")
 
-echo "## throughline - project session context"
+# Surface the running plugin version so a stale installed copy is visible at a
+# glance (plugins are installed as snapshots; they do not self-update - an old
+# cache can silently run without newer redaction/activation fixes). Best-effort:
+# jq may be absent or the manifest unreadable, in which case the header stays
+# version-less rather than failing.
+ver=""
+if tl_have_jq; then
+  ver=$(jq -r '.version // ""' "${CLAUDE_PLUGIN_ROOT:-$DIR/..}/.claude-plugin/plugin.json" 2>/dev/null)
+fi
+if [ -n "$ver" ]; then
+  echo "## throughline v$ver - project session context"
+else
+  echo "## throughline - project session context"
+fi
 echo
 
 # jq is required for action capture. If it is missing, capture silently no-ops,

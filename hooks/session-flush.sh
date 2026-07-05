@@ -20,6 +20,13 @@ DIR=$(unset CDPATH; cd -- "$(dirname -- "$0")" && pwd)
 # the data dir exists but capture never actually ran, there is still nothing
 # to finalize here. No bootstrap: if the data dir was never created, this
 # session was never tracked either.
+#
+# The machine-wide kill switch DOES apply, unlike the per-project marker:
+# THROUGHLINE_DISABLE means "off entirely" - and unlike a mid-session opt-out
+# (a file that appears while a tracked session runs), the env var was already
+# set when this session started, so capture never wrote a buffer and there is
+# nothing here to corrupt.
+tl_disabled && exit 0
 tl_have_jq || exit 0
 
 input=$(cat 2>/dev/null)
