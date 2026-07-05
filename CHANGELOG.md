@@ -96,14 +96,47 @@ idempotently. A fifth hook joins the set.
   -> "fix Token \*\*\* bug"). `Grep` (a regex pattern) and `WebFetch` (a URL)
   correctly stay on `redact` - neither is natural language.
 
+### Review fixes, round 3 (each of round 2's fixes had its own bug)
+- **`redact_prompt`'s new `\b` word-boundary silently stopped matching
+  SCREAMING_SNAKE_CASE compounds** - the standard real-world credential-naming
+  convention (`CLIENT_SECRET`, `ACCESS_TOKEN`, `DB_PASSWORD`), exactly what a
+  pasted `.env` file or curl command uses. Underscore is a `\w` character, so
+  `\bsecret\b` never matches "secret" inside "client_secret" - those secrets
+  passed into the buffer completely unredacted. Fixed by switching to a
+  LETTER-only lookaround boundary (`(?<![A-Za-z])`/`(?![A-Za-z])`): an
+  underscore still counts as a valid boundary (so the compound matches) while
+  an adjacent letter still doesn't (so "author"/"tokens" still don't).
+- **Onboard's prompt-only-buffer filter used a grep-into-grep pipe** whose
+  "found nothing" and "found nothing because there's nothing to find" are
+  indistinguishable - so a buffer with ZERO conforming record lines (a
+  truncated/corrupted buffer, or a capture hook whose jq failed on every call)
+  silently fell through the same `|| continue` as a genuine prompt-only
+  buffer, regressing the pre-existing guarantee that any existing, end-stamped
+  buffer gets surfaced regardless of its body. Fixed with an explicit
+  total-vs-prompt-count comparison that only skips when there's at least one
+  recognized line AND every one of them is a prompt line.
+- **The new shared `_auth_scheme` def (added in round 2 to close the
+  Bearer/Basic leak) was unconstrained enough to corrupt ordinary prose** -
+  "explain the bearer token approach" -> "explain the Bearer \*\*\* approach",
+  "basic authentication support" -> "Basic \*\*\* support" (English words are a
+  subset of the base64 alphabet the Basic rule allowed, and the Bearer rule had
+  no length floor at all) - the exact failure mode `redact_prompt` exists to
+  prevent, now reachable through the very rule meant to plug a different gap.
+  Split into two variants: `_auth_scheme` (command path, unchanged - commands
+  aren't prose) and a new `_auth_scheme_prose` (16+ char length floor on both
+  Bearer's value and Basic's body - real tokens/JWTs run far longer than a
+  single English word), used only by `redact_prompt`.
+
 ### Tests
-- 33 new assertions (95 -> 128): prompt capture (line shape, prose-safety,
-  colon-form + shape-token redaction, word-boundary regression, bearer/basic
-  masking, truncation, empty-prompt skip, opt-out/kill-switch, no-session
-  breadcrumb); widened capture (grep/webfetch/websearch/task/mcp one-liners,
-  URL-userinfo masking, empty-desc task fallback, WebSearch/Task prose
-  preservation, mcp input not read); prompt-only buffers not counted as
-  unconsumed; precompact idempotency (double-fire, multi-seam, post-boundary).
+- 39 new assertions (95 -> 134): prompt capture (line shape, prose-safety,
+  colon-form + shape-token redaction, word-boundary regression, compound
+  SCREAMING_SNAKE_CASE secrets, bearer/basic masking + prose preservation,
+  truncation, empty-prompt skip, opt-out/kill-switch, no-session breadcrumb);
+  widened capture (grep/webfetch/websearch/task/mcp one-liners, URL-userinfo
+  masking, empty-desc task fallback, WebSearch/Task prose preservation, mcp
+  input not read); prompt-only buffers not counted as unconsumed, including
+  the zero-conforming-line edge case; precompact idempotency (double-fire,
+  multi-seam, post-boundary).
 
 ## [0.4.1]
 

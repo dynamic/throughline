@@ -228,17 +228,36 @@ tl_jq_redact_defs() {
     | gsub("AKIA[0-9A-Z]{12,}"; "AKIA***")
     | gsub("AIza[0-9A-Za-z_\\-]{35}"; "AIza***");
   def _unmask: gsub("\(M)"; "***");
-  # Authorization SCHEME rules (Bearer/Basic), shared by both redact paths.
-  # Distinct from the generic keyword+word rules below: these match a fixed
-  # scheme word plus a shape-constrained credential body (Basic requires an
-  # 8+ char base64-alphabet run; a plain English sentence essentially never
-  # produces one), so they carry far less prose false-positive risk than the
-  # generic "token secret" word rules that redact_prompt deliberately excludes.
-  # Kept in both paths because dropping them from redact_prompt would silently
-  # leak a pasted Authorization header (the exact regression this fixes).
+  # Authorization SCHEME rules (Bearer/Basic) - COMMAND-PATH version, used only
+  # by `redact`. No length minimum on the bearer value and only an 8-char floor
+  # on Basic's base64 run: commands aren't natural language, so "bearer X" /
+  # "Basic <8+ chars>" essentially never appears as an innocent phrase there,
+  # unlike in prose (see _auth_scheme_prose below, which `redact_prompt` uses
+  # instead - the two are deliberately NOT shared, because the constraint that
+  # makes one safe would either under-redact the other's real shapes or
+  # false-positive on the other's ordinary text).
   def _auth_scheme:
     gsub("(?i)bearer\\s+(?<t>[A-Za-z0-9._\\-]+)"; "Bearer ***")
     | gsub("(?i)\\bbasic\\s+[A-Za-z0-9+/=]{8,}"; "Basic ***");
+  # Authorization SCHEME rules - PROSE-SAFE version, used only by
+  # `redact_prompt`. A bare 8-char base64-alphabet floor or an unbounded bearer
+  # value both false-positive constantly on ordinary English: "bearer of good
+  # news" (any following word matches the bearer value's char class), "basic
+  # authentication support" / "basic documentation" (English words are a
+  # subset of the base64 alphabet, and words like "authentication" clear an
+  # 8-char floor easily). A real Authorization value - JWT, opaque API token,
+  # or a base64-encoded "user:pass" - is reliably much longer than a single
+  # English word in a sentence (single English words average ~5 chars; JWTs
+  # and opaque tokens commonly run 20-100+); requiring 16+ contiguous
+  # non-whitespace chars keeps the false-positive rate low without requiring a
+  # digit/mixed-case heuristic that would itself have real-credential misses.
+  # Known tradeoff, same class as `redact`'s documented gaps: a real credential
+  # shorter than 16 chars slips through this rule (the generic key:value rule
+  # below still catches it if pasted with an explicit "password: xxx" shape;
+  # otherwise the handoff skill's human re-scan is the backstop).
+  def _auth_scheme_prose:
+    gsub("(?i)bearer\\s+(?<t>[A-Za-z0-9._\\-]{16,})"; "Bearer ***")
+    | gsub("(?i)\\bbasic\\s+[A-Za-z0-9+/=]{16,}"; "Basic ***");
   # Full command-path redaction. Shape-specific patterns run BEFORE the generic
   # keyword=value catch-all, so e.g. "Authorization:Basic <base64>" is fully
   # consumed by the Basic-auth rule rather than the generic auth keyword rule
@@ -273,34 +292,52 @@ tl_jq_redact_defs() {
   # "token" WORD rule both fire on prose - "token refresh flow" -> "Token ***
   # flow"), destroying the very intent the feature exists to preserve. So this
   # path keeps ONLY the structural formats that never match English
-  # (_pem/_url/_prefix_tokens/_auth_scheme - Basic's base64-shape and Bearer's
-  # fixed scheme word carry far lower false-positive risk than a bare "token")
+  # (_pem/_url/_prefix_tokens/_auth_scheme_prose - see that def for why Basic/
+  # Bearer need their OWN length-gated variant here, not the command one)
   # plus a generic keyword rule RESTRICTED to explicit key:value / key=value
   # separators - which still catches a credential pasted as "password: hunter2"
   # or "API_KEY=xxx" while leaving "the password is not the problem" untouched.
   #
-  # The keyword group is \b-WORD-BOUNDED here (unlike redact's \w*-affixed
-  # version), matching each keyword only as a complete word: "auth"/
-  # "authorization" as whole words, never as a substring of "author" or
-  # "authority"; "token" never as a substring of "tokens". redact's looser
-  # \w*...\w* affixes exist to catch compound ENV-VAR names in commands
-  # (SECRET_KEY=, API_KEY_VALUE=) where that surface never collides with
-  # prose; prompts are prose by definition, so the substring form here would
-  # otherwise turn "author: rewrite the intro" or "tokens: use the new
-  # endpoint" into a mangled "*** the intro" / "*** the new endpoint" - a
-  # correctness bug this restricted form exists to close, not merely a
-  # narrower match.
+  # The keyword group is bounded by a LETTER lookaround here (unlike redact's
+  # `\w*...\w*`-affixed version), matching each keyword only when no LETTER
+  # touches either side: "auth"/"authorization" as whole words never match as
+  # a substring of "author"/"authority"; "token" never matches inside
+  # "tokens". But unlike a literal `\b` boundary, an adjacent UNDERSCORE still
+  # counts as a match boundary, so SCREAMING_SNAKE_CASE compounds
+  # (CLIENT_SECRET, ACCESS_TOKEN, DB_PASSWORD) - the standard real-world
+  # credential-naming convention, and exactly what a pasted .env file or curl
+  # command uses - still redact correctly. redact's looser `\w*...\w*` affixes
+  # exist for the same compound-name reason on the command path; prompts are
+  # prose by definition, so a `\w*` (which also treats letters as valid
+  # boundary-crossers) would additionally match inside "author"/"tokens" -
+  # hence the tighter letter-only lookaround here instead of reusing it.
   #
   # A pasted secret with no recognizable prefix/scheme AND no colon/equals
   # (e.g. a bare word after "password is") is deliberately NOT masked here;
   # the handoff skill's human re-scan is the second barrier, same as for the
   # bare-CLI-flag gap `redact` documents.
+  #
+  # The keyword group is bounded by LETTER lookaround, not `\b`: `\b` is a
+  # transition between a \w char and a non-\w char, and underscore IS a \w
+  # char, so `\bsecret\b` does NOT match "secret" inside "client_secret" or
+  # "SECRET" inside "DB_PASSWORD"'s sibling "PASSWORD" - it would silently fail
+  # to redact the single most common real-world credential-naming convention
+  # (SCREAMING_SNAKE_CASE: CLIENT_SECRET, ACCESS_TOKEN, DB_PASSWORD, ...),
+  # exactly the compounds a pasted .env file or curl command uses. Lookaround
+  # on "not a letter" instead of "not a word char" treats the underscore as a
+  # valid boundary (so the compound still matches) while still rejecting a
+  # letter on either side (so "author"/"authority"/"tokens" still don't match
+  # "auth"/"auth"/"token" as a prefix - the false-positive `\b` was tightened
+  # for in the first place). Digits are deliberately left out of the boundary
+  # class too (neither excluded nor required): a keyword directly touching a
+  # digit is rare enough in both prose and real credential names not to be
+  # worth the extra rule complexity either way.
   def redact_prompt:
     _pem
-    | _auth_scheme
+    | _auth_scheme_prose
     | _url
     | _prefix_tokens
-    | gsub("(?i)(?<k>\\b(?:token|secret|password|passwd|api[_-]?key|access[_-]?key|credential|auth(?:orization)?|client[_-]?id)\\b)(?<s>\\s*[:=]\\s*)(?<v>\"?(?:\(M)|[^\\s\"]+))"; "\(.k)\(.s)***")
+    | gsub("(?i)(?<k>(?<![A-Za-z])(?:token|secret|password|passwd|api[_-]?key|access[_-]?key|credential|auth(?:orization)?|client[_-]?id)(?![A-Za-z]))(?<s>\\s*[:=]\\s*)(?<v>\"?(?:\(M)|[^\\s\"]+))"; "\(.k)\(.s)***")
     | _unmask;
   # Neutralize control chars (incl. newlines) and backticks so a captured
   # command or prompt cannot break the markdown list / code span it is

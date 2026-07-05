@@ -296,6 +296,18 @@ printf -- '- `t` **prompt** find where **prompt** lines are filtered\n- `t` **gr
 O3a3=$(printf '%s' '{"source":"startup","session_id":"T"}' | sh "$H/session-onboard.sh")
 has "action line mentioning the literal **prompt** string is still counted" "$O3a3" 'unconsumed session buffer'
 
+# 10a3. regression: a buffer with ZERO conforming record lines (truncated,
+# corrupted, or a capture hook that failed on every call) must still be
+# counted, not silently dropped — the total/prompt-count comparison falls
+# through to "count it" only when total is 0, matching the pre-existing
+# fail-safe behavior of counting any existing, end-stamped buffer regardless
+# of its body content.
+reset_buf
+printf -- '- x\n' > "$BUF/session-T.md"
+printf -- '<!-- session-ended 2024-01-01 00:00:00 (end) -->\n' > "$BUF/session-EMPTY.md"
+O3a4=$(printf '%s' '{"source":"startup","session_id":"T"}' | sh "$H/session-onboard.sh")
+has "a buffer with zero conforming lines is still counted, not dropped" "$O3a4" 'unconsumed session buffer'
+
 # 10b. a prior session buffer with NO end-stamp gets hedged wording, not
 #      asserted as "ended" — it could be live in another terminal.
 reset_buf
@@ -579,12 +591,30 @@ prompt '{"session_id":"P","prompt":"authority: escalate to the team lead"}'
 has "prompt: 'authority:' is not treated as a credential keyword" "$(grep 'escalate to' "$BUF/session-P.md")" 'authority: escalate to the team lead'
 prompt '{"session_id":"P","prompt":"tokens: use the new endpoint"}'
 has "prompt: 'tokens:' is not treated as a credential keyword" "$(grep 'use the new endpoint' "$BUF/session-P.md")" 'tokens: use the new endpoint'
+# Regression: the letter-lookaround boundary must still redact
+# SCREAMING_SNAKE_CASE compounds (the standard real-world credential-naming
+# convention) even though a plain `\b` boundary would not — underscore is a
+# \w char, so `\bsecret\b` never matches "secret" inside "client_secret".
+prompt '{"session_id":"P","prompt":"client_secret: aB3xY9zQwErTyUiOp1234567890"}'
+hasnt "prompt: client_secret compound value not stored" "$(grep client_secret "$BUF/session-P.md")" 'aB3xY9zQwErTyUiOp1234567890'
+prompt '{"session_id":"P","prompt":"DB_PASSWORD=hunter2reallysecretvalue"}'
+hasnt "prompt: DB_PASSWORD compound value not stored" "$(grep DB_PASSWORD "$BUF/session-P.md")" 'hunter2reallysecretvalue'
+prompt '{"session_id":"P","prompt":"ACCESS_TOKEN: veryLongOpaqueTokenValue123"}'
+hasnt "prompt: ACCESS_TOKEN compound value not stored" "$(grep ACCESS_TOKEN "$BUF/session-P.md")" 'veryLongOpaqueTokenValue123'
 # Regression: dropping the command path's bearer/basic scheme rules from
 # redact_prompt would leak a pasted Authorization header verbatim — these are
 # shape-constrained (fixed scheme word / base64 body), not generic prose words,
-# so they stay in the prose-safe path.
+# so they stay in the prose-safe path (via a length-gated prose variant).
 prompt '{"session_id":"P","prompt":"Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.fake.jwt.body"}'
 hasnt "prompt: bearer JWT body not stored" "$(grep Authorization "$BUF/session-P.md")" 'eyJhbGciOiJIUzI1NiJ9'
+# Regression: the prose-safe bearer/basic variant must NOT fire on short
+# English words after "bearer"/"basic" — this is the exact corruption class
+# redact_prompt exists to prevent, and the fix for the leak above must not
+# reopen it via an unconstrained scheme rule.
+prompt '{"session_id":"P","prompt":"explain the bearer token approach for auth"}'
+has "prompt: 'bearer token approach' prose is preserved" "$(grep 'bearer token approach' "$BUF/session-P.md")" 'the bearer token approach for auth'
+prompt '{"session_id":"P","prompt":"we need basic authentication support"}'
+has "prompt: 'basic authentication' prose is preserved" "$(grep 'basic authentication' "$BUF/session-P.md")" 'we need basic authentication support'
 # Truncation at 200 chars with the same marker as the Bash command path.
 LONGP=$(printf 'x%.0s' $(seq 1 300))
 prompt '{"session_id":"P","prompt":"'"$LONGP"'"}'

@@ -170,9 +170,23 @@ if [ -d "$bufdir" ]; then
     # literal pattern, a bash command referencing it, and so on — routine in
     # this very repo), which would silently misclassify a genuinely unconsumed
     # session as prompt-only and drop it from the warning entirely.
+    #
+    # Counted explicitly (total vs. prompt-marked) rather than via a
+    # grep-into-grep pipe: the pipe form's "found nothing" and "found nothing
+    # because there's nothing to find" are indistinguishable, so a buffer with
+    # ZERO conforming record lines (a truncated/corrupted buffer, or a capture
+    # hook's jq failing on every call) silently fell through the SAME `||
+    # continue` as a genuine prompt-only buffer - even though pre-existing
+    # behavior always counted any existing, end-stamped buffer regardless of
+    # its body. Skip ONLY when there is at least one recognized line AND every
+    # one of them is a prompt line; zero recognized lines falls through to be
+    # counted, matching that prior fail-safe behavior instead of silently
+    # dropping a real ended session.
     # shellcheck disable=SC2016
-    grep -E '^- `[^`]*` \*\*[^*]+\*\*' "$f" 2>/dev/null \
-      | grep -qvE '^- `[^`]*` \*\*prompt\*\*' || continue
+    total=$(grep -cE '^- `[^`]*` \*\*[^*]+\*\*' "$f" 2>/dev/null)
+    # shellcheck disable=SC2016
+    promptonly=$(grep -cE '^- `[^`]*` \*\*prompt\*\*' "$f" 2>/dev/null)
+    [ "$total" -gt 0 ] && [ "$total" -eq "$promptonly" ] && continue
     if grep -q '^<!-- session-ended' "$f" 2>/dev/null; then
       ended=$((ended + 1))
     else
