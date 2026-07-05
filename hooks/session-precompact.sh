@@ -16,6 +16,8 @@ DIR=$(unset CDPATH; cd -- "$(dirname -- "$0")" && pwd)
 # this hook finalizes bookkeeping for an already-existing buffer, so a
 # mid-session .throughlineignore should not veto stamping it, and there is no
 # reason to bootstrap a data dir that was never created for this session.
+# The machine-wide kill switch DOES apply (see session-flush.sh).
+tl_disabled && exit 0
 tl_have_jq || exit 0
 
 input=$(cat 2>/dev/null)

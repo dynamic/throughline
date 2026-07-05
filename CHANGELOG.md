@@ -3,6 +3,43 @@
 All notable changes to throughline are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); this project uses semantic versioning.
 
+## [0.4.1]
+
+P0 fixes out of the v0.4.0 audit (docs/AUDIT-v0.4.0.md). The audit's live finding
+drove the headline change: this plugin's own dev machine was silently running a
+stale v0.1.0 installed snapshot - none of the 0.2.0 redaction hardening or 0.3.0
+auto-activation was actually live - and nothing surfaced that.
+
+### Added
+- **Version visibility**: the SessionStart block header now reads
+  `## throughline vX.Y.Z - project session context`, with the version read from
+  the running plugin's own `.claude-plugin/plugin.json` (best-effort; header
+  stays version-less if jq or the manifest is unavailable). A stale installed
+  snapshot is now visible at every session start. README gains an "Updating"
+  note explaining that installed plugins do not track this repo.
+- **Machine-wide kill switch**: `THROUGHLINE_DISABLE` set to anything but `0`
+  turns all four hooks into complete no-ops - no capture, no SessionStart
+  block (not even about existing data), no end-stamps. Checked first in
+  `tl_active` (reason `disabled`) and directly by onboard/flush/precompact,
+  since those don't gate on `tl_active`. Stricter than `.throughlineignore`
+  by design: the per-project marker keeps orienting toward existing content;
+  the global switch means off. Auto-activation in every project made this the
+  missing affordance - opting out per-project doesn't scale to "not on this
+  machine."
+
+### Fixed
+- **Consolidate mined the wrong portable path**: the skill said to mine
+  `.agent/handoffs/` (plural) while the README's documented convention is
+  `THROUGHLINE_DATA_DIR=.agent/handoff` (singular) - a one-letter mismatch
+  that could make a consolidation pass silently miss a repo's actual logs.
+  The skill now checks both forms, skipping whichever is already `DATA`.
+
+### Tests
+- New sections 12m (kill switch: silent onboard on fresh and on already-active
+  projects, no bootstrap, no capture, no flush stamp, and `0`/unset do NOT
+  disable) and 12n (version line present, read dynamically from plugin.json).
+  95 assertions total.
+
 ## [0.4.0]
 
 Capture and handoff answer "what happened this session?"; nothing answered "what

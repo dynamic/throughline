@@ -21,6 +21,9 @@ mkdir -p "$WORK/proj/.claude/throughline/buffer"
 CLAUDE_PROJECT_DIR="$WORK/proj"
 THROUGHLINE_DATA_DIR=".claude/throughline"
 export CLAUDE_PROJECT_DIR THROUGHLINE_DATA_DIR
+# A developer running the suite with the machine-wide kill switch exported
+# would otherwise see every hook no-op and the whole suite fail confusingly.
+unset THROUGHLINE_DISABLE
 DATA="$WORK/proj/.claude/throughline"
 BUF="$DATA/buffer"
 
@@ -451,6 +454,38 @@ mkdir -p "$FRESH_M"
 ( cd "$FRESH_M" && git init -q && git commit -q --allow-empty -m init ) 2>/dev/null
 O14=$(printf '%s' '{"source":"startup","session_id":"T"}' | CLAUDE_PROJECT_DIR="$FRESH_M" THROUGHLINE_DATA_DIR="$OUTSIDE_DATA" sh "$H/session-onboard.sh")
 hasnt "no gitignore nudge when the data dir is outside the git tree" "$O14" 'not gitignored yet'
+
+# 12m. THROUGHLINE_DISABLE machine-wide kill switch: every hook is a complete
+#      no-op - onboard is silent even about EXISTING data (stricter than
+#      .throughlineignore, which keeps orienting), capture neither bootstraps
+#      nor writes, and flush leaves an existing buffer unstamped. "0" and
+#      empty do NOT disable.
+FRESH_N="$WORK/fresh-n"
+mkdir -p "$FRESH_N"
+( cd "$FRESH_N" && git init -q && git commit -q --allow-empty -m init ) 2>/dev/null
+O15=$(printf '%s' '{"source":"startup","session_id":"T"}' | CLAUDE_PROJECT_DIR="$FRESH_N" THROUGHLINE_DISABLE=1 sh "$H/session-onboard.sh")
+eq "disabled: onboard is fully silent on a fresh project" "$O15" ""
+absent "disabled: onboard does not bootstrap a data dir" "$FRESH_N/.claude"
+printf '%s' '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"x","command":"id"}}' | CLAUDE_PROJECT_DIR="$FRESH_N" THROUGHLINE_DISABLE=1 sh "$H/session-capture.sh"
+absent "disabled: capture writes nothing and creates nothing" "$FRESH_N/.claude"
+# Silent even with pre-existing data (the .throughlineignore contrast).
+O16=$(printf '%s' '{"source":"startup","session_id":"T"}' | THROUGHLINE_DISABLE=1 sh "$H/session-onboard.sh")
+eq "disabled: onboard is silent even when project data exists" "$O16" ""
+# Flush must not stamp an existing buffer while disabled; must still stamp
+# normally once re-enabled (same payload, switch off).
+reset_buf
+printf -- '- `2026-01-01 00:00:00` **bash** x - `id`\n' > "$BUF/session-T.md"
+printf '%s' '{"session_id":"T","reason":"exit"}' | THROUGHLINE_DISABLE=1 sh "$H/session-flush.sh"
+hasnt "disabled: flush does not end-stamp the buffer" "$(cat "$BUF/session-T.md")" 'session-ended'
+printf '%s' '{"session_id":"T","reason":"exit"}' | THROUGHLINE_DISABLE=0 sh "$H/session-flush.sh"
+has "THROUGHLINE_DISABLE=0 does NOT disable (flush stamps normally)" "$(cat "$BUF/session-T.md")" 'session-ended'
+
+# 12n. the SessionStart block surfaces the running plugin version (from
+#      .claude-plugin/plugin.json) so a stale installed snapshot is visible -
+#      the repo itself dogfooded a v0.1.0 cache while main sat at v0.4.0.
+PLUGIN_VER=$(jq -r '.version' "$ROOT/.claude-plugin/plugin.json")
+O17=$(printf '%s' '{"source":"startup","session_id":"T"}' | sh "$H/session-onboard.sh")
+has "onboard header carries the plugin version" "$O17" "throughline v$PLUGIN_VER"
 
 # 13. capture breadcrumbs a swallowed write failure and onboard surfaces it.
 #     Chmod the SESSION FILE itself read-only (not the directory): appending to

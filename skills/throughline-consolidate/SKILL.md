@@ -15,8 +15,12 @@ needing to be re-learned.
 `<project-root>/.claude/throughline/`. Below, `DATA` refers to that path.
 
 - Session logs: `DATA/logs/handoff-YYYY-MM-DD-HHMM.md`
-- Some repos also keep session logs at `.agent/handoffs/` (a portable handoff
-  convention used by other harnesses). When that directory exists, mine it too.
+- Some repos also keep session logs at `.agent/handoff/logs/` (the singular
+  `THROUGHLINE_DATA_DIR` convention documented in the README - skip it if that
+  path already *is* `DATA/logs/`) or `.agent/handoffs/` (a plural variant used
+  by other harnesses). When either directory exists and isn't already covered
+  by `DATA`, mine it too - the two names differ by one letter and are easy to
+  conflate, so check for both.
 
 **Scope boundary:** this skill owns the **handoff session logs**. Auto-memory files
 (`~/.claude/projects/<slug>/memory/`) are the `consolidate-memory` skill's job -
@@ -32,8 +36,9 @@ work: if a candidate's right home is an auto-memory file, write the one new entr
    **"Consolidation passes"** section (date + what was promoted). If the section is
    absent, this is the first pass - everything is in scope.
 2. Collect the logs to mine: every `DATA/logs/handoff-*.md` dated after the last
-   pass, plus `.agent/handoffs/*.md` when that directory exists. The filenames
-   carry the date; no content parsing needed to scope.
+   pass, plus `.agent/handoff/logs/*.md` and `.agent/handoffs/*.md` when those
+   directories exist and aren't already `DATA/logs/`. The filenames carry the
+   date; no content parsing needed to scope.
 3. Confirm scope with the user before reading: which repos/paths, how many logs,
    since when. Default is the **current project only** - mining other repos'
    handoff logs is a deliberate widening, not an assumption.

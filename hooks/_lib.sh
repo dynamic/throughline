@@ -12,6 +12,17 @@ tl_root() {
   printf '%s' "${CLAUDE_PROJECT_DIR:-$PWD}"
 }
 
+# Machine-wide kill switch: THROUGHLINE_DISABLE set to anything but "0" turns
+# every hook into a no-op, everywhere, regardless of per-project state or
+# .throughlineignore. This is the "off on this whole machine" knob the
+# per-project marker file can't provide (auto-activation would otherwise
+# require dropping .throughlineignore into every project). Checked by all four
+# hooks directly (not only via tl_active): a kill switch that still printed
+# orientation or stamped buffers would not read as "off."
+tl_disabled() {
+  [ -n "${THROUGHLINE_DISABLE:-}" ] && [ "$THROUGHLINE_DISABLE" != "0" ]
+}
+
 # POSIX sh has no `local`; helpers prefix their temporaries with `_tl_` so they do
 # not clobber a same-named variable in the sourcing hook.
 tl_data_dir() {
@@ -46,6 +57,7 @@ tl_data_exists() {
 }
 
 # Activation decision for this project, in strict precedence:
+#   0. THROUGHLINE_DISABLE (tl_disabled) -> OFF machine-wide, unconditionally.
 #   1. .throughlineignore at the project root -> OFF for NEW tracking
 #      unconditionally (existing data, per tl_data_exists, is unaffected).
 #   2. data dir already exists, or a HANDOFF.md is present -> already active.
@@ -55,7 +67,7 @@ tl_data_exists() {
 # bootstrap mkdir fails - so any hook that proceeds past this call is guaranteed
 # a data dir on disk (session-capture.sh's breadcrumb path depends on that).
 #
-# Also sets $_tl_active_reason to "ignored" or "bootstrap-failed" on the
+# Also sets $_tl_active_reason to "disabled", "ignored", or "bootstrap-failed" on the
 # non-zero paths (unset/stale on the zero path - callers that care check it
 # immediately after calling tl_active, before any other _tl_-prefixed call
 # might overwrite it). A failed bootstrap must never look identical to a
@@ -64,6 +76,10 @@ tl_data_exists() {
 # so that failure doesn't silently masquerade as "user opted out."
 tl_active() {
   unset _tl_active_reason
+  if tl_disabled; then
+    _tl_active_reason="disabled"
+    return 1
+  fi
   if [ -f "$(tl_root)/.throughlineignore" ]; then
     _tl_active_reason="ignored"
     return 1

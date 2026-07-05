@@ -96,6 +96,12 @@ Then reload (`/reload-plugins`) or restart the session.
 is missing, capture cannot run and the SessionStart block says so rather than failing
 silently.
 
+**Updating.** Installed plugins are snapshots - they do not track this repo. An old
+copy keeps running (without newer redaction and activation fixes) until you update it
+from the `/plugin` manager (or uninstall and reinstall), then `/reload-plugins`. The
+SessionStart block prints the running version (`## throughline vX.Y.Z`) - if it lags
+this repo's releases, your install is stale.
+
 ## Configuration
 
 By default, state lives in **`.claude/throughline/`** in each project (the universal
@@ -131,6 +137,21 @@ buffer (its end-stamp or compaction marker) rather than leaving it in a permanen
 "still live?" limbo - they don't create anything new, they just avoid corrupting
 bookkeeping for work that had already legitimately started. Remove the file to
 re-enable. Commit it like `.gitignore` so the policy is shared with teammates.
+
+### Disabling machine-wide
+
+To turn throughline off everywhere without uninstalling or touching every project,
+set the kill switch (e.g. in `~/.claude/settings.json`'s `env` block, or your shell
+profile):
+
+```sh
+export THROUGHLINE_DISABLE=1
+```
+
+Any value other than `0` disables **all four hooks completely** - no capture, no
+SessionStart block (not even about existing data), no end-stamps. This is stricter
+than `.throughlineignore`, which keeps orienting toward already-existing content.
+Unset it (or set `0`) to re-enable; existing data is untouched either way.
 
 **Cross-harness handoffs.** The data dir is the one knob that makes throughline
 portable. Point it at `.agent/handoff` and the durable `HANDOFF.md` it produces lives
