@@ -67,12 +67,42 @@ idempotently. A fifth hook joins the set.
   and a jq `clamp($n; $ell)` truncation def, so the write sequence and the
   redact|clean|truncate idiom are single-sourced across capture surfaces.
 
+### Review fixes, round 2 (a second high-effort review of the round-1 fixes)
+- **Onboard's prompt-only-buffer skip was a substring search**, not anchored:
+  `grep -qv '\*\*prompt\*\*'` matched the literal string anywhere in a line, so
+  a real action line whose OWN captured content happened to mention
+  `**prompt**` (a grep for that literal pattern, a bash command referencing it
+  - routine in this repo) made every line in the buffer match, and the whole
+  buffer was silently misclassified as prompt-only and dropped from the
+  unconsumed-buffer warning. Fixed by anchoring to the type-marker position
+  (`- \`<ts>\` **TYPE** ...`) instead of searching for the substring anywhere.
+- **`redact_prompt`'s keyword rule matched substrings**, not whole words: `auth`
+  matched inside "author"/"authority", `token` matched inside "tokens", so
+  "author: rewrite the intro" -> "author: \*\*\* the intro" - prose corruption
+  in the very path introduced to prevent it. Fixed with `\b`-word-boundaries
+  (replacing the `\w*...\w*` affixes carried over from the command path, which
+  exist there to catch compound ENV-VAR names like `SECRET_KEY=` - a surface
+  that never collides with prose).
+- **`redact_prompt` dropped the Bearer/Basic scheme rules entirely**, so a
+  pasted `Authorization: Bearer <jwt>` leaked the credential body into the
+  buffer verbatim. Restored via a new shared `_auth_scheme` def (used by both
+  `redact` and `redact_prompt`): these are shape-constrained (fixed scheme word
+  + base64-alphabet body), not generic prose words, so they carry far less
+  false-positive risk than the bare-`token`-word rule that's deliberately
+  excluded.
+- **`WebSearch` query and `Task`/`Agent` description were run through
+  `redact`**, not `redact_prompt`, despite both being prose - the same
+  bare-`token`-word corruption issue #5 exists to fix ("fix token refresh bug"
+  -> "fix Token \*\*\* bug"). `Grep` (a regex pattern) and `WebFetch` (a URL)
+  correctly stay on `redact` - neither is natural language.
+
 ### Tests
-- 26 new assertions (95 -> 121): prompt capture (line shape, prose-safety,
-  colon-form + shape-token redaction, truncation, empty-prompt skip,
-  opt-out/kill-switch, no-session breadcrumb); widened capture
-  (grep/webfetch/websearch/task/mcp one-liners, URL-userinfo masking, empty-desc
-  task fallback, mcp input not read); prompt-only buffers not counted as
+- 33 new assertions (95 -> 128): prompt capture (line shape, prose-safety,
+  colon-form + shape-token redaction, word-boundary regression, bearer/basic
+  masking, truncation, empty-prompt skip, opt-out/kill-switch, no-session
+  breadcrumb); widened capture (grep/webfetch/websearch/task/mcp one-liners,
+  URL-userinfo masking, empty-desc task fallback, WebSearch/Task prose
+  preservation, mcp input not read); prompt-only buffers not counted as
   unconsumed; precompact idempotency (double-fire, multi-seam, post-boundary).
 
 ## [0.4.1]

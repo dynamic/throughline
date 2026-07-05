@@ -91,20 +91,29 @@ line=$(printf '%s' "$input" | jq -r --arg root "$root" "$(tl_jq_redact_defs)"'
     # that IS the delegated intent, the highest-value line in a research
     # session; falls back to the prompt head when no description is supplied.
     elif ($t == "Grep") then
+      # A regex pattern, not prose — the command-tuned redact is appropriate.
       "**grep** `" + ((.tool_input.pattern // "") | redact | clean | clamp(120; "…")) + "`" + outcome($t)
     elif ($t == "WebFetch") then
+      # A URL, not prose — same reasoning as Grep.
       "**webfetch** " + ((.tool_input.url // "") | redact | clean | clamp(200; "…")) + outcome($t)
     elif ($t == "WebSearch") then
-      "**websearch** " + ((.tool_input.query // "") | redact | clean | clamp(200; "…")) + outcome($t)
+      # A natural-language query — redact_prompt (prose-safe), NOT redact: the
+      # command-tuned bare-"token"-word rule mangles a query like "fix token
+      # refresh bug" into "fix Token *** bug", the exact corruption class the
+      # issue #5 fix (session-prompt.sh) exists to avoid.
+      "**websearch** " + ((.tool_input.query // "") | redact_prompt | clean | clamp(200; "…")) + outcome($t)
     elif ($t == "Task" or $t == "Agent") then
       # description // prompt via an empty-aware select: jq // only falls
       # through on null/false, so an empty-STRING description would otherwise
       # suppress the prompt fallback and drop the delegated intent entirely.
+      # redact_prompt (prose-safe), NOT redact: the delegated description IS
+      # natural language and is the highest-value line in a research session —
+      # the same reasoning as WebSearch above.
       "**agent** "
       + ((.tool_input.subagent_type // "") | clean
          | if . == "" then "" else . + ": " end)
       + (((.tool_input.description | select(. != "" and . != null))
-          // .tool_input.prompt // "") | redact | clean | clamp(200; "…"))
+          // .tool_input.prompt // "") | redact_prompt | clean | clamp(200; "…"))
       + outcome($t)
     else
       # MCP tools (mcp__server__tool) and any other matched tool: name only.

@@ -161,7 +161,18 @@ if [ -d "$bufdir" ]; then
     # counting it would nag the user to hand off sessions that did no real work,
     # eroding the signal of the warning below. A buffer counts only if it holds
     # at least one capture line that is not a prompt line.
-    grep '^- ' "$f" 2>/dev/null | grep -qv '\*\*prompt\*\*' || continue
+    #
+    # The type marker always immediately follows the timestamp backtick + space
+    # (every record is `- \`<ts>\` **TYPE** ...`), so the check is anchored
+    # there rather than searching for the substring "**prompt**" anywhere in
+    # the line - a plain substring search false-matches an action line whose
+    # OWN captured content happens to mention "**prompt**" (a grep for that
+    # literal pattern, a bash command referencing it, and so on — routine in
+    # this very repo), which would silently misclassify a genuinely unconsumed
+    # session as prompt-only and drop it from the warning entirely.
+    # shellcheck disable=SC2016
+    grep -E '^- `[^`]*` \*\*[^*]+\*\*' "$f" 2>/dev/null \
+      | grep -qvE '^- `[^`]*` \*\*prompt\*\*' || continue
     if grep -q '^<!-- session-ended' "$f" 2>/dev/null; then
       ended=$((ended + 1))
     else

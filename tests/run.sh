@@ -268,7 +268,7 @@ hasnt "current session not flagged as unconsumed" "$O2" 'unconsumed session buff
 
 # 10. onboard surfaces a prior session that ENDED (has the end-stamp) as
 #     "unconsumed" — wording asserts a fact it can actually verify.
-printf -- '- old\n<!-- session-ended 2024-01-01 00:00:00 (end) -->\n' > "$BUF/session-OLD.md"
+printf -- '- `t` **bash** old - `x`\n<!-- session-ended 2024-01-01 00:00:00 (end) -->\n' > "$BUF/session-OLD.md"
 O3=$(printf '%s' '{"source":"startup","session_id":"T"}' | sh "$H/session-onboard.sh")
 has "ended prior session flagged as unconsumed" "$O3" 'unconsumed session buffer'
 
@@ -285,11 +285,22 @@ printf -- '- `t` **prompt** do the thing\n- `t` **bash** did it - `x`\n<!-- sess
 O3a2=$(printf '%s' '{"source":"startup","session_id":"T"}' | sh "$H/session-onboard.sh")
 has "prompt+action ended buffer IS flagged as unconsumed" "$O3a2" 'unconsumed session buffer'
 
+# 10a2. regression: the prompt-only filter is ANCHORED to the type-marker
+# position, not a substring search for "**prompt**" anywhere in the line — an
+# action line whose own captured content happens to mention that literal
+# string (a grep for the pattern, a bash command referencing it) must still
+# count as a real action, not be misclassified as a second prompt line.
+reset_buf
+printf -- '- x\n' > "$BUF/session-T.md"
+printf -- '- `t` **prompt** find where **prompt** lines are filtered\n- `t` **grep** `**prompt**`\n<!-- session-ended 2024-01-01 00:00:00 (end) -->\n' > "$BUF/session-SUBSTR.md"
+O3a3=$(printf '%s' '{"source":"startup","session_id":"T"}' | sh "$H/session-onboard.sh")
+has "action line mentioning the literal **prompt** string is still counted" "$O3a3" 'unconsumed session buffer'
+
 # 10b. a prior session buffer with NO end-stamp gets hedged wording, not
 #      asserted as "ended" — it could be live in another terminal.
 reset_buf
 printf -- '- x\n' > "$BUF/session-T.md"
-printf -- '- new\n' > "$BUF/session-LIVE.md"
+printf -- '- `t` **bash** new - `x`\n' > "$BUF/session-LIVE.md"
 O3b=$(printf '%s' '{"source":"startup","session_id":"T"}' | sh "$H/session-onboard.sh")
 has   "no-end-stamp buffer surfaced with hedged wording" "$O3b" 'no end-stamp'
 hasnt "no-end-stamp buffer NOT mislabeled as ended" "$O3b" 'ended without'
@@ -559,6 +570,21 @@ prompt '{"session_id":"P","prompt":"my password is not the problem, the auth is 
 has "prompt: prose after keyword+copula is preserved (not inverted)" "$(grep 'not the problem' "$BUF/session-P.md")" 'my password is not the problem, the auth is stale'
 prompt '{"session_id":"P","prompt":"explain how the token refresh flow works"}'
 has "prompt: 'token refresh' prose is preserved" "$(grep 'refresh flow' "$BUF/session-P.md")" 'the token refresh flow works'
+# Regression: the keyword group is WORD-BOUNDED, not substring-matched — a
+# word merely containing "auth"/"token" as a substring (author, authority,
+# tokens) must not trip the key:value rule at all, colon or not.
+prompt '{"session_id":"P","prompt":"author: rewrite the intro section"}'
+has "prompt: 'author:' is not treated as a credential keyword" "$(grep 'rewrite the intro' "$BUF/session-P.md")" 'author: rewrite the intro section'
+prompt '{"session_id":"P","prompt":"authority: escalate to the team lead"}'
+has "prompt: 'authority:' is not treated as a credential keyword" "$(grep 'escalate to' "$BUF/session-P.md")" 'authority: escalate to the team lead'
+prompt '{"session_id":"P","prompt":"tokens: use the new endpoint"}'
+has "prompt: 'tokens:' is not treated as a credential keyword" "$(grep 'use the new endpoint' "$BUF/session-P.md")" 'tokens: use the new endpoint'
+# Regression: dropping the command path's bearer/basic scheme rules from
+# redact_prompt would leak a pasted Authorization header verbatim — these are
+# shape-constrained (fixed scheme word / base64 body), not generic prose words,
+# so they stay in the prose-safe path.
+prompt '{"session_id":"P","prompt":"Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.fake.jwt.body"}'
+hasnt "prompt: bearer JWT body not stored" "$(grep Authorization "$BUF/session-P.md")" 'eyJhbGciOiJIUzI1NiJ9'
 # Truncation at 200 chars with the same marker as the Bash command path.
 LONGP=$(printf 'x%.0s' $(seq 1 300))
 prompt '{"session_id":"P","prompt":"'"$LONGP"'"}'
@@ -596,8 +622,17 @@ has   "webfetch captured with url"      "$WF" '**webfetch** https://alice:'
 hasnt "webfetch url userinfo is masked" "$WF" 's3cr3tpw'
 cap '{"session_id":"W","tool_name":"WebSearch","tool_input":{"query":"posix sh idempotency"}}'
 has "websearch captured with query" "$(grep websearch "$BUF/session-W.md")" '**websearch** posix sh idempotency'
+# Regression: WebSearch query is prose, so it must use redact_prompt, not the
+# command-tuned redact — the bare-"token"-word rule would otherwise mangle a
+# natural-language query like the command path does.
+cap '{"session_id":"W","tool_name":"WebSearch","tool_input":{"query":"how to fix token refresh bug"}}'
+has "websearch query prose is preserved (not mangled by command redact)" "$(grep 'refresh bug' "$BUF/session-W.md")" 'how to fix token refresh bug'
 cap '{"session_id":"W","tool_name":"Task","tool_input":{"subagent_type":"Explore","description":"map the hook data flow"}}'
 has "task captured with subagent + description" "$(grep '\*\*agent\*\*' "$BUF/session-W.md")" '**agent** Explore: map the hook data flow'
+# Regression: Task description is prose (the delegated intent) — same
+# redact_prompt requirement as WebSearch.
+cap '{"session_id":"W","tool_name":"Task","tool_input":{"subagent_type":"Explore","description":"refactor the token handling code"}}'
+has "task description prose is preserved (not mangled by command redact)" "$(grep 'handling code' "$BUF/session-W.md")" 'refactor the token handling code'
 cap '{"session_id":"W","tool_name":"Task","tool_input":{"prompt":"no description, only a prompt body"}}'
 has "task falls back to prompt when no description" "$(grep 'prompt body' "$BUF/session-W.md")" '**agent** no description'
 # Empty-STRING description must fall through to prompt (jq // only skips null).
