@@ -153,6 +153,15 @@ if [ -d "$bufdir" ]; then
   for f in "$bufdir"/session-*.md; do
     [ -f "$f" ] || continue
     [ -n "$sid" ] && [ "$f" = "$bufdir/session-$sid.md" ] && continue
+    # Skip prompt-only buffers. A UserPromptSubmit line is recorded for every
+    # session (session-prompt.sh fires before any tool), so a session that
+    # captured intent but no ACTION - a question answered from context, or
+    # Read/Glob-only work, neither of which is a captured tool - leaves a buffer
+    # containing only `**prompt**` lines. There is nothing to distill there, so
+    # counting it would nag the user to hand off sessions that did no real work,
+    # eroding the signal of the warning below. A buffer counts only if it holds
+    # at least one capture line that is not a prompt line.
+    grep '^- ' "$f" 2>/dev/null | grep -qv '\*\*prompt\*\*' || continue
     if grep -q '^<!-- session-ended' "$f" 2>/dev/null; then
       ended=$((ended + 1))
     else

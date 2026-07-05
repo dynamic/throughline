@@ -3,6 +3,78 @@
 All notable changes to throughline are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); this project uses semantic versioning.
 
+## [0.5.0]
+
+The P1 capture-fidelity batch out of the v0.4.0 audit (docs/AUDIT-v0.4.0.md,
+issues #5/#6/#7). The buffer now records *why* (user intent), captures a much
+wider slice of what a session actually does, and stamps compaction seams
+idempotently. A fifth hook joins the set.
+
+### Added
+- **Prompt capture** (`UserPromptSubmit` -> `hooks/session-prompt.sh`, issue #5):
+  each user prompt is appended to the session buffer as a redacted, 200-char
+  truncated `**prompt**` line. Intent previously lived only in the compactable
+  conversation - exactly what a context compaction destroys - so the buffer
+  recorded what happened but never why. Shares the same redaction/cleaning
+  pipeline as capture, so a pasted credential in a prompt is masked by the same
+  rules. Fail-open: every failure path exits 0 (a non-zero UserPromptSubmit hook
+  would abort the prompt) and breadcrumbs to `.capture-errors`.
+- **Widened action capture** (issue #6): the `PostToolUse` matcher now also
+  covers `Grep`, `WebFetch`, `WebSearch`, `Task`/`Agent` (subagents), and MCP
+  tools (`mcp__.*`). Each high-signal read-side tool emits one redacted
+  one-liner (grep pattern, fetched URL, search query, or subagent type +
+  description); MCP tools are captured name-only, making zero assumptions about
+  their input schema so no field can leak. `Read` and `Glob` are deliberately
+  NOT matched - the noisiest tools, whose capture would swamp the buffer.
+  Research-heavy sessions previously left almost no trace. SubagentStop boundary
+  markers were considered and deferred (see issue #6).
+
+### Changed
+- The jq redaction/cleaning defs (`redact`/`clean`, ~15 gsub rules and their
+  full comment history) moved from `session-capture.sh` into a shared
+  `tl_jq_redact_defs` helper in `hooks/_lib.sh`, prepended to each capture-side
+  hook's jq program so the rule set can't drift between the prompt and action
+  hooks. Same consolidation reasoning as `tl_resolve_sid`; each hook stays a
+  single jq invocation. The `_tl_err` breadcrumb helper was likewise promoted to
+  a shared `tl_err`. This refactor is behavior-neutral - the pre-existing
+  redaction suite passes unchanged, proving it.
+
+### Fixed
+- **Precompact stamp idempotency** (issue #7): `session-precompact.sh` now skips
+  the boundary write when the buffer already ends with a compaction-boundary
+  marker (a `tail -n 1` guard, mirroring `session-flush.sh`'s end-stamp guard),
+  so a double `PreCompact` fire for one seam writes one marker - while a long
+  session with several genuine compactions still stamps each one, because a
+  captured action landing between them moves the marker off the last line.
+
+### Review fixes (pre-merge, high-effort code review)
+- **Prose-safe prompt redaction**: prompts run through a new `redact_prompt`
+  (structural token formats + explicit `key:value`/`key=value` secrets only),
+  not the command-tuned `redact` whose copula/bare-space and bearer/token WORD
+  rules corrupt and can invert ordinary English ("password is not the problem"
+  -> "password is ***"). The command path is unchanged. A bare-word secret with
+  no prefix and no colon is deliberately left for the handoff human re-scan.
+- **No nag for prompt-only sessions**: `session-prompt.sh` records a line for
+  every session, so onboard's unconsumed-buffer counter now skips buffers with
+  no captured ACTION line (Q&A / Read-Glob-only sessions have nothing to
+  distill), preserving the warning's signal.
+- **Prompt latency bound**: the prompt is clamped to 2000 chars before the
+  redaction passes (then to 200 for storage), so a multi-MB paste isn't fully
+  regex-scanned in the synchronous UserPromptSubmit path.
+- **Task empty-description fallback**: an empty-string `description` now falls
+  through to `prompt` (jq `//` only skips null), so delegated intent isn't lost.
+- **Duplication removed**: shared `tl_append_line` (buffer write + breadcrumb)
+  and a jq `clamp($n; $ell)` truncation def, so the write sequence and the
+  redact|clean|truncate idiom are single-sourced across capture surfaces.
+
+### Tests
+- 26 new assertions (95 -> 121): prompt capture (line shape, prose-safety,
+  colon-form + shape-token redaction, truncation, empty-prompt skip,
+  opt-out/kill-switch, no-session breadcrumb); widened capture
+  (grep/webfetch/websearch/task/mcp one-liners, URL-userinfo masking, empty-desc
+  task fallback, mcp input not read); prompt-only buffers not counted as
+  unconsumed; precompact idempotency (double-fire, multi-seam, post-boundary).
+
 ## [0.4.1]
 
 P0 fixes out of the v0.4.0 audit (docs/AUDIT-v0.4.0.md). The audit's live finding

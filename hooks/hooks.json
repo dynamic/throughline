@@ -11,9 +11,20 @@
         ]
       }
     ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/session-prompt.sh"
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
-        "matcher": "Bash|Edit|Write|NotebookEdit",
+        "matcher": "Bash|Edit|Write|NotebookEdit|Grep|WebFetch|WebSearch|Task|Agent|mcp__.*",
         "hooks": [
           {
             "type": "command",

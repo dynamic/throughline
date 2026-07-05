@@ -36,6 +36,8 @@ dir_present(){ if [ -d "$2" ]; then ok "$1"; else bad "$1 (no dir: $2)"; fi; }
 absent() { if [ -e "$2" ]; then bad "$1 (exists: $2)"; else ok "$1"; fi; }
 eq()     { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1 (got '$2', want '$3')"; fi; }
 cap()    { printf '%s' "$1" | sh "$H/session-capture.sh"; }
+prompt() { printf '%s' "$1" | sh "$H/session-prompt.sh"; }
+precompact() { printf '%s' "$1" | sh "$H/session-precompact.sh"; }
 reset_buf() { rm -f "$BUF"/session-*.md "$DATA"/.capture-errors; mkdir -p "$BUF"; chmod 755 "$BUF" 2>/dev/null; }
 
 echo "throughline hook tests"
@@ -269,6 +271,19 @@ hasnt "current session not flagged as unconsumed" "$O2" 'unconsumed session buff
 printf -- '- old\n<!-- session-ended 2024-01-01 00:00:00 (end) -->\n' > "$BUF/session-OLD.md"
 O3=$(printf '%s' '{"source":"startup","session_id":"T"}' | sh "$H/session-onboard.sh")
 has "ended prior session flagged as unconsumed" "$O3" 'unconsumed session buffer'
+
+# 10a. a prompt-only buffer (intent captured, but no action — a Q&A or
+#      Read/Glob-only session) is NOT counted as unconsumed: there is nothing
+#      to distill, and counting it would nag on every trivial session.
+reset_buf
+printf -- '- x\n' > "$BUF/session-T.md"
+printf -- '- `t` **prompt** just a question answered from context\n<!-- session-ended 2024-01-01 00:00:00 (end) -->\n' > "$BUF/session-PONLY.md"
+O3a=$(printf '%s' '{"source":"startup","session_id":"T"}' | sh "$H/session-onboard.sh")
+hasnt "prompt-only ended buffer NOT flagged as unconsumed" "$O3a" 'unconsumed session buffer'
+# but the same buffer WITH a real action line IS surfaced.
+printf -- '- `t` **prompt** do the thing\n- `t` **bash** did it - `x`\n<!-- session-ended 2024-01-01 00:00:00 (end) -->\n' > "$BUF/session-PACT.md"
+O3a2=$(printf '%s' '{"source":"startup","session_id":"T"}' | sh "$H/session-onboard.sh")
+has "prompt+action ended buffer IS flagged as unconsumed" "$O3a2" 'unconsumed session buffer'
 
 # 10b. a prior session buffer with NO end-stamp gets hedged wording, not
 #      asserted as "ended" — it could be live in another terminal.
@@ -521,6 +536,93 @@ printf '%s' '{"session_id":"T4","tool_name":"Bash","tool_input":{"description":"
 present "mkdir failure still breadcrumbs (target is data-dir root, not buffer/)" "$DATA/.capture-errors"
 rm -f "$BUF"
 mkdir -p "$BUF"
+
+# 14. UserPromptSubmit capture (issue #5): the buffer records intent, not just
+#     actions. Shares the redaction pipeline with capture via tl_jq_redact_defs.
+reset_buf
+prompt '{"session_id":"P","prompt":"fix the login bug in the auth module"}'
+has   "prompt hook records the prompt line" "$(cat "$BUF/session-P.md")" '**prompt** fix the login bug'
+# Redaction on prompts uses the PROSE-SAFE path (redact_prompt): structural
+# token formats and explicit key:value / key=value secrets are masked, but the
+# command-tuned bearer/word and bare-space keyword rules that corrupt ordinary
+# English are NOT applied. A pasted shape-token and a colon-form secret are
+# still caught.
+prompt '{"session_id":"P","prompt":"deploy with password: hunter2secret and ghp_abcdefghij1234567890"}'
+PS=$(grep 'deploy with' "$BUF/session-P.md")
+hasnt "prompt: colon-form password value not stored" "$PS" 'hunter2secret'
+hasnt "prompt: gh token not stored"                  "$PS" 'ghp_abcdefghij1234567890'
+has   "prompt: secret masked"                        "$PS" '***'
+# Prose safety: ordinary English containing credential KEYWORDS but no explicit
+# secret must survive verbatim — this is the whole point of redact_prompt. The
+# command path's copula/bare-space rule would mangle all of these.
+prompt '{"session_id":"P","prompt":"my password is not the problem, the auth is stale"}'
+has "prompt: prose after keyword+copula is preserved (not inverted)" "$(grep 'not the problem' "$BUF/session-P.md")" 'my password is not the problem, the auth is stale'
+prompt '{"session_id":"P","prompt":"explain how the token refresh flow works"}'
+has "prompt: 'token refresh' prose is preserved" "$(grep 'refresh flow' "$BUF/session-P.md")" 'the token refresh flow works'
+# Truncation at 200 chars with the same marker as the Bash command path.
+LONGP=$(printf 'x%.0s' $(seq 1 300))
+prompt '{"session_id":"P","prompt":"'"$LONGP"'"}'
+has "prompt: long prompt is truncated" "$(grep truncated "$BUF/session-P.md")" '…[truncated]'
+# Empty / whitespace-only prompt writes no line.
+reset_buf
+prompt '{"session_id":"P2","prompt":"   "}'
+absent "prompt: whitespace-only prompt writes no buffer file" "$BUF/session-P2.md"
+prompt '{"session_id":"P2","prompt":""}'
+absent "prompt: empty prompt writes no buffer file" "$BUF/session-P2.md"
+# Opt-out and kill switch are honored (prompt uses tl_active like capture).
+reset_buf
+printf '' > "$WORK/proj/.throughlineignore"
+prompt '{"session_id":"P3","prompt":"should be ignored"}'
+absent "prompt: .throughlineignore suppresses capture" "$BUF/session-P3.md"
+rm -f "$WORK/proj/.throughlineignore"
+prompt() { printf '%s' "$1" | THROUGHLINE_DISABLE=1 sh "$H/session-prompt.sh"; }
+prompt '{"session_id":"P4","prompt":"should be disabled"}'
+absent "prompt: THROUGHLINE_DISABLE suppresses capture" "$BUF/session-P4.md"
+prompt() { printf '%s' "$1" | sh "$H/session-prompt.sh"; }
+# Missing session_id drops the prompt and breadcrumbs (mirrors capture).
+reset_buf
+prompt '{"prompt":"no session id here"}'
+present "prompt: missing session_id breadcrumbs to .capture-errors" "$DATA/.capture-errors"
+
+# 15. widened PostToolUse capture (issue #6): high-signal read-side tools each
+#     emit one redacted one-liner; MCP tools are name-only; Read/Glob are not
+#     matched at all (excluded in hooks.json, so no branch is needed for them).
+reset_buf
+cap '{"session_id":"W","tool_name":"Grep","tool_input":{"pattern":"needle.*haystack"}}'
+has "grep captured with pattern" "$(cat "$BUF/session-W.md")" '**grep** `needle.*haystack`'
+cap '{"session_id":"W","tool_name":"WebFetch","tool_input":{"url":"https://alice:s3cr3tpw@example.com/doc"}}'
+WF=$(grep webfetch "$BUF/session-W.md")
+has   "webfetch captured with url"      "$WF" '**webfetch** https://alice:'
+hasnt "webfetch url userinfo is masked" "$WF" 's3cr3tpw'
+cap '{"session_id":"W","tool_name":"WebSearch","tool_input":{"query":"posix sh idempotency"}}'
+has "websearch captured with query" "$(grep websearch "$BUF/session-W.md")" '**websearch** posix sh idempotency'
+cap '{"session_id":"W","tool_name":"Task","tool_input":{"subagent_type":"Explore","description":"map the hook data flow"}}'
+has "task captured with subagent + description" "$(grep '\*\*agent\*\*' "$BUF/session-W.md")" '**agent** Explore: map the hook data flow'
+cap '{"session_id":"W","tool_name":"Task","tool_input":{"prompt":"no description, only a prompt body"}}'
+has "task falls back to prompt when no description" "$(grep 'prompt body' "$BUF/session-W.md")" '**agent** no description'
+# Empty-STRING description must fall through to prompt (jq // only skips null).
+cap '{"session_id":"W","tool_name":"Task","tool_input":{"description":"","prompt":"intent lives in the prompt"}}'
+has "task falls back to prompt on empty-string description" "$(grep 'intent lives' "$BUF/session-W.md")" '**agent** intent lives in the prompt'
+cap '{"session_id":"W","tool_name":"mcp__github__create_pull_request","tool_input":{"title":"secret sauce"}}'
+MC=$(grep 'mcp__github' "$BUF/session-W.md")
+has   "mcp tool captured name-only"        "$MC" '**mcp__github__create_pull_request**'
+hasnt "mcp tool input fields are not read" "$MC" 'secret sauce'
+
+# 16. precompact stamp idempotency (issue #7): a double fire for one seam writes
+#     one boundary; each genuine compaction (a captured action lands between)
+#     still gets its own.
+reset_buf
+printf -- '- `t` **bash** first - `a`\n' > "$BUF/session-C.md"
+precompact '{"session_id":"C","trigger":"auto"}'
+precompact '{"session_id":"C","trigger":"auto"}'
+eq "precompact: double fire writes one boundary" "$(grep -c '^<!-- compaction-boundary' "$BUF/session-C.md")" "1"
+printf -- '- `t` **bash** second - `b`\n' >> "$BUF/session-C.md"
+precompact '{"session_id":"C","trigger":"auto"}'
+eq "precompact: a second genuine compaction gets its own boundary" "$(grep -c '^<!-- compaction-boundary' "$BUF/session-C.md")" "2"
+# A later end-stamp after a boundary must not confuse the last-line guard.
+printf -- '- `t` **bash** third - `c`\n' >> "$BUF/session-C.md"
+precompact '{"session_id":"C","trigger":"auto"}'
+eq "precompact: boundary after a post-boundary action stamps again" "$(grep -c '^<!-- compaction-boundary' "$BUF/session-C.md")" "3"
 
 echo "----------------------"
 printf 'passed: %s   failed: %s\n' "$PASS" "$FAIL"

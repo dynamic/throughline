@@ -39,10 +39,14 @@ handoff, and binds into Claude Code's native memory system.
 
 Three layers, each doing what it's actually capable of:
 
-1. **Continuous capture** (`PostToolUse` hook) - appends a structured one-liner per
-   mutating action to a per-session buffer: the command or file, flagged if it was
-   interrupted, with obvious secrets masked before anything is written. Mechanical
-   and cheap. You never see it; it just protects you.
+1. **Continuous capture** (`UserPromptSubmit` + `PostToolUse` hooks) - appends a
+   structured one-liner per user prompt and per captured action to a per-session
+   buffer: the intent behind the work, then the command, file, search, fetch, or
+   delegated task, flagged if it was interrupted, with obvious secrets masked
+   before anything is written. Mutating tools (Bash/Edit/Write/NotebookEdit) plus
+   high-signal read-side tools (Grep/WebFetch/WebSearch/Task/agents) and MCP tools
+   are captured; the noisiest (Read/Glob) are deliberately skipped so the buffer
+   stays skimmable. Mechanical and cheap. You never see it; it just protects you.
 2. **Judged handoff** (`throughline-handoff` skill) - at wrap-up, the agent distills
    the buffer + context into a durable `HANDOFF.md` and a timestamped session log,
    and promotes any durable facts into native memory. This is the judgment layer, so
@@ -148,7 +152,7 @@ profile):
 export THROUGHLINE_DISABLE=1
 ```
 
-Any value other than `0` disables **all four hooks completely** - no capture, no
+Any value other than `0` disables **all five hooks completely** - no capture, no
 SessionStart block (not even about existing data), no end-stamps. This is stricter
 than `.throughlineignore`, which keeps orienting toward already-existing content.
 Unset it (or set `0`) to re-enable; existing data is untouched either way.
@@ -197,8 +201,9 @@ throughline/
 │  └─ marketplace.json
 ├─ hooks/
 │  ├─ hooks.json
-│  ├─ _lib.sh                # data-dir resolution + activation gate + jq/sid helpers
+│  ├─ _lib.sh                # data-dir resolution + activation gate + jq/sid/redaction helpers
 │  ├─ session-onboard.sh     # SessionStart: pointer, git state, compaction recovery
+│  ├─ session-prompt.sh      # UserPromptSubmit: redacted, truncated user-intent line
 │  ├─ session-capture.sh     # PostToolUse: structured action buffer (outcome + redaction)
 │  ├─ session-precompact.sh  # PreCompact: stamp the compaction-boundary marker
 │  └─ session-flush.sh       # SessionEnd: safety-net stamp
