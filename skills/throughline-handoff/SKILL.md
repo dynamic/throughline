@@ -71,6 +71,7 @@ Create `DATA/logs/handoff-YYYY-MM-DD-HHMM.md` (local time; create `logs/` if nee
 ```markdown
 # Handoff: <Brief Title>
 **Date:** <YYYY-MM-DD HH:MM TZ>   **Session:** <session-id if known>
+**Follows:** [<predecessor title>](handoff-YYYY-MM-DD-HHMM.md) <!-- same work stream only; omit if none -->
 
 ## Objective
 The big-picture goal of the session.
@@ -78,6 +79,14 @@ The big-picture goal of the session.
 ## What happened
 Distilled from the capture buffer + conversation: commands run, files changed,
 decisions made — with the *why*.
+
+## What we tried (including what failed)
+Approaches attempted and abandoned, with the REAL evidence — the actual command,
+error text, or number that killed the approach, not a summary of it. A failed
+approach is the most expensive thing for a future session to rediscover from
+scratch; a summary like "tried caching, didn't work" gives a future session
+nothing to avoid re-trying. Omit this section only if nothing was actually tried
+and abandoned this session.
 
 ## Progress
 ### Completed   ### In progress   ### Not started
@@ -96,6 +105,11 @@ Ordered, specific — exact commands, paths, expected outcomes.
 Key paths, URLs, credential locations (names only).
 ```
 
+**Chain link:** if this session continues work a prior log already started (same
+work stream, not just the same project), name that predecessor in the **Follows**
+line above so a reader can walk the decision history log-to-log without HANDOFF.md
+having to carry it. Omit the line entirely for a session that starts something new.
+
 ---
 
 ## Phase 4: Update durable HANDOFF.md + memory binding
@@ -107,12 +121,32 @@ Key paths, URLs, credential locations (names only).
 3. **Memory binding (native system):** ask "did this session surface a durable fact
    worth pinning?" Types: a confirmed preference (`feedback`), a fact about the
    user/context (`user`), a project constraint/decision (`project`), a resource
-   pointer (`reference`). If yes, write it to the native memory dir
-   (`~/.claude/projects/<slug>/memory/`) using the established frontmatter and
-   update `MEMORY.md`. This promotion is **curated** — never auto-dump the buffer
-   into memory. One entry per genuine insight; skip if nothing new.
+   pointer (`reference`). Native memory is two layers: `MEMORY.md` is an
+   always-loaded index (truncated past 200 lines, so every entry there must stay a
+   single short line), and each entry's full content lives in its own topic file
+   under `~/.claude/projects/<slug>/memory/`, read on demand. If yes, write the
+   topic file with frontmatter shaped like this, then add its one-line pointer to
+   `MEMORY.md`:
+   ```markdown
+   ---
+   name: short-kebab-case-slug
+   description: one-line summary used to judge relevance in a future session
+   metadata:
+     type: feedback   # or: user, project, reference
+   ---
+   ```
+   This promotion is **curated** — never auto-dump the buffer into memory. One entry
+   per genuine insight; skip if nothing new.
 4. **Consume the buffers:** move distilled `DATA/buffer/session-*.md` into
-   `DATA/buffer/archive/` (or delete) so they aren't re-processed next session.
+   `DATA/buffer/archive/` so they aren't re-processed next session. Archive only —
+   never delete; an archived buffer is the recovery path if a distillation later
+   turns out to have missed something. See "Housekeeping" in the README for when an
+   archived buffer is old enough to actually delete.
+5. **Clear resolved breadcrumbs:** if `DATA/.capture-errors` exists and its contents
+   were surfaced above (as a Phase 2 "Resolved Issues" entry or in the session log),
+   clear the file now that it has been distilled — it exists to make a swallowed
+   capture failure visible exactly once, not to keep nagging on every future onboard
+   after it's already been read and acted on.
 
 ---
 
