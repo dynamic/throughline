@@ -251,12 +251,19 @@ tl_jq_redact_defs() {
   # and opaque tokens commonly run 20-100+); requiring 16+ contiguous
   # non-whitespace chars keeps the false-positive rate low without requiring a
   # digit/mixed-case heuristic that would itself have real-credential misses.
-  # Known tradeoff, same class as `redact`'s documented gaps: a real credential
-  # shorter than 16 chars slips through this rule (the generic key:value rule
-  # below still catches it if pasted with an explicit "password: xxx" shape;
-  # otherwise the handoff skill's human re-scan is the backstop).
+  # Also includes the Token scheme word (DRF/GitLab-style "Authorization:
+  # Token <value>"), which redact_prompt lacked entirely until this was added -
+  # without it, a Token-scheme header fell through to no rule at all (there is
+  # no generic keyword rule left in redact_prompt to catch it either; see the
+  # comment above redact_prompt for why that rule was removed).
+  # Known, DELIBERATE tradeoff, same class as `redact`'s documented gaps: a
+  # real credential shorter than 16 chars is not masked by this rule. There is
+  # no fallback generic rule in redact_prompt to catch it either - the handoff
+  # skill's human re-scan is the sole backstop for that case, same as for any
+  # other bare/short secret with no recognizable long-token shape.
   def _auth_scheme_prose:
     gsub("(?i)bearer\\s+(?<t>[A-Za-z0-9._\\-]{16,})"; "Bearer ***")
+    | gsub("(?i)\\btoken\\s+(?<t>[A-Za-z0-9._\\-]{16,})"; "Token ***")
     | gsub("(?i)\\bbasic\\s+[A-Za-z0-9+/=]{16,}"; "Basic ***");
   # Full command-path redaction. Shape-specific patterns run BEFORE the generic
   # keyword=value catch-all, so e.g. "Authorization:Basic <base64>" is fully
@@ -286,58 +293,40 @@ tl_jq_redact_defs() {
     | _prefix_tokens
     | gsub("(?i)(?<k>\\w*(?:token|secret|password|passwd|api[_-]?key|access[_-]?key|credential|auth(?:orization)?|client[_-]?id)\\w*)(?<s>\\s*[:=]\\s*|\\s+(?:is|was|are)\\s+|\\s+)(?<v>\"?(?:\(M)|[^\\s\"]+))"; "\(.k)\(.s)***")
     | _unmask;
-  # Prose-safe redaction for user prompts (issue #5). Prompts are natural
-  # language, not commands: running them through `redact` corrupts and can
-  # invert ordinary English (the copula/bare-space generic rule and the bare
-  # "token" WORD rule both fire on prose - "token refresh flow" -> "Token ***
-  # flow"), destroying the very intent the feature exists to preserve. So this
-  # path keeps ONLY the structural formats that never match English
-  # (_pem/_url/_prefix_tokens/_auth_scheme_prose - see that def for why Basic/
-  # Bearer need their OWN length-gated variant here, not the command one)
-  # plus a generic keyword rule RESTRICTED to explicit key:value / key=value
-  # separators - which still catches a credential pasted as "password: hunter2"
-  # or "API_KEY=xxx" while leaving "the password is not the problem" untouched.
+  # Prose-safe redaction for user prompts (issue #5), and for the WebSearch
+  # query / Task description branches in session-capture.sh (also prose).
+  # Prompts are natural language, not commands: running them through `redact`
+  # corrupts and can invert ordinary English (the copula/bare-space generic
+  # rule and the bare "token" WORD rule both fire on prose - "token refresh
+  # flow" -> "Token *** flow"), destroying the very intent the feature exists
+  # to preserve. So this path keeps ONLY unambiguous STRUCTURAL signals -
+  # _pem, _url, _prefix_tokens, and _auth_scheme_prose (Bearer/Token/Basic,
+  # each length-gated) - things that are never accidentally spelled by an
+  # English sentence.
   #
-  # The keyword group is bounded by a LETTER lookaround here (unlike redact's
-  # `\w*...\w*`-affixed version), matching each keyword only when no LETTER
-  # touches either side: "auth"/"authorization" as whole words never match as
-  # a substring of "author"/"authority"; "token" never matches inside
-  # "tokens". But unlike a literal `\b` boundary, an adjacent UNDERSCORE still
-  # counts as a match boundary, so SCREAMING_SNAKE_CASE compounds
-  # (CLIENT_SECRET, ACCESS_TOKEN, DB_PASSWORD) - the standard real-world
-  # credential-naming convention, and exactly what a pasted .env file or curl
-  # command uses - still redact correctly. redact's looser `\w*...\w*` affixes
-  # exist for the same compound-name reason on the command path; prompts are
-  # prose by definition, so a `\w*` (which also treats letters as valid
-  # boundary-crossers) would additionally match inside "author"/"tokens" -
-  # hence the tighter letter-only lookaround here instead of reusing it.
-  #
-  # A pasted secret with no recognizable prefix/scheme AND no colon/equals
-  # (e.g. a bare word after "password is") is deliberately NOT masked here;
-  # the handoff skill's human re-scan is the second barrier, same as for the
-  # bare-CLI-flag gap `redact` documents.
-  #
-  # The keyword group is bounded by LETTER lookaround, not `\b`: `\b` is a
-  # transition between a \w char and a non-\w char, and underscore IS a \w
-  # char, so `\bsecret\b` does NOT match "secret" inside "client_secret" or
-  # "SECRET" inside "DB_PASSWORD"'s sibling "PASSWORD" - it would silently fail
-  # to redact the single most common real-world credential-naming convention
-  # (SCREAMING_SNAKE_CASE: CLIENT_SECRET, ACCESS_TOKEN, DB_PASSWORD, ...),
-  # exactly the compounds a pasted .env file or curl command uses. Lookaround
-  # on "not a letter" instead of "not a word char" treats the underscore as a
-  # valid boundary (so the compound still matches) while still rejecting a
-  # letter on either side (so "author"/"authority"/"tokens" still don't match
-  # "auth"/"auth"/"token" as a prefix - the false-positive `\b` was tightened
-  # for in the first place). Digits are deliberately left out of the boundary
-  # class too (neither excluded nor required): a keyword directly touching a
-  # digit is rare enough in both prose and real credential names not to be
-  # worth the extra rule complexity either way.
+  # Deliberately DOES NOT include a generic keyword+separator rule (unlike
+  # `redact`, which has one for the command path). Three rounds of trying to
+  # make a keyword-boundary regex tell "real credential label" from "ordinary
+  # word" apart each fixed one failure mode by introducing a different one:
+  #   - substring matching ("auth" inside "author") -> \b-word-bounded
+  #   - \b then missed SCREAMING_SNAKE_CASE compounds (\b doesn't cross an
+  #     underscore) -> switched to a letter-only lookaround
+  #   - the letter-lookaround then excluded EVERY keyword+letter-suffix, not
+  #     just the intended cases - "secrets:"/"passwords:"/"credentials:"
+  #     (common, real phrasing) silently stopped being masked at all
+  # There is no boundary rule that admits "secrets"/"passwords" (real usage)
+  # while excluding "author"/"tokens" (false positives) - the shapes overlap.
+  # Rather than a fourth attempt at the same regex, the rule is removed: a
+  # pasted secret with no recognizable prefix/scheme (e.g. "password: hunter2"
+  # with no ghp_/sk-/AKIA/... shape and no 16+ char scheme value) is NOT masked
+  # in prompts/WebSearch/Task. This is the same class of documented, deliberate
+  # gap as `redact`'s bare-CLI-flag limitation - the handoff skill's human
+  # re-scan is the sole backstop for it here, not a secondary one.
   def redact_prompt:
     _pem
     | _auth_scheme_prose
     | _url
     | _prefix_tokens
-    | gsub("(?i)(?<k>(?<![A-Za-z])(?:token|secret|password|passwd|api[_-]?key|access[_-]?key|credential|auth(?:orization)?|client[_-]?id)(?![A-Za-z]))(?<s>\\s*[:=]\\s*)(?<v>\"?(?:\(M)|[^\\s\"]+))"; "\(.k)\(.s)***")
     | _unmask;
   # Neutralize control chars (incl. newlines) and backticks so a captured
   # command or prompt cannot break the markdown list / code span it is

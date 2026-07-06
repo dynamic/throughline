@@ -127,15 +127,51 @@ idempotently. A fifth hook joins the set.
   Bearer's value and Basic's body - real tokens/JWTs run far longer than a
   single English word), used only by `redact_prompt`.
 
+### Review fixes, round 4 - structural redesign of `redact_prompt`
+A fourth review found four more bugs, two of them ([1]) in the SAME code
+round 3 had just patched: the letter-lookaround boundary excluded not just the
+intended false-positive cases but EVERY keyword followed by any letter, so
+"secrets:"/"passwords:"/"credentials:" (common, real phrasing) silently
+stopped being redacted at all - worse than what it fixed. That's three
+consecutive rounds where a fix to the same keyword-boundary regex was correct
+for its target case but broke a different one, the same shape as the
+`redact()` boundary-character rework documented earlier in this changelog
+(v0.2.0). Rather than a fourth regex patch, `redact_prompt`'s generic
+keyword+separator rule was removed entirely:
+
+- **No boundary rule can admit "secrets:"/"passwords:" (real usage) while
+  excluding "author:"/"tokens:" (false positives) - the shapes overlap.**
+  `redact_prompt` now masks ONLY unambiguous structural signals: known token
+  prefixes (`ghp_`, `sk-`, `AKIA`, ...), PEM blocks, URL-userinfo, and
+  length-gated Bearer/Token/Basic scheme values. A colon-form secret with no
+  recognizable prefix/scheme ("password: hunter2", `CLIENT_SECRET: xyz`) is
+  now a deliberate, documented, and CONSISTENT gap - not fixed differently
+  case-by-case - backstopped solely by the handoff skill's human re-scan,
+  same class as `redact`'s existing bare-CLI-flag gap.
+- **`redact_prompt` had no Token-scheme rule at all** (the DRF/GitLab-style
+  `Authorization: Token <value>` header), an oversight from splitting it out
+  of `redact` in round 2. Added alongside Bearer/Basic in `_auth_scheme_prose`,
+  same 16+ char length floor.
+- **The 16-char length floor (round 3's prose-safety fix) also un-redacts
+  real 8-15 char Bearer/Basic values**, leaving the credential in plaintext
+  next to a `***` that falsely suggests full redaction. Accepted as the same
+  deliberate gap as above, rather than tuning the threshold further.
+- A pre-existing (not a regression from this PR) cosmetic quote-handling bug
+  in the shared value-capture group - an orphaned trailing quote in malformed
+  output, no secret leak - was identified in both `redact` and the
+  since-removed `redact_prompt` generic rule. It no longer applies to
+  `redact_prompt` (that rule is gone); it remains in `redact` (command path,
+  unchanged, out of scope for this PR) as a low-priority follow-up.
+
 ### Tests
-- 39 new assertions (95 -> 134): prompt capture (line shape, prose-safety,
-  colon-form + shape-token redaction, word-boundary regression, compound
-  SCREAMING_SNAKE_CASE secrets, bearer/basic masking + prose preservation,
-  truncation, empty-prompt skip, opt-out/kill-switch, no-session breadcrumb);
-  widened capture (grep/webfetch/websearch/task/mcp one-liners, URL-userinfo
-  masking, empty-desc task fallback, WebSearch/Task prose preservation, mcp
-  input not read); prompt-only buffers not counted as unconsumed, including
-  the zero-conforming-line edge case; precompact idempotency (double-fire,
+- 39 new assertions (95 -> 133): prompt capture (line shape, prose-safety,
+  structural-signal redaction, documented-gap behavior for colon-form/compound
+  secrets, Bearer/Token/Basic scheme masking + prose preservation, truncation,
+  empty-prompt skip, opt-out/kill-switch, no-session breadcrumb); widened
+  capture (grep/webfetch/websearch/task/mcp one-liners, URL-userinfo masking,
+  empty-desc task fallback, WebSearch/Task prose preservation, mcp input not
+  read); prompt-only buffers not counted as unconsumed, including the
+  zero-conforming-line edge case; precompact idempotency (double-fire,
   multi-seam, post-boundary).
 
 ## [0.4.1]
