@@ -254,6 +254,13 @@ eq "tl_safe_sid rejects '.'" "$(tl_safe_sid '.')" ""
 eq "tl_safe_sid rejects '..'" "$(tl_safe_sid '..')" ""
 eq "tl_safe_sid rejects empty" "$(tl_safe_sid '')" ""
 
+# 5a2. tl_clean_ctrl unit tests: control chars AND backticks both become a
+#      space (issue #9 review finding: a stamped trigger/reason containing a
+#      run of backticks could otherwise break the markdown fence the new
+#      inline-tail feature wraps buffer content in).
+eq "tl_clean_ctrl replaces control chars with space" "$(tl_clean_ctrl "$(printf 'a\tb')")" "a b"
+eq "tl_clean_ctrl replaces backticks with space" "$(tl_clean_ctrl 'trig```ger')" "trig   ger"
+
 # 5c. tl_data_dir honors an absolute THROUGHLINE_DATA_DIR override
 ABS_DIR="$WORK/abs-data"
 eq "tl_data_dir honors absolute THROUGHLINE_DATA_DIR" \
@@ -308,6 +315,18 @@ O_TAIL=$(printf '%s' '{"source":"compact","session_id":"T"}' | sh "$H/session-on
 hasnt "onboard(compact) tail excludes a line beyond the bound" "$O_TAIL" 'cmd10`'
 has   "onboard(compact) tail includes the first line within the bound" "$O_TAIL" 'cmd11`'
 has   "onboard(compact) tail includes the most recent line" "$O_TAIL" 'cmd40`'
+
+# 7c. a single OVERSIZED line within the tail window is truncated per-line
+#     (review finding: session-capture.sh never length-clamps a Bash
+#     description or an Edit/Write/NotebookEdit file_path, so this hook's own
+#     per-line cap - not an assumption about capture-side clamping - is what
+#     actually keeps the inlined block bounded).
+reset_buf
+LONGDESC=$(awk 'BEGIN{for(i=0;i<3000;i++) printf "x"}')
+printf -- '- `t` **bash** %s - `ls`\n' "$LONGDESC" > "$BUF/session-T.md"
+O_LONG=$(printf '%s' '{"source":"compact","session_id":"T"}' | sh "$H/session-onboard.sh")
+hasnt "onboard(compact) does not inline an oversized field verbatim" "$O_LONG" "$LONGDESC"
+has   "onboard(compact) marks a truncated oversized line" "$O_LONG" '…[line truncated]'
 
 # 8. flush stamps ended once, anchored
 printf '%s' '{"session_id":"T","reason":"clear"}' | sh "$H/session-flush.sh"
