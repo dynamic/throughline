@@ -186,33 +186,33 @@ Gitignore both for whichever data dir you use:
 
 ## Housekeeping
 
-Everything throughline writes grows without automatic bound — there is no
+Everything throughline writes grows without automatic bound: there is no
 background cleanup process, deliberately, to keep the plugin's footprint at
 "pure POSIX sh + jq, zero infrastructure." What's safe to clean up by hand,
 and what isn't:
 
 **Safe to delete:**
-- `buffer/archive/*.md` older than your last `throughline-consolidate` pass —
+- `buffer/archive/*.md` older than your last `throughline-consolidate` pass -
   once a consolidation has mined a log for recurring lessons, an archived raw
   buffer behind it has nothing left to give. As a simple rule of thumb, an
   archived buffer older than ~90 days with no open question against it is safe
   to remove.
 - `.capture-errors`, once its contents have been surfaced in a session log and
-  cleared by the handoff skill (Phase 4) — it's a breadcrumb meant to be read
+  cleared by the handoff skill (Phase 4): it's a breadcrumb meant to be read
   once, not a running log.
 
 **Not safe to delete:**
-- `logs/` — these are the evidence trail. `throughline-consolidate` explicitly
+- `logs/`: these are the evidence trail. `throughline-consolidate` explicitly
   never prunes them, and HANDOFF.md's own "Recent Session Logs" list only ever
   points at the last 5, so older logs are already off the beaten path without
   needing to be deleted.
-- `HANDOFF.md` itself, obviously — it's the durable record.
-- Any buffer still in `buffer/` (not yet archived) — it may be an in-progress or
+- `HANDOFF.md` itself, obviously - it's the durable record.
+- Any buffer still in `buffer/` (not yet archived) - it may be an in-progress or
   unconsumed session; run a handoff first, which moves it to `archive/` once
   distilled.
 
-There's no automated retention policy beyond this — clean up by hand on the
-cadence above, or leave it; a growing `archive/` costs disk, not correctness.
+There's no automated retention policy beyond this: clean up by hand on the
+cadence above, or leave it, a growing `archive/` costs disk, not correctness.
 
 ## Auto-handoff at wrap-up (optional reinforcement)
 

@@ -40,6 +40,20 @@ Docs/skill polish batch from the v0.4.0 audit (docs/AUDIT-v0.4.0.md, P2, items
   after prose counts drifted across releases before (71/83/88/95 at
   different points).
 
+### Fixed (found during review, before merge)
+- **The memory-binding frontmatter example didn't match reality**: every
+  actual memory topic file (`~/.claude/projects/<slug>/memory/*.md`) carries
+  `node_type: memory` and `originSessionId` under `metadata`, both omitted
+  from the template this release added - so an agent following it verbatim
+  would have written a schema-inconsistent entry, the exact failure the
+  change claimed to prevent. Verified against every real memory file in the
+  harness (100% carried both fields); the template now matches.
+- **Em-dashes in new content**: the new Housekeeping section (README) and
+  session-log/Phase-4 additions (`throughline-handoff` SKILL.md) used
+  em-dashes, violating this user's global no-em-dash writing-style rule -
+  in `handoffs`, a category the rule names explicitly. Replaced with commas,
+  colons, periods, or spaced hyphens per the rule.
+
 ## [0.6.0]
 
 Issue #9 from the v0.4.0 audit (docs/AUDIT-v0.4.0.md, P2): inline post-compaction

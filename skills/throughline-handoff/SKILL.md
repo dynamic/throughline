@@ -81,7 +81,7 @@ Distilled from the capture buffer + conversation: commands run, files changed,
 decisions made — with the *why*.
 
 ## What we tried (including what failed)
-Approaches attempted and abandoned, with the REAL evidence — the actual command,
+Approaches attempted and abandoned, with the REAL evidence: the actual command,
 error text, or number that killed the approach, not a summary of it. A failed
 approach is the most expensive thing for a future session to rediscover from
 scratch; a summary like "tried caching, didn't work" gives a future session
@@ -132,19 +132,21 @@ having to carry it. Omit the line entirely for a session that starts something n
    name: short-kebab-case-slug
    description: one-line summary used to judge relevance in a future session
    metadata:
+     node_type: memory
      type: feedback   # or: user, project, reference
+     originSessionId: <current session id>
    ---
    ```
-   This promotion is **curated** — never auto-dump the buffer into memory. One entry
+   This promotion is **curated**: never auto-dump the buffer into memory. One entry
    per genuine insight; skip if nothing new.
 4. **Consume the buffers:** move distilled `DATA/buffer/session-*.md` into
-   `DATA/buffer/archive/` so they aren't re-processed next session. Archive only —
-   never delete; an archived buffer is the recovery path if a distillation later
+   `DATA/buffer/archive/` so they aren't re-processed next session. Archive only,
+   never delete: an archived buffer is the recovery path if a distillation later
    turns out to have missed something. See "Housekeeping" in the README for when an
    archived buffer is old enough to actually delete.
 5. **Clear resolved breadcrumbs:** if `DATA/.capture-errors` exists and its contents
    were surfaced above (as a Phase 2 "Resolved Issues" entry or in the session log),
-   clear the file now that it has been distilled — it exists to make a swallowed
+   clear the file now that it has been distilled - it exists to make a swallowed
    capture failure visible exactly once, not to keep nagging on every future onboard
    after it's already been read and acted on.
 
