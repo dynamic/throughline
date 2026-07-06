@@ -130,11 +130,216 @@ tl_resolve_sid() {
 
 # Replace control characters (including newlines) with a space. Shared by
 # session-flush.sh and session-precompact.sh so their reason/trigger fields
-# can't break the `<!-- ... -->` marker they're embedded in. (capture.sh's `clean`
-# def duplicates this rule rather than calling it: capture applies control-char
+# can't break the `<!-- ... -->` marker they're embedded in. (The jq `clean` def in
+# tl_jq_redact_defs below duplicates this rule rather than calling it: the
+# capture-side hooks apply control-char
 # AND backtick stripping together, per-field, inside one jq pipeline that also
 # does redaction — pulling just the control-char half out to a separate shell
 # call there would mean an extra process per field for no real safety gain.)
 tl_clean_ctrl() {
   printf '%s' "$1" | tr '[:cntrl:]' ' '
+}
+
+# Best-effort breadcrumb for the swallowed-failure paths in the capture-side
+# hooks (session-capture.sh, session-prompt.sh): capture must never block a
+# tool or a prompt, so every failure there still exits 0, but a write failure
+# (full disk, lost permissions) would otherwise drop a record with zero trace.
+# onboard surfaces this file's presence so the loss isn't silent forever.
+# Lives at the data-dir root, NOT under buffer/: tl_active guarantees the data
+# dir exists before any caller reaches an error path, but buffer/ may not
+# (its mkdir can be the very failure being reported) - if the breadcrumb's own
+# target depended on buffer/, the one failure mode this exists to report
+# (buffer/ uncreatable) would silently defeat the breadcrumb along with it.
+tl_err() {
+  printf -- '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$1" >> "$(tl_data_dir)/.capture-errors" 2>/dev/null
+}
+
+# Append one timestamped record line to a session buffer, breadcrumbing on write
+# failure. Shared by the capture-side hooks (session-capture.sh,
+# session-prompt.sh) so the on-disk line format ("- `<ts>` <content>") and the
+# write-failure handling live in exactly one place - a prior version spelled
+# this sequence out identically in both hooks, the same hand-duplicated drift
+# class tl_resolve_sid and the redact defs exist to prevent.
+# Args: $1 = buffer dir, $2 = sanitized session id, $3 = formatted content.
+tl_append_line() {
+  _tl_ts=$(date '+%Y-%m-%d %H:%M:%S')
+  # Backticks are literal markdown; %s are printf specifiers; the format string
+  # is intentionally not shell-expanded.
+  # shellcheck disable=SC2016
+  printf -- '- `%s` %s\n' "$_tl_ts" "$3" >> "$1/session-$2.md" 2>/dev/null \
+    || tl_err "write failed for session-$2"
+}
+
+# Shared jq redaction/cleaning defs for the capture-side hooks. Printed as jq
+# program text and prepended to each hook's tool-specific jq body, so every
+# hook stays a single jq invocation (the hot-path constraint) while the rule
+# set itself cannot drift between hooks - the same consolidation reasoning as
+# tl_resolve_sid, which exists because a hand-duplicated derivation already
+# caused one real desync bug. Quoted heredoc: the def text passes through
+# with no shell expansion of its backslashes or quotes.
+tl_jq_redact_defs() {
+  cat <<'TL_JQ_DEFS'
+  # Mask common secret shapes so raw credentials never sit in the buffer. The
+  # buffer is gitignored, but a later handoff distills it into committed logs;
+  # this is defense-in-depth, not the only barrier (the skill scrubs too).
+  # Best-effort: this is pattern/keyword matching, not entropy analysis, so a
+  # bare opaque token with no recognizable shape or keyword will not be caught.
+  # Known gap, not fixable here without a high false-positive cost: a
+  # credential attached to a bare single-letter CLI flag with no keyword at all
+  # (mysql -p<password>, curl -u user:pass) has no keyword for this rule to
+  # anchor on, and flags like -u/-p are too overloaded across tools (docker run
+  # -u uid:gid, ssh -p <port>) to redact generically. The handoff skill re-scan
+  # is the second barrier for exactly this shape.
+  #
+  # Internal sentinel for one specific hand-off: the URL-userinfo rule below is
+  # the only shape rule whose replacement abuts a non-whitespace character (the
+  # @ that starts the host). Every other shape rule replacement is naturally
+  # whitespace-bounded, so the generic catch-all further down can never run
+  # past it by accident. The userinfo rule alone needs to mark its output as
+  # "already redacted" so the generic value-capture stops there instead
+  # of continuing past the @ into the host/path - this used to be inferred from
+  # boundary characters (first @, then briefly /) instead of stated directly,
+  # and each version of that inference either deleted real trailing context or
+  # under-redacted a genuine secret that happened to contain the same boundary
+  # character. The sentinel removes the inference: the generic rule recognizes
+  # it explicitly, and the final gsub converts it (and any sentinel a URL with
+  # no nearby keyword never reached the generic rule to convert) to the
+  # user-facing *** mark.
+  def M: "TLREDACTSENTINEL";
+  # Structural credential formats factored out so BOTH the command path
+  # (`redact`) and the prompt path (`redact_prompt`) share them without
+  # duplication. These are the rules that match distinctive shapes - PEM
+  # blocks, URL userinfo, and the well-known token PREFIXES (ghp_, sk-, AKIA,
+  # ...) - and therefore never fire on ordinary English. They are the ONLY
+  # rules safe to run over natural-language prompt text (see redact_prompt).
+  # _pem and _prefix_tokens are order-independent; _url sets the sentinel M so
+  # it must run before any generic value-capture and before the final _unmask.
+  def _pem:
+    gsub("-----BEGIN [A-Z ]*PRIVATE KEY-----[\\s\\S]*?-----END [A-Z ]*PRIVATE KEY-----"; "***private-key-redacted***")
+    | gsub("-----BEGIN [A-Z ]*PRIVATE KEY-----[\\s\\S]*"; "***private-key-redacted***");
+  def _url:
+    gsub("(?<pfx>://[^:@/\\s]+):(?<pw>[^@/\\s]+)@"; "\(.pfx):\(M)@");
+  def _prefix_tokens:
+    gsub("ghp_[A-Za-z0-9]{10,}"; "ghp_***")
+    | gsub("github_pat_[A-Za-z0-9_]{10,}"; "github_pat_***")
+    | gsub("gh[oprsu]_[A-Za-z0-9]{10,}"; "gh_***")
+    | gsub("xox[baprs]-[A-Za-z0-9-]{6,}"; "xox-***")
+    | gsub("sk-[A-Za-z0-9_-]{10,}"; "sk-***")
+    | gsub("AKIA[0-9A-Z]{12,}"; "AKIA***")
+    | gsub("AIza[0-9A-Za-z_\\-]{35}"; "AIza***");
+  def _unmask: gsub("\(M)"; "***");
+  # Authorization SCHEME rules (Bearer/Basic) - COMMAND-PATH version, used only
+  # by `redact`. No length minimum on the bearer value and only an 8-char floor
+  # on Basic's base64 run: commands aren't natural language, so "bearer X" /
+  # "Basic <8+ chars>" essentially never appears as an innocent phrase there,
+  # unlike in prose (see _auth_scheme_prose below, which `redact_prompt` uses
+  # instead - the two are deliberately NOT shared, because the constraint that
+  # makes one safe would either under-redact the other's real shapes or
+  # false-positive on the other's ordinary text).
+  def _auth_scheme:
+    gsub("(?i)bearer\\s+(?<t>[A-Za-z0-9._\\-]+)"; "Bearer ***")
+    | gsub("(?i)\\bbasic\\s+[A-Za-z0-9+/=]{8,}"; "Basic ***");
+  # Authorization SCHEME rules - PROSE-SAFE version, used only by
+  # `redact_prompt`. A bare 8-char base64-alphabet floor or an unbounded bearer
+  # value both false-positive constantly on ordinary English: "bearer of good
+  # news" (any following word matches the bearer value's char class), "basic
+  # authentication support" / "basic documentation" (English words are a
+  # subset of the base64 alphabet, and words like "authentication" clear an
+  # 8-char floor easily). A real Authorization value - JWT, opaque API token,
+  # or a base64-encoded "user:pass" - is reliably much longer than a single
+  # English word in a sentence (single English words average ~5 chars; JWTs
+  # and opaque tokens commonly run 20-100+); requiring 16+ contiguous
+  # non-whitespace chars keeps the false-positive rate low without requiring a
+  # digit/mixed-case heuristic that would itself have real-credential misses.
+  # Also includes the Token scheme word (DRF/GitLab-style "Authorization:
+  # Token <value>"), which redact_prompt lacked entirely until this was added -
+  # without it, a Token-scheme header fell through to no rule at all (there is
+  # no generic keyword rule left in redact_prompt to catch it either; see the
+  # comment above redact_prompt for why that rule was removed).
+  # Known, DELIBERATE tradeoff, same class as `redact`'s documented gaps: a
+  # real credential shorter than 16 chars is not masked by this rule. There is
+  # no fallback generic rule in redact_prompt to catch it either - the handoff
+  # skill's human re-scan is the sole backstop for that case, same as for any
+  # other bare/short secret with no recognizable long-token shape.
+  def _auth_scheme_prose:
+    gsub("(?i)bearer\\s+(?<t>[A-Za-z0-9._\\-]{16,})"; "Bearer ***")
+    | gsub("(?i)\\btoken\\s+(?<t>[A-Za-z0-9._\\-]{16,})"; "Token ***")
+    | gsub("(?i)\\bbasic\\s+[A-Za-z0-9+/=]{16,}"; "Basic ***");
+  # Full command-path redaction. Shape-specific patterns run BEFORE the generic
+  # keyword=value catch-all, so e.g. "Authorization:Basic <base64>" is fully
+  # consumed by the Basic-auth rule rather than the generic auth keyword rule
+  # eating just the Basic token and leaving the base64 payload exposed. Same
+  # reasoning for the dedicated Token rule (DRF/GitLab-style "Authorization:
+  # Token <value>" headers): without it, the generic rule treats the scheme
+  # word "Token" itself as the value to mask and leaves the real key in
+  # plaintext right after it. The bearer/token word rules run BEFORE
+  # _prefix_tokens so a "bearer ghp_..." is consumed whole rather than the
+  # prefix rule masking the ghp_ body first and the bearer rule then re-masking
+  # the leftover. The generic keyword group has trailing \w* too (not just
+  # leading) so compound names like SECRET_KEY= or API_KEY_VALUE= still match.
+  # Its separator group accepts a copula (is/was/are) and bare whitespace in
+  # addition to :/= so command descriptions phrased as "password is X" / bare
+  # "password X" still mask X. That aggressiveness is CORRECT for commands but
+  # WRONG for prose (it eats the word after any keyword+copula, inverting
+  # "password is not the problem" -> "password is ***"), which is exactly why
+  # prompts use redact_prompt below instead. Value group has no @ or /
+  # exclusion - it matches the sentinel when present, else the unbounded run up
+  # to whitespace/quote - so a secret containing either char is fully masked.
+  def redact:
+    _pem
+    | _auth_scheme
+    | gsub("(?i)\\btoken\\s+(?<t>[A-Za-z0-9._\\-]+)"; "Token ***")
+    | _url
+    | _prefix_tokens
+    | gsub("(?i)(?<k>\\w*(?:token|secret|password|passwd|api[_-]?key|access[_-]?key|credential|auth(?:orization)?|client[_-]?id)\\w*)(?<s>\\s*[:=]\\s*|\\s+(?:is|was|are)\\s+|\\s+)(?<v>\"?(?:\(M)|[^\\s\"]+))"; "\(.k)\(.s)***")
+    | _unmask;
+  # Prose-safe redaction for user prompts (issue #5), and for the WebSearch
+  # query / Task description branches in session-capture.sh (also prose).
+  # Prompts are natural language, not commands: running them through `redact`
+  # corrupts and can invert ordinary English (the copula/bare-space generic
+  # rule and the bare "token" WORD rule both fire on prose - "token refresh
+  # flow" -> "Token *** flow"), destroying the very intent the feature exists
+  # to preserve. So this path keeps ONLY unambiguous STRUCTURAL signals -
+  # _pem, _url, _prefix_tokens, and _auth_scheme_prose (Bearer/Token/Basic,
+  # each length-gated) - things that are never accidentally spelled by an
+  # English sentence.
+  #
+  # Deliberately DOES NOT include a generic keyword+separator rule (unlike
+  # `redact`, which has one for the command path). Three rounds of trying to
+  # make a keyword-boundary regex tell "real credential label" from "ordinary
+  # word" apart each fixed one failure mode by introducing a different one:
+  #   - substring matching ("auth" inside "author") -> \b-word-bounded
+  #   - \b then missed SCREAMING_SNAKE_CASE compounds (\b doesn't cross an
+  #     underscore) -> switched to a letter-only lookaround
+  #   - the letter-lookaround then excluded EVERY keyword+letter-suffix, not
+  #     just the intended cases - "secrets:"/"passwords:"/"credentials:"
+  #     (common, real phrasing) silently stopped being masked at all
+  # There is no boundary rule that admits "secrets"/"passwords" (real usage)
+  # while excluding "author"/"tokens" (false positives) - the shapes overlap.
+  # Rather than a fourth attempt at the same regex, the rule is removed: a
+  # pasted secret with no recognizable prefix/scheme (e.g. "password: hunter2"
+  # with no ghp_/sk-/AKIA/... shape and no 16+ char scheme value) is NOT masked
+  # in prompts/WebSearch/Task. This is the same class of documented, deliberate
+  # gap as `redact`'s bare-CLI-flag limitation - the handoff skill's human
+  # re-scan is the sole backstop for it here, not a secondary one.
+  def redact_prompt:
+    _pem
+    | _auth_scheme_prose
+    | _url
+    | _prefix_tokens
+    | _unmask;
+  # Neutralize control chars (incl. newlines) and backticks so a captured
+  # command or prompt cannot break the markdown list / code span it is
+  # embedded in. The control-char half mirrors the shared `tl_clean_ctrl`
+  # shell helper (used by session-flush.sh / session-precompact.sh for their
+  # reason/trigger fields) but stays a jq def: it runs per-field inside the
+  # same jq pipeline as redaction, so factoring it out to a shell call would
+  # mean an extra subprocess per field.
+  def clean: gsub("[[:cntrl:]]"; " ") | gsub("`"; " ");
+  # Clamp a string to $n chars, appending $ell only when it was actually
+  # longer. Single-sources the "redact | clean | truncate" tail shared by every
+  # capture surface (the read-side tool branches and the prompt hook) so the
+  # truncation idiom can't drift between them.
+  def clamp($n; $ell): .[0:$n] + (if length > $n then $ell else "" end);
+TL_JQ_DEFS
 }

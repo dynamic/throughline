@@ -3,6 +3,207 @@
 All notable changes to throughline are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); this project uses semantic versioning.
 
+## [0.5.0]
+
+The P1 capture-fidelity batch out of the v0.4.0 audit (docs/AUDIT-v0.4.0.md,
+issues #5/#6/#7). The buffer now records *why* (user intent), captures a much
+wider slice of what a session actually does, and stamps compaction seams
+idempotently. A fifth hook joins the set.
+
+### Added
+- **Prompt capture** (`UserPromptSubmit` -> `hooks/session-prompt.sh`, issue #5):
+  each user prompt is appended to the session buffer as a redacted, 200-char
+  truncated `**prompt**` line. Intent previously lived only in the compactable
+  conversation - exactly what a context compaction destroys - so the buffer
+  recorded what happened but never why. Shares the same redaction/cleaning
+  pipeline as capture, so a pasted credential in a prompt is masked by the same
+  rules. Fail-open: every failure path exits 0 (a non-zero UserPromptSubmit hook
+  would abort the prompt) and breadcrumbs to `.capture-errors`.
+- **Widened action capture** (issue #6): the `PostToolUse` matcher now also
+  covers `Grep`, `WebFetch`, `WebSearch`, `Task`/`Agent` (subagents), and MCP
+  tools (`mcp__.*`). Each high-signal read-side tool emits one redacted
+  one-liner (grep pattern, fetched URL, search query, or subagent type +
+  description); MCP tools are captured name-only, making zero assumptions about
+  their input schema so no field can leak. `Read` and `Glob` are deliberately
+  NOT matched - the noisiest tools, whose capture would swamp the buffer.
+  Research-heavy sessions previously left almost no trace. SubagentStop boundary
+  markers were considered and deferred (see issue #6).
+
+### Changed
+- The jq redaction/cleaning defs (`redact`/`clean`, ~15 gsub rules and their
+  full comment history) moved from `session-capture.sh` into a shared
+  `tl_jq_redact_defs` helper in `hooks/_lib.sh`, prepended to each capture-side
+  hook's jq program so the rule set can't drift between the prompt and action
+  hooks. Same consolidation reasoning as `tl_resolve_sid`; each hook stays a
+  single jq invocation. The `_tl_err` breadcrumb helper was likewise promoted to
+  a shared `tl_err`. This refactor is behavior-neutral - the pre-existing
+  redaction suite passes unchanged, proving it.
+
+### Fixed
+- **Precompact stamp idempotency** (issue #7): `session-precompact.sh` now skips
+  the boundary write when the buffer already ends with a compaction-boundary
+  marker (a `tail -n 1` guard, mirroring `session-flush.sh`'s end-stamp guard),
+  so a double `PreCompact` fire for one seam writes one marker - while a long
+  session with several genuine compactions still stamps each one, because a
+  captured action landing between them moves the marker off the last line.
+
+### Review fixes (pre-merge, high-effort code review)
+- **Prose-safe prompt redaction**: prompts run through a new `redact_prompt`
+  (structural token formats + explicit `key:value`/`key=value` secrets only),
+  not the command-tuned `redact` whose copula/bare-space and bearer/token WORD
+  rules corrupt and can invert ordinary English ("password is not the problem"
+  -> "password is ***"). The command path is unchanged. A bare-word secret with
+  no prefix and no colon is deliberately left for the handoff human re-scan.
+- **No nag for prompt-only sessions**: `session-prompt.sh` records a line for
+  every session, so onboard's unconsumed-buffer counter now skips buffers with
+  no captured ACTION line (Q&A / Read-Glob-only sessions have nothing to
+  distill), preserving the warning's signal.
+- **Prompt latency bound**: the prompt is clamped to 2000 chars before the
+  redaction passes (then to 200 for storage), so a multi-MB paste isn't fully
+  regex-scanned in the synchronous UserPromptSubmit path.
+- **Task empty-description fallback**: an empty-string `description` now falls
+  through to `prompt` (jq `//` only skips null), so delegated intent isn't lost.
+- **Duplication removed**: shared `tl_append_line` (buffer write + breadcrumb)
+  and a jq `clamp($n; $ell)` truncation def, so the write sequence and the
+  redact|clean|truncate idiom are single-sourced across capture surfaces.
+
+### Review fixes, round 2 (a second high-effort review of the round-1 fixes)
+- **Onboard's prompt-only-buffer skip was a substring search**, not anchored:
+  `grep -qv '\*\*prompt\*\*'` matched the literal string anywhere in a line, so
+  a real action line whose OWN captured content happened to mention
+  `**prompt**` (a grep for that literal pattern, a bash command referencing it
+  - routine in this repo) made every line in the buffer match, and the whole
+  buffer was silently misclassified as prompt-only and dropped from the
+  unconsumed-buffer warning. Fixed by anchoring to the type-marker position
+  (`- \`<ts>\` **TYPE** ...`) instead of searching for the substring anywhere.
+- **`redact_prompt`'s keyword rule matched substrings**, not whole words: `auth`
+  matched inside "author"/"authority", `token` matched inside "tokens", so
+  "author: rewrite the intro" -> "author: \*\*\* the intro" - prose corruption
+  in the very path introduced to prevent it. Fixed with `\b`-word-boundaries
+  (replacing the `\w*...\w*` affixes carried over from the command path, which
+  exist there to catch compound ENV-VAR names like `SECRET_KEY=` - a surface
+  that never collides with prose).
+- **`redact_prompt` dropped the Bearer/Basic scheme rules entirely**, so a
+  pasted `Authorization: Bearer <jwt>` leaked the credential body into the
+  buffer verbatim. Restored via a new shared `_auth_scheme` def (used by both
+  `redact` and `redact_prompt`): these are shape-constrained (fixed scheme word
+  + base64-alphabet body), not generic prose words, so they carry far less
+  false-positive risk than the bare-`token`-word rule that's deliberately
+  excluded.
+- **`WebSearch` query and `Task`/`Agent` description were run through
+  `redact`**, not `redact_prompt`, despite both being prose - the same
+  bare-`token`-word corruption issue #5 exists to fix ("fix token refresh bug"
+  -> "fix Token \*\*\* bug"). `Grep` (a regex pattern) and `WebFetch` (a URL)
+  correctly stay on `redact` - neither is natural language.
+
+### Review fixes, round 3 (each of round 2's fixes had its own bug)
+- **`redact_prompt`'s new `\b` word-boundary silently stopped matching
+  SCREAMING_SNAKE_CASE compounds** - the standard real-world credential-naming
+  convention (`CLIENT_SECRET`, `ACCESS_TOKEN`, `DB_PASSWORD`), exactly what a
+  pasted `.env` file or curl command uses. Underscore is a `\w` character, so
+  `\bsecret\b` never matches "secret" inside "client_secret" - those secrets
+  passed into the buffer completely unredacted. Fixed by switching to a
+  LETTER-only lookaround boundary (`(?<![A-Za-z])`/`(?![A-Za-z])`): an
+  underscore still counts as a valid boundary (so the compound matches) while
+  an adjacent letter still doesn't (so "author"/"tokens" still don't).
+- **Onboard's prompt-only-buffer filter used a grep-into-grep pipe** whose
+  "found nothing" and "found nothing because there's nothing to find" are
+  indistinguishable - so a buffer with ZERO conforming record lines (a
+  truncated/corrupted buffer, or a capture hook whose jq failed on every call)
+  silently fell through the same `|| continue` as a genuine prompt-only
+  buffer, regressing the pre-existing guarantee that any existing, end-stamped
+  buffer gets surfaced regardless of its body. Fixed with an explicit
+  total-vs-prompt-count comparison that only skips when there's at least one
+  recognized line AND every one of them is a prompt line.
+- **The new shared `_auth_scheme` def (added in round 2 to close the
+  Bearer/Basic leak) was unconstrained enough to corrupt ordinary prose** -
+  "explain the bearer token approach" -> "explain the Bearer \*\*\* approach",
+  "basic authentication support" -> "Basic \*\*\* support" (English words are a
+  subset of the base64 alphabet the Basic rule allowed, and the Bearer rule had
+  no length floor at all) - the exact failure mode `redact_prompt` exists to
+  prevent, now reachable through the very rule meant to plug a different gap.
+  Split into two variants: `_auth_scheme` (command path, unchanged - commands
+  aren't prose) and a new `_auth_scheme_prose` (16+ char length floor on both
+  Bearer's value and Basic's body - real tokens/JWTs run far longer than a
+  single English word), used only by `redact_prompt`.
+
+### Review fixes, round 4 - structural redesign of `redact_prompt`
+A fourth review found four more bugs, two of them ([1]) in the SAME code
+round 3 had just patched: the letter-lookaround boundary excluded not just the
+intended false-positive cases but EVERY keyword followed by any letter, so
+"secrets:"/"passwords:"/"credentials:" (common, real phrasing) silently
+stopped being redacted at all - worse than what it fixed. That's three
+consecutive rounds where a fix to the same keyword-boundary regex was correct
+for its target case but broke a different one, the same shape as the
+`redact()` boundary-character rework documented earlier in this changelog
+(v0.2.0). Rather than a fourth regex patch, `redact_prompt`'s generic
+keyword+separator rule was removed entirely:
+
+- **No boundary rule can admit "secrets:"/"passwords:" (real usage) while
+  excluding "author:"/"tokens:" (false positives) - the shapes overlap.**
+  `redact_prompt` now masks ONLY unambiguous structural signals: known token
+  prefixes (`ghp_`, `sk-`, `AKIA`, ...), PEM blocks, URL-userinfo, and
+  length-gated Bearer/Token/Basic scheme values. A colon-form secret with no
+  recognizable prefix/scheme ("password: hunter2", `CLIENT_SECRET: xyz`) is
+  now a deliberate, documented, and CONSISTENT gap - not fixed differently
+  case-by-case - backstopped solely by the handoff skill's human re-scan,
+  same class as `redact`'s existing bare-CLI-flag gap.
+- **`redact_prompt` had no Token-scheme rule at all** (the DRF/GitLab-style
+  `Authorization: Token <value>` header), an oversight from splitting it out
+  of `redact` in round 2. Added alongside Bearer/Basic in `_auth_scheme_prose`,
+  same 16+ char length floor.
+- **The 16-char length floor (round 3's prose-safety fix) also un-redacts
+  real 8-15 char Bearer/Basic values**, leaving the credential in plaintext
+  next to a `***` that falsely suggests full redaction. Accepted as the same
+  deliberate gap as above, rather than tuning the threshold further.
+- A pre-existing (not a regression from this PR) cosmetic quote-handling bug
+  in the shared value-capture group - an orphaned trailing quote in malformed
+  output, no secret leak - was identified in both `redact` and the
+  since-removed `redact_prompt` generic rule. It no longer applies to
+  `redact_prompt` (that rule is gone); it remains in `redact` (command path,
+  unchanged, out of scope for this PR) as a low-priority follow-up.
+
+### Review fixes, round 5 - the redesign held; two smaller bugs elsewhere
+A fifth review found the round-4 redesign clean (zero findings against
+`redact_prompt` itself - the three-round regex cycle is over) and surfaced two
+smaller, unrelated bugs plus deferred cleanup:
+
+- **`session-onboard.sh`'s prompt-only counters leaked a shell diagnostic to
+  stderr on an unreadable buffer file.** `grep -c` prints an empty string
+  (not "0") when it cannot read the file at all, and the following integer
+  test was not guarded against that - the one place in this hook where an
+  error path was not `2>/dev/null`'d, breaking its own always-silent contract.
+  Fixed by defaulting both counts to 0 when empty.
+- **The `mcp__*` fallback branch embedded the raw tool name directly inside
+  the `**...**` bold-marker pair** without stripping asterisks (every other
+  branch only puts field content AFTER a fixed literal marker, so this is the
+  one place where arbitrary text sits inside the delimiters themselves). An
+  unusual tool name containing `*` would break the markdown span and desync
+  onboard's anchored classifier regex, silently miscounting a real action as
+  prompt-only. Fixed by stripping asterisks from the tool name specifically
+  (not folded into the shared `clean` def, which other branches rely on to
+  preserve a literal `*` in content like a glob pattern).
+- The Bash capture branch's hand-rolled truncation was migrated to the shared
+  `clamp` def (it was the one call site the round-1 refactor had missed).
+- Filed as follow-ups rather than fixed inline (issue #16): a timestamp format
+  string duplicated across 4 call sites, `session-onboard.sh` running 3
+  separate `grep` passes per buffer file where one would do, and
+  `_auth_scheme`/`_auth_scheme_prose` duplicating the same regex literals at
+  different length thresholds instead of one parameterized def. None are
+  correctness bugs; deferred to a calmer pass rather than more mechanical
+  edits under the same time pressure that caused rounds 2-4.
+
+### Tests
+- 44 new assertions (95 -> 136): prompt capture (line shape, prose-safety,
+  structural-signal redaction, documented-gap behavior for colon-form/compound
+  secrets, Bearer/Token/Basic scheme masking + prose preservation, truncation,
+  empty-prompt skip, opt-out/kill-switch, no-session breadcrumb); widened
+  capture (grep/webfetch/websearch/task/mcp one-liners, URL-userinfo masking,
+  empty-desc task fallback, WebSearch/Task prose preservation, mcp input not
+  read, asterisk-stripped tool_name); prompt-only buffers not counted as
+  unconsumed, including the zero-conforming-line and unreadable-file edge
+  cases; precompact idempotency (double-fire, multi-seam, post-boundary).
+
 ## [0.4.1]
 
 P0 fixes out of the v0.4.0 audit (docs/AUDIT-v0.4.0.md). The audit's live finding

@@ -153,6 +153,46 @@ if [ -d "$bufdir" ]; then
   for f in "$bufdir"/session-*.md; do
     [ -f "$f" ] || continue
     [ -n "$sid" ] && [ "$f" = "$bufdir/session-$sid.md" ] && continue
+    # Skip prompt-only buffers. A UserPromptSubmit line is recorded for every
+    # session (session-prompt.sh fires before any tool), so a session that
+    # captured intent but no ACTION - a question answered from context, or
+    # Read/Glob-only work, neither of which is a captured tool - leaves a buffer
+    # containing only `**prompt**` lines. There is nothing to distill there, so
+    # counting it would nag the user to hand off sessions that did no real work,
+    # eroding the signal of the warning below. A buffer counts only if it holds
+    # at least one capture line that is not a prompt line.
+    #
+    # The type marker always immediately follows the timestamp backtick + space
+    # (every record is `- \`<ts>\` **TYPE** ...`), so the check is anchored
+    # there rather than searching for the substring "**prompt**" anywhere in
+    # the line - a plain substring search false-matches an action line whose
+    # OWN captured content happens to mention "**prompt**" (a grep for that
+    # literal pattern, a bash command referencing it, and so on — routine in
+    # this very repo), which would silently misclassify a genuinely unconsumed
+    # session as prompt-only and drop it from the warning entirely.
+    #
+    # Counted explicitly (total vs. prompt-marked) rather than via a
+    # grep-into-grep pipe: the pipe form's "found nothing" and "found nothing
+    # because there's nothing to find" are indistinguishable, so a buffer with
+    # ZERO conforming record lines (a truncated/corrupted buffer, or a capture
+    # hook's jq failing on every call) silently fell through the SAME `||
+    # continue` as a genuine prompt-only buffer - even though pre-existing
+    # behavior always counted any existing, end-stamped buffer regardless of
+    # its body. Skip ONLY when there is at least one recognized line AND every
+    # one of them is a prompt line; zero recognized lines falls through to be
+    # counted, matching that prior fail-safe behavior instead of silently
+    # dropping a real ended session.
+    # An unreadable/unparseable file (permissions, I/O error) makes grep -c
+    # print nothing at all rather than "0", so both counts default to 0 here -
+    # otherwise the comparison below gets an empty operand and this hook's
+    # "always silent on error" contract breaks (every other error path here is
+    # 2>/dev/null'd; an unguarded integer test on an empty string is the one
+    # way that contract leaks a diagnostic to stderr instead of failing quiet).
+    # shellcheck disable=SC2016
+    total=$(grep -cE '^- `[^`]*` \*\*[^*]+\*\*' "$f" 2>/dev/null); total=${total:-0}
+    # shellcheck disable=SC2016
+    promptonly=$(grep -cE '^- `[^`]*` \*\*prompt\*\*' "$f" 2>/dev/null); promptonly=${promptonly:-0}
+    [ "$total" -gt 0 ] && [ "$total" -eq "$promptonly" ] && continue
     if grep -q '^<!-- session-ended' "$f" 2>/dev/null; then
       ended=$((ended + 1))
     else

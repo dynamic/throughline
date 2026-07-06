@@ -32,6 +32,21 @@ trigger=$(tl_clean_ctrl "$trigger")
 buf="$bufdir/session-$sid.md"
 [ -f "$buf" ] || exit 0
 
+# Idempotency guard, mirroring session-flush.sh's end-stamp guard but keyed to
+# "already the LAST marker" rather than "exists anywhere in the file": a double
+# PreCompact fire for one seam must write one boundary, but a long session with
+# several genuine compactions must still stamp each one. Skip only when the
+# buffer already ends with a boundary marker (no captured action has landed
+# since) — two stamps with nothing between them mark the same seam. The marker
+# is written as a leading blank line + the comment + a trailing newline, so the
+# comment is always the final line; tail -n 1 (not -n 2, which would also catch
+# a boundary sitting just above a later captured action and wrongly suppress
+# that action's own seam). ^-anchored so a captured command containing the
+# marker text (capture lines all begin with "- `") can never suppress a stamp.
+if tail -n 1 "$buf" 2>/dev/null | grep -q '^<!-- compaction-boundary'; then
+  exit 0
+fi
+
 printf -- '\n<!-- compaction-boundary %s (%s) - actions above predate a context compaction; distill them from this buffer, not from conversation recall -->\n' \
   "$(date '+%Y-%m-%d %H:%M:%S')" "$trigger" >> "$buf" 2>/dev/null
 exit 0
