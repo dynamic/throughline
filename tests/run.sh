@@ -5,6 +5,13 @@
 # and asserts on the resulting buffer / stdout. No network, no model, no deps
 # beyond jq + coreutils + git. Run: sh tests/run.sh   (exit 0 = all passed).
 #
+# This file is the single source of truth for the current assertion count -
+# it prints its own total ("passed: N") on every run. Historical assertion
+# counts have drifted in prose before (CHANGELOG/HANDOFF entries citing 71,
+# 83, 88, 95... at different points, issue #11): if you cite a count in
+# prose, anchor it to a specific version ("143 assertions as of v0.5.2") or
+# just point here instead of hardcoding a number that will go stale.
+#
 # Test fixtures legitimately contain literal markdown backticks and $ inside
 # single quotes, so SC2016 (no-expansion-in-single-quotes) is expected here.
 # shellcheck disable=SC2016

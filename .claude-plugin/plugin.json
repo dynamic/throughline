@@ -1,7 +1,7 @@
 {
   "name": "throughline",
   "description": "Continuous, state-aware session memory for Claude Code. Captures what you did and what is (commands, file changes, decisions, and live git/PR state), then hands it off with judgment at session wrap-up. Readable, committable artifacts; binds to Claude's native memory.",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "author": {
     "name": "Dynamic Agency",
     "email": "support@dynamicagency.com"
@@ -9,5 +9,5 @@
   "homepage": "https://github.com/dynamic/throughline",
   "repository": "https://github.com/dynamic/throughline",
   "license": "MIT",
-  "keywords": ["memory", "handoff", "session", "context", "continuity", "compaction"]
+  "keywords": ["memory", "handoff", "session", "context", "continuity", "compaction", "git-state", "cross-harness", "resume", "onboarding"]
 }

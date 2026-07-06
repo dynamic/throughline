@@ -3,6 +3,57 @@
 All notable changes to throughline are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); this project uses semantic versioning.
 
+## [0.6.1]
+
+Docs/skill polish batch from the v0.4.0 audit (docs/AUDIT-v0.4.0.md, P2, items
+#8/#10/#11). No hook behavior change - verified by the unchanged
+154-assertion suite plus shellcheck under both Homebrew and an
+`apt-get install shellcheck` Ubuntu container.
+
+### Added
+- **Issue #8** - the session-log template (`throughline-handoff` Phase 3) gains
+  a "What we tried (including what failed)" section, with guidance to record
+  real evidence (the actual command/error/number), not a summary - a failed
+  approach is the most expensive thing for a future session to rediscover from
+  scratch. A **Follows** line lets a log name its predecessor in the same work
+  stream, so a reader can walk the decision history log-to-log without
+  HANDOFF.md having to carry it.
+- **Issue #10** - a new README "Housekeeping" section documents what's safe to
+  delete (old archived buffers, a resolved `.capture-errors`) versus what
+  isn't (`logs/`, `HANDOFF.md`, unarchived buffers) - deliberately a
+  documented convention, not automated tooling, matching the plugin's
+  zero-infrastructure identity. The handoff skill (Phase 4) now also clears
+  `.capture-errors` once its contents have been surfaced in a session log,
+  instead of leaving it to nag on every future onboard indefinitely.
+
+### Changed
+- **Issue #11 polish batch**: the handoff skill's Phase 4.4 no longer offers
+  "(or delete)" for consumed buffers - archive-only removes an unguarded
+  data-loss affordance. Phase 4.3's memory-binding step now cites the actual
+  native auto-memory layout (`MEMORY.md` as a 200-line-truncated index, one
+  topic file per entry under `~/.claude/projects/<slug>/memory/`) and inlines
+  a one-line frontmatter example, so an executing model can't produce a
+  malformed entry. `plugin.json` keywords gained `git-state`,
+  `cross-harness`, `resume`, `onboarding` - the prior list under-sold the
+  differentiators. `tests/run.sh`'s header now states it is the single
+  source of truth for the current assertion count (it prints its own total),
+  after prose counts drifted across releases before (71/83/88/95 at
+  different points).
+
+### Fixed (found during review, before merge)
+- **The memory-binding frontmatter example didn't match reality**: every
+  actual memory topic file (`~/.claude/projects/<slug>/memory/*.md`) carries
+  `node_type: memory` and `originSessionId` under `metadata`, both omitted
+  from the template this release added - so an agent following it verbatim
+  would have written a schema-inconsistent entry, the exact failure the
+  change claimed to prevent. Verified against every real memory file in the
+  harness (100% carried both fields); the template now matches.
+- **Em-dashes in new content**: the new Housekeeping section (README) and
+  session-log/Phase-4 additions (`throughline-handoff` SKILL.md) used
+  em-dashes, violating this user's global no-em-dash writing-style rule -
+  in `handoffs`, a category the rule names explicitly. Replaced with commas,
+  colons, periods, or spaced hyphens per the rule.
+
 ## [0.6.0]
 
 Issue #9 from the v0.4.0 audit (docs/AUDIT-v0.4.0.md, P2): inline post-compaction
