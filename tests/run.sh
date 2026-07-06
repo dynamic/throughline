@@ -308,6 +308,36 @@ printf -- '<!-- session-ended 2024-01-01 00:00:00 (end) -->\n' > "$BUF/session-E
 O3a4=$(printf '%s' '{"source":"startup","session_id":"T"}' | sh "$H/session-onboard.sh")
 has "a buffer with zero conforming lines is still counted, not dropped" "$O3a4" 'unconsumed session buffer'
 
+# 10a5. regression: an UNREADABLE buffer file makes grep -c print an empty
+# string rather than "0" — the total/promptonly counts must default to 0
+# rather than feeding an empty operand to the integer test, which would
+# otherwise leak a shell diagnostic to stderr, breaking this hook's
+# always-silent-on-error contract (every other error path here is
+# 2>/dev/null'd). Skipped when running as root, which bypasses permissions.
+if [ "$(id -u)" != "0" ]; then
+  reset_buf
+  printf -- '- x\n' > "$BUF/session-T.md"
+  printf 'test' > "$BUF/session-UNREAD.md"
+  chmod 000 "$BUF/session-UNREAD.md"
+  ERR=$(printf '%s' '{"source":"startup","session_id":"T"}' | sh "$H/session-onboard.sh" 2>&1 1>/dev/null)
+  eq "unreadable buffer file produces no stderr diagnostic" "$ERR" ""
+  chmod 644 "$BUF/session-UNREAD.md" 2>/dev/null
+else
+  ok "unreadable-buffer stderr test skipped (running as root)"
+fi
+
+# 10a6. regression: a tool_name containing an asterisk (the mcp__.* fallback
+# branch is the only place a field is embedded DIRECTLY inside the **...**
+# delimiter pair, not just after it) must not break the bold span or desync
+# the anchored **[^*]+** classifier above — an action line that becomes
+# unparseable must not silently be miscounted as prompt-only.
+reset_buf
+printf -- '- x\n' > "$BUF/session-T.md"
+cap '{"session_id":"MCPSTAR","tool_name":"mcp__weird*tool","tool_input":{"title":"x"}}'
+printf -- '<!-- session-ended 2024-01-01 00:00:00 (end) -->\n' >> "$BUF/session-MCPSTAR.md"
+O3a6=$(printf '%s' '{"source":"startup","session_id":"T"}' | sh "$H/session-onboard.sh")
+has "an mcp tool_name with an asterisk is still counted as a real action" "$O3a6" 'unconsumed session buffer'
+
 # 10b. a prior session buffer with NO end-stamp gets hedged wording, not
 #      asserted as "ended" — it could be live in another terminal.
 reset_buf
@@ -676,6 +706,12 @@ cap '{"session_id":"W","tool_name":"mcp__github__create_pull_request","tool_inpu
 MC=$(grep 'mcp__github' "$BUF/session-W.md")
 has   "mcp tool captured name-only"        "$MC" '**mcp__github__create_pull_request**'
 hasnt "mcp tool input fields are not read" "$MC" 'secret sauce'
+# Regression: a tool_name containing an asterisk is embedded DIRECTLY inside
+# the **...** delimiter pair (unlike every other branch, which only puts field
+# content after a fixed literal marker) — an unstripped asterisk would break
+# the bold span and desync onboard's **[^*]+** classifier regex.
+cap '{"session_id":"W","tool_name":"mcp__weird*tool","tool_input":{}}'
+has "mcp tool_name asterisk is stripped, not embedded in the bold marker" "$(grep weirdtool "$BUF/session-W.md")" '**mcp__weirdtool**'
 
 # 16. precompact stamp idempotency (issue #7): a double fire for one seam writes
 #     one boundary; each genuine compaction (a captured action lands between)

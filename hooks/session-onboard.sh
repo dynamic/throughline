@@ -182,10 +182,16 @@ if [ -d "$bufdir" ]; then
     # one of them is a prompt line; zero recognized lines falls through to be
     # counted, matching that prior fail-safe behavior instead of silently
     # dropping a real ended session.
+    # An unreadable/unparseable file (permissions, I/O error) makes grep -c
+    # print nothing at all rather than "0", so both counts default to 0 here -
+    # otherwise the comparison below gets an empty operand and this hook's
+    # "always silent on error" contract breaks (every other error path here is
+    # 2>/dev/null'd; an unguarded integer test on an empty string is the one
+    # way that contract leaks a diagnostic to stderr instead of failing quiet).
     # shellcheck disable=SC2016
-    total=$(grep -cE '^- `[^`]*` \*\*[^*]+\*\*' "$f" 2>/dev/null)
+    total=$(grep -cE '^- `[^`]*` \*\*[^*]+\*\*' "$f" 2>/dev/null); total=${total:-0}
     # shellcheck disable=SC2016
-    promptonly=$(grep -cE '^- `[^`]*` \*\*prompt\*\*' "$f" 2>/dev/null)
+    promptonly=$(grep -cE '^- `[^`]*` \*\*prompt\*\*' "$f" 2>/dev/null); promptonly=${promptonly:-0}
     [ "$total" -gt 0 ] && [ "$total" -eq "$promptonly" ] && continue
     if grep -q '^<!-- session-ended' "$f" 2>/dev/null; then
       ended=$((ended + 1))

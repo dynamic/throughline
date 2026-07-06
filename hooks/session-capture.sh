@@ -77,8 +77,7 @@ line=$(printf '%s' "$input" | jq -r --arg root "$root" "$(tl_jq_redact_defs)"'
   (.tool_name as $t |
     if $t == "Bash" then
       "**bash** " + ((.tool_input.description // "") | redact | clean) + outcome($t) + " - `" +
-      (((.tool_input.command // "") | redact | clean) as $c
-        | ($c[0:200]) + (if ($c | length) > 200 then "…[truncated]" else "" end)) + "`"
+      ((.tool_input.command // "") | redact | clean | clamp(200; "…[truncated]")) + "`"
     elif ($t == "Edit" or $t == "Write" or $t == "NotebookEdit") then
       "**" + $t + "** " +
       ((.tool_input.file_path // .tool_input.notebook_path // "?") | ltrimstr($root + "/") | redact | clean) +
@@ -119,8 +118,18 @@ line=$(printf '%s' "$input" | jq -r --arg root "$root" "$(tl_jq_redact_defs)"'
       # MCP tools (mcp__server__tool) and any other matched tool: name only.
       # Zero assumptions about the input schema, so no field can leak a secret
       # and no unverified shape can be misread — the tool name alone is the
-      # skimmable trace.
-      "**" + $t + "**" + outcome($t)
+      # skimmable trace. Unlike every other branch, $t here is embedded
+      # DIRECTLY INSIDE the `**...**` delimiter pair itself (every other
+      # branch uses a fixed literal type marker and puts field content only
+      # AFTER it), so an asterisk or control char in an unusual tool name
+      # would break the markdown bold span and desync the anchored
+      # `**[^*]+**` classifier regex used to skip prompt-only buffers in
+      # session-onboard.sh, silently miscounting the record as unparseable.
+      # `clean` handles control chars and backticks; asterisks are stripped
+      # here specifically, not folded into the shared `clean` def which
+      # other branches rely on to preserve a literal `*` in content like a
+      # glob pattern or command.
+      "**" + ($t | clean | gsub("\\*"; "")) + "**" + outcome($t)
     end)
 ' 2>/dev/null) || { tl_err "jq filter failed"; exit 0; }
 

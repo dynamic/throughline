@@ -163,16 +163,46 @@ keyword+separator rule was removed entirely:
   `redact_prompt` (that rule is gone); it remains in `redact` (command path,
   unchanged, out of scope for this PR) as a low-priority follow-up.
 
+### Review fixes, round 5 - the redesign held; two smaller bugs elsewhere
+A fifth review found the round-4 redesign clean (zero findings against
+`redact_prompt` itself - the three-round regex cycle is over) and surfaced two
+smaller, unrelated bugs plus deferred cleanup:
+
+- **`session-onboard.sh`'s prompt-only counters leaked a shell diagnostic to
+  stderr on an unreadable buffer file.** `grep -c` prints an empty string
+  (not "0") when it cannot read the file at all, and the following integer
+  test was not guarded against that - the one place in this hook where an
+  error path was not `2>/dev/null`'d, breaking its own always-silent contract.
+  Fixed by defaulting both counts to 0 when empty.
+- **The `mcp__*` fallback branch embedded the raw tool name directly inside
+  the `**...**` bold-marker pair** without stripping asterisks (every other
+  branch only puts field content AFTER a fixed literal marker, so this is the
+  one place where arbitrary text sits inside the delimiters themselves). An
+  unusual tool name containing `*` would break the markdown span and desync
+  onboard's anchored classifier regex, silently miscounting a real action as
+  prompt-only. Fixed by stripping asterisks from the tool name specifically
+  (not folded into the shared `clean` def, which other branches rely on to
+  preserve a literal `*` in content like a glob pattern).
+- The Bash capture branch's hand-rolled truncation was migrated to the shared
+  `clamp` def (it was the one call site the round-1 refactor had missed).
+- Filed as follow-ups rather than fixed inline (issue #16): a timestamp format
+  string duplicated across 4 call sites, `session-onboard.sh` running 3
+  separate `grep` passes per buffer file where one would do, and
+  `_auth_scheme`/`_auth_scheme_prose` duplicating the same regex literals at
+  different length thresholds instead of one parameterized def. None are
+  correctness bugs; deferred to a calmer pass rather than more mechanical
+  edits under the same time pressure that caused rounds 2-4.
+
 ### Tests
-- 39 new assertions (95 -> 133): prompt capture (line shape, prose-safety,
+- 44 new assertions (95 -> 136): prompt capture (line shape, prose-safety,
   structural-signal redaction, documented-gap behavior for colon-form/compound
   secrets, Bearer/Token/Basic scheme masking + prose preservation, truncation,
   empty-prompt skip, opt-out/kill-switch, no-session breadcrumb); widened
   capture (grep/webfetch/websearch/task/mcp one-liners, URL-userinfo masking,
   empty-desc task fallback, WebSearch/Task prose preservation, mcp input not
-  read); prompt-only buffers not counted as unconsumed, including the
-  zero-conforming-line edge case; precompact idempotency (double-fire,
-  multi-seam, post-boundary).
+  read, asterisk-stripped tool_name); prompt-only buffers not counted as
+  unconsumed, including the zero-conforming-line and unreadable-file edge
+  cases; precompact idempotency (double-fire, multi-seam, post-boundary).
 
 ## [0.4.1]
 
