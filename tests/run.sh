@@ -193,6 +193,17 @@ has   "quoted secret value is masked" "$QUOTED_LINE" 'password=***'
 cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"unclosedpw","command":"config: password=\"hunter2superlongvalue"}}'
 hasnt "unterminated quoted secret is not stored" "$(grep unclosedpw "$BUF/session-T.md")" 'hunter2superlongvalue'
 
+# 2e12. a MULTI-WORD unterminated quoted value is masked IN FULL, not just its
+#       first token - an earlier version of the unterminated-quote fallback
+#       stopped at the first whitespace (like the bare-unquoted case), which
+#       masked only "open" in `password="open sesame` and left "sesame" in
+#       cleartext right after the *** marker.
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"unclosedmultiword","command":"config: password=\"open sesame"}}'
+MULTIWORD_LINE=$(grep unclosedmultiword "$BUF/session-T.md")
+hasnt "second word of an unterminated multi-word secret is not stored" "$MULTIWORD_LINE" 'sesame'
+hasnt "first word of an unterminated multi-word secret is not stored" "$MULTIWORD_LINE" 'open'
+has   "unterminated multi-word secret is masked in full" "$MULTIWORD_LINE" 'password=***'
+
 # 2f. redaction applies to the Bash *description* field, not just command
 cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"deploy with ghp_abcdefghij1234567890","command":"true"}}'
 DESC_LINE=$(grep '\*\*bash\*\* deploy' "$BUF/session-T.md")

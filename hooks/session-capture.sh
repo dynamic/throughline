@@ -60,13 +60,14 @@ mkdir -p "$bufdir" 2>/dev/null || { tl_err "mkdir failed for buffer dir"; exit 0
 # The id is piped through `clean` (control-char + backtick stripping, defined
 # in tl_jq_redact_defs) before being joined with the tab delimiter, so a raw
 # session_id that happened to contain a literal tab can never be misread as
-# the sid/line boundary — tl_safe_sid maps every disallowed byte (control
-# chars, tab, backtick, space, ...) to the same `_` regardless of whether
-# `clean` already turned it into a space first, so this is a no-op for any
-# session_id shaped like an actual UUID (the only shape Claude Code emits
-# today) and produces the identical final sanitized id even in the
-# currently-unreachable case of a stranger one. A regression test locks in
-# that capture and flush agree on the filename for a tab-containing id.
+# the sid/line boundary — tl_safe_sid (run by the shared tl_split_sid_line
+# helper below, _lib.sh) maps every disallowed byte (control chars, tab,
+# backtick, space, ...) to the same `_` regardless of whether `clean` already
+# turned it into a space first, so this is a no-op for any session_id shaped
+# like an actual UUID (the only shape Claude Code emits today) and produces
+# the identical final sanitized id even in the currently-unreachable case of a
+# stranger one. A regression test locks in that capture and flush agree on the
+# filename for a tab-containing id.
 out=$(printf '%s' "$input" | jq -r --arg root "$root" "$(tl_jq_redact_defs)"'
   # Observable outcome from the tool result. The Claude Code Bash tool_response
   # exposes "interrupted" but NOT an exit code, so a plain non-zero exit is not
@@ -146,15 +147,12 @@ out=$(printf '%s' "$input" | jq -r --arg root "$root" "$(tl_jq_redact_defs)"'
     end))
 ' 2>/dev/null) || { tl_err "jq filter failed"; exit 0; }
 
-# Split the jq output on the first tab into (sanitized-later) session id and
-# the formatted line. `clean` above guarantees $sid can never itself contain a
-# tab, so this split is unambiguous regardless of what the raw session_id
-# contained. `tl_safe_sid` (the shared sanitizer used by tl_resolve_sid too)
-# still runs here — see the comment above the jq call for why.
-tl_tab=$(printf '\t')
-raw_sid=${out%%"$tl_tab"*}
-line=${out#*"$tl_tab"}
-sid=$(tl_safe_sid "$raw_sid")
+# tl_split_sid_line (_lib.sh) does the tab-split + sanitize; shared with
+# session-prompt.sh so the two hot-path hooks can't drift on how they derive a
+# session id from this identically-shaped jq output — see its comment.
+tl_split_sid_line "$out"
+sid=$_tl_split_sid
+line=$_tl_split_line
 # Drop records with no usable session id rather than poisoning a shared
 # "nosession" bucket that flush never stamps and onboard re-warns about forever.
 # Breadcrumbed like the other silent-loss paths below: currently unreachable

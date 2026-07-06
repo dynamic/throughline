@@ -27,16 +27,14 @@ bufdir="$data/buffer"
 mkdir -p "$bufdir" 2>/dev/null || { tl_err "mkdir failed for buffer dir"; exit 0; }
 
 # Session id and the formatted line are produced by ONE jq invocation
-# (sid-tab-line), not two, for the same reason as session-capture.sh: this hook
-# runs SYNCHRONOUSLY ahead of prompt processing (see below), so a second full
-# jq process per keystroke-adjacent submit is exactly the wrong place to spend
-# it. See session-capture.sh's comment (same pattern, more detail) for why
-# joining on a `clean`-passed id is safe even for a session_id containing a
-# literal tab, and why the SANITIZER (tl_safe_sid) still runs exactly once, in
-# shell — this consolidation only re-inlines the trivial `.session_id // ""`
-# expression, matching tl_resolve_sid's, not the sanitizer itself. Cold-path
-# hooks (flush/precompact/onboard) are unchanged and still call
-# tl_resolve_sid directly.
+# (sid-tab-line, split by the shared tl_split_sid_line in _lib.sh), not two,
+# for the same reason as session-capture.sh: this hook runs SYNCHRONOUSLY
+# ahead of prompt processing (see below), so a second full jq process per
+# keystroke-adjacent submit is exactly the wrong place to spend it. See
+# tl_split_sid_line's comment for why joining on a `clean`-passed id is safe
+# even for a session_id containing a literal tab. Cold-path hooks
+# (flush/precompact/onboard) are unchanged and still call tl_resolve_sid
+# directly.
 #
 # Build the prompt line. Three deliberate choices, all different from the
 # command capture path:
@@ -58,13 +56,12 @@ out=$(printf '%s' "$input" | jq -r "$(tl_jq_redact_defs)"'
       end))
 ' 2>/dev/null) || { tl_err "jq filter failed"; exit 0; }
 
-# Split on the first tab (see session-capture.sh's comment: unambiguous because
-# `clean` above guarantees $sid can never itself contain one), then sanitize
-# via the shared tl_safe_sid.
-tl_tab=$(printf '\t')
-raw_sid=${out%%"$tl_tab"*}
-line=${out#*"$tl_tab"}
-sid=$(tl_safe_sid "$raw_sid")
+# tl_split_sid_line (_lib.sh) does the tab-split + sanitize; shared with
+# session-capture.sh so the two hot-path hooks can't drift on how they derive
+# a session id from this identically-shaped jq output — see its comment.
+tl_split_sid_line "$out"
+sid=$_tl_split_sid
+line=$_tl_split_line
 [ -n "$sid" ] || { tl_err "dropped prompt: no usable session_id"; exit 0; }
 
 # Empty / whitespace-only prompts produce no line.
