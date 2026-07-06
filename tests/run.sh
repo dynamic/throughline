@@ -665,10 +665,8 @@ printf '' > "$WORK/proj/.throughlineignore"
 prompt '{"session_id":"P3","prompt":"should be ignored"}'
 absent "prompt: .throughlineignore suppresses capture" "$BUF/session-P3.md"
 rm -f "$WORK/proj/.throughlineignore"
-prompt() { printf '%s' "$1" | THROUGHLINE_DISABLE=1 sh "$H/session-prompt.sh"; }
-prompt '{"session_id":"P4","prompt":"should be disabled"}'
+printf '%s' '{"session_id":"P4","prompt":"should be disabled"}' | THROUGHLINE_DISABLE=1 sh "$H/session-prompt.sh"
 absent "prompt: THROUGHLINE_DISABLE suppresses capture" "$BUF/session-P4.md"
-prompt() { printf '%s' "$1" | sh "$H/session-prompt.sh"; }
 # Missing session_id drops the prompt and breadcrumbs (mirrors capture).
 reset_buf
 prompt '{"prompt":"no session id here"}'
