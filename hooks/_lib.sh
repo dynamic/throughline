@@ -128,6 +128,30 @@ tl_resolve_sid() {
   tl_safe_sid "$_tl_raw"
 }
 
+# Split a "sid<TAB>line" string - the shape session-capture.sh's and
+# session-prompt.sh's single-jq-call optimization emits (session_id and the
+# formatted record line joined by one literal tab, so each hot-path hook makes
+# one jq call instead of two) - into the two pieces, sanitizing the id via the
+# same tl_safe_sid that tl_resolve_sid uses. Shared here rather than
+# hand-duplicated in both hooks: that duplication is exactly the drift class
+# tl_resolve_sid itself exists to prevent (see its comment above) - a future
+# change to the split or sanitization, edited in one hook but not mirrored in
+# the other, would silently desync how the two hot-path hooks derive a session
+# id from the identically-shaped jq output.
+# Args: $1 = the "sid<TAB>line" string. The id half is assumed to already have
+# passed through the jq-side `clean` def before being joined (both callers do
+# this), so it cannot itself contain a tab - the split below is unambiguous
+# regardless of what the raw, pre-`clean` session_id contained.
+# Sets (does not print) $_tl_split_sid and $_tl_split_line: an OUT-PARAMETER
+# pair, not a same-named-temporary collision guard, so despite the `_tl_`
+# prefix these are meant to be read by the caller immediately after the call -
+# the same convention tl_active uses for $_tl_active_reason.
+tl_split_sid_line() {
+  _tl_tab=$(printf '\t')
+  _tl_split_sid=$(tl_safe_sid "${1%%"$_tl_tab"*}")
+  _tl_split_line=${1#*"$_tl_tab"}
+}
+
 # Replace control characters (including newlines) with a space. Shared by
 # session-flush.sh and session-precompact.sh so their reason/trigger fields
 # can't break the `<!-- ... -->` marker they're embedded in. (The jq `clean` def in
@@ -306,16 +330,32 @@ tl_jq_redact_defs() {
   # "password X" still mask X. That aggressiveness is CORRECT for commands but
   # WRONG for prose (it eats the word after any keyword+copula, inverting
   # "password is not the problem" -> "password is ***"), which is exactly why
-  # prompts use redact_prompt below instead. Value group has no @ or /
-  # exclusion - it matches the sentinel when present, else the unbounded run up
-  # to whitespace/quote - so a secret containing either char is fully masked.
+  # prompts use redact_prompt below instead. Value group tries, in order: a
+  # BALANCED quoted value ("..."), consumed whole (both quotes included in the
+  # match, so the replacement drops them entirely instead of leaving an
+  # orphaned trailing quote - issue #15); the sentinel; an UNTERMINATED quoted
+  # value (opening quote present but no closing quote anywhere after it, e.g.
+  # truncated/malformed input) - by the time this alternative is even tried,
+  # the balanced alternative has already proven no closing quote exists
+  # anywhere later in the string, so it is safe (and necessary) to consume the
+  # REST OF THE LINE rather than stopping at the first whitespace: an earlier
+  # version of this alternative stopped at whitespace like the bare-unquoted
+  # case below, which silently masked only the first WORD of a multi-word
+  # unterminated secret (`password="open sesame` -> `password=*** sesame`,
+  # leaking "sesame") while claiming the case was fully handled - excluding
+  # only \r/\n (not stopping at end-of-string) so it can't cross into a
+  # different line of a multi-line captured command; then the bare unquoted
+  # run, which DOES intentionally stop at the first whitespace (a bare,
+  # unquoted "password X" has no signal that X is meant to span multiple
+  # words, unlike an opening quote). No @ or / exclusion on the unquoted
+  # alternatives, so a secret containing either char is still fully masked.
   def redact:
     _pem
     | _auth_scheme
     | gsub("(?i)\\btoken\\s+(?<t>[A-Za-z0-9._\\-]+)"; "Token ***")
     | _url
     | _prefix_tokens
-    | gsub("(?i)(?<k>\\w*(?:token|secret|password|passwd|api[_-]?key|access[_-]?key|credential|auth(?:orization)?|client[_-]?id)\\w*)(?<s>\\s*[:=]\\s*|\\s+(?:is|was|are)\\s+|\\s+)(?<v>\"?(?:\(M)|[^\\s\"]+))"; "\(.k)\(.s)***")
+    | gsub("(?i)(?<k>\\w*(?:token|secret|password|passwd|api[_-]?key|access[_-]?key|credential|auth(?:orization)?|client[_-]?id)\\w*)(?<s>\\s*[:=]\\s*|\\s+(?:is|was|are)\\s+|\\s+)(?<v>\"[^\"]*\"|\(M)|\"[^\\r\\n]*|[^\\s\"]+)"; "\(.k)\(.s)***")
     | _unmask;
   # Prose-safe redaction for user prompts (issue #5), and for the WebSearch
   # query / Task description branches in session-capture.sh (also prose).

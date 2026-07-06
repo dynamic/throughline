@@ -3,6 +3,49 @@
 All notable changes to throughline are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); this project uses semantic versioning.
 
+## [0.5.2]
+
+Hot-path perf batch plus issue #15, which turned out to have a second,
+un-cosmetic bug underneath it - caught by an independent code-review pass on
+this release before merge. Verified by the full 143-assertion suite plus
+shellcheck under both Homebrew and an `apt-get install shellcheck` Ubuntu
+container.
+
+### Changed
+- **One jq invocation per capture/prompt fire, not two**: `session-capture.sh`
+  and `session-prompt.sh` (the hottest hooks - every matched tool call and
+  every prompt submit) each separately resolved `session_id` via
+  `tl_resolve_sid` and then re-ran a full jq program to build the record line.
+  Both are now produced by a single jq call (`session_id` and the line joined
+  by a tab), removing the per-fire process. This matters most for
+  `session-prompt.sh`, which runs synchronously ahead of prompt processing.
+  The id is piped through the shared `clean` def (control-char/backtick
+  stripping) before joining, so the split is unambiguous even for a
+  session_id containing a literal tab; `tl_safe_sid` still runs exactly once,
+  as the single sanitizer. The split-and-sanitize step itself is a new shared
+  `tl_split_sid_line` helper in `_lib.sh`, not hand-duplicated between the two
+  hooks (an initial version did duplicate it verbatim - flagged by review and
+  factored out before merge, since that duplication is exactly the drift
+  class `tl_resolve_sid` itself exists to prevent). Cold-path hooks
+  (flush/precompact/onboard) are unchanged.
+
+### Fixed
+- **Issue #15**: `redact()`'s generic keyword+separator rule left an orphaned
+  trailing quote on a quoted secret value (`password="X"` redacted to
+  `password=***"` instead of `password=***`). No security impact on its own -
+  the secret itself was always masked - purely malformed output. The
+  value-capture group now distinguishes a balanced quoted value (`"..."`, both
+  quotes consumed) from an unterminated one (opening quote with no matching
+  close) from a bare unquoted run.
+- **Multi-word unterminated-quote leak** (pre-existing, found by review while
+  fixing #15 above): the unterminated-quote case's first fix stopped at the
+  first whitespace, like the bare-unquoted case - so a multi-word unterminated
+  secret (`password="open sesame`, no closing quote) only masked its first
+  word and left the rest in cleartext (`password=*** sesame`). This gap
+  predates #15 and was never specific to this release, but was caught here
+  because the new comment/CHANGELOG language claimed the unterminated case was
+  fully handled, and the case is now genuinely fully masked to match.
+
 ## [0.5.1]
 
 Calmer follow-up pass on the three cleanups v0.5.0's review deferred rather
