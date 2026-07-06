@@ -3,6 +3,50 @@
 All notable changes to throughline are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); this project uses semantic versioning.
 
+## [0.6.0]
+
+Issue #9 from the v0.4.0 audit (docs/AUDIT-v0.4.0.md, P2): inline post-compaction
+recovery content instead of a pointer. Feature bump - onboard's compact-path
+output now carries actual buffer content, not just a filename. An independent
+code-review pass on this release caught two gaps in the initial
+implementation's bounded-output claim, both closed before merge. Verified by
+the full 154-assertion suite (11 new) plus shellcheck under both Homebrew and
+an `apt-get install shellcheck` Ubuntu container.
+
+### Added
+- **Inlined post-compaction recovery** (`session-onboard.sh`): on
+  `source=compact`, the last 30 lines of the current session's action
+  buffer - including any trailing `compaction-boundary` marker, which lands
+  there naturally since no captured action can land between PreCompact
+  stamping it and this SessionStart firing - are now printed directly into
+  the SessionStart block, fenced in a code block. Previously this path only
+  printed a pointer ("your buffer survived at `<path>`, read it"), which cost
+  the model a tool call it might not make, at exactly the point where
+  post-compaction recall is weakest. The pointer to the full file is kept
+  alongside the inlined tail for sessions that ran longer than the window.
+  `startup`/`resume`/`clear` sources are unaffected - only `compact` inlines
+  buffer content.
+
+### Fixed (found during review, before merge)
+- **The bounded-output claim was false for two unclamped fields**: a Bash
+  record's `description` and an Edit/Write/NotebookEdit record's `file_path`
+  are never length-clamped in `session-capture.sh` (only `command` and the
+  other free-text fields are), so an unusually long one of either would still
+  inline verbatim despite the 30-line cap. Rather than clamp every
+  capture-side field (a change to `session-capture.sh`'s existing, separate
+  design, out of scope here), the inline-tail block now caps each line to 300
+  characters itself, via an `awk` pass - the bound this feature's own claim
+  depends on is now enforced at the point the claim is made, not assumed from
+  upstream.
+- **A stamped `trigger`/`reason` value could break the new markdown fence**:
+  `tl_clean_ctrl` (shared by `session-flush.sh`/`session-precompact.sh` to
+  sanitize those fields before stamping) only stripped control characters, not
+  backticks - a run of 3+ backticks in one of those fields could prematurely
+  close the ``` fence this release introduces. Not reachable today (both
+  fields are fixed enum strings from the harness), but cheap to close at the
+  source: `tl_clean_ctrl` now strips backticks too, matching what the jq-side
+  `clean` def already does for capture-side fields.
+
 ## [0.5.2]
 
 Hot-path perf batch plus issue #15, which turned out to have a second,

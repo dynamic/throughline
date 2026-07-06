@@ -152,16 +152,23 @@ tl_split_sid_line() {
   _tl_split_line=${1#*"$_tl_tab"}
 }
 
-# Replace control characters (including newlines) with a space. Shared by
-# session-flush.sh and session-precompact.sh so their reason/trigger fields
-# can't break the `<!-- ... -->` marker they're embedded in. (The jq `clean` def in
-# tl_jq_redact_defs below duplicates this rule rather than calling it: the
-# capture-side hooks apply control-char
-# AND backtick stripping together, per-field, inside one jq pipeline that also
-# does redaction — pulling just the control-char half out to a separate shell
-# call there would mean an extra process per field for no real safety gain.)
+# Replace control characters (including newlines) AND backticks with a space.
+# Shared by session-flush.sh and session-precompact.sh so their reason/trigger
+# fields can't break either delimiter they get embedded in: the `<!-- ... -->`
+# HTML comment (control chars), and - since session-onboard.sh's post-compact
+# inline-tail feature (issue #9) started wrapping raw buffer content in a
+# markdown ``` fence - a run of 3+ backticks in a stamped line could also
+# prematurely close that fence. Both trigger/reason are fixed enum strings
+# from the harness today (auto/manual; clear/logout/prompt_input_exit/other),
+# so this is currently unreachable, but it is cheap to close at the source
+# rather than assume every future caller and every future delimiter stays
+# safe. (The jq `clean` def in tl_jq_redact_defs below duplicates this rule
+# rather than calling it: the capture-side hooks apply control-char and
+# backtick stripping together, per-field, inside one jq pipeline that also
+# does redaction — pulling just this half out to a separate shell call there
+# would mean an extra process per field for no real safety gain.)
 tl_clean_ctrl() {
-  printf '%s' "$1" | tr '[:cntrl:]' ' '
+  printf '%s' "$1" | tr '[:cntrl:]`' ' '
 }
 
 # Single source for the on-disk timestamp format, used by every record line and

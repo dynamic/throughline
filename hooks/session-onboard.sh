@@ -132,11 +132,32 @@ case "$data" in
     ;;
 esac
 
-# Post-compaction recovery: the conversation was just summarized, but this
-# session's buffer is intact on disk. Point Claude at it explicitly.
+# Post-compaction recovery (issue #9): the conversation was just summarized,
+# but this session's buffer is intact on disk. Inline its TAIL directly into
+# this SessionStart block instead of only pointing at the file - a bare
+# pointer costs the model a tool call it may not make, right where
+# post-compaction recall is weakest. Bounded to the last N lines, EACH also
+# capped at TL_COMPACT_TAIL_LINE_CHARS characters (via the awk pass below) -
+# not just line count. A record's Bash `description` and Edit/Write/
+# NotebookEdit `file_path` fields are never length-clamped in
+# session-capture.sh (only `command` and the other free-text fields are), so
+# without this hook's OWN cap an unusually long one of those would still
+# inline verbatim; capping here, at the point this block's own bounded-size
+# claim is made, holds regardless of what any capture-side branch does or
+# later stops doing. The full-file pointer is kept for anything older than
+# the tail.
+TL_COMPACT_TAIL_LINES=30
+TL_COMPACT_TAIL_LINE_CHARS=300
 if [ "$src" = "compact" ] && [ -n "$sid" ] && [ -f "$bufdir/session-$sid.md" ]; then
+  buf="$bufdir/session-$sid.md"
   echo
-  echo "🧷 Context was just compacted. This session's action buffer survived at \`${bufdir#"$root"/}/session-$sid.md\` - read it to recover what you did before the compaction. The raw actions persist even though the conversation summary dropped detail."
+  echo "🧷 Context was just compacted. The last $TL_COMPACT_TAIL_LINES line(s) of this session's action buffer are inlined below to recover what you did before the compaction, without an extra read - the raw actions persist even though the conversation summary dropped detail. Full history (if the session ran longer than this tail) is at \`${bufdir#"$root"/}/session-$sid.md\`."
+  echo '```'
+  tail -n "$TL_COMPACT_TAIL_LINES" "$buf" 2>/dev/null | awk -v max="$TL_COMPACT_TAIL_LINE_CHARS" '
+    { if (length($0) > max) print substr($0, 1, max) " …[line truncated]"
+      else print
+    }'
+  echo '```'
 fi
 
 # Surface unconsumed buffers from OTHER sessions. Exclude the current session's
