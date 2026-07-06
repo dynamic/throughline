@@ -47,6 +47,6 @@ if [ -n "$sid" ] && [ -f "$buf" ]; then
   # description containing the marker text cannot suppress a real stamp (capture
   # lines all begin with "- `", so they never match this anchor).
   grep -q '^<!-- session-ended' "$buf" 2>/dev/null || \
-    printf -- '\n<!-- session-ended %s (%s) -->\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$reason" >> "$buf" 2>/dev/null
+    printf -- '\n<!-- session-ended %s (%s) -->\n' "$(tl_now)" "$reason" >> "$buf" 2>/dev/null
 fi
 exit 0

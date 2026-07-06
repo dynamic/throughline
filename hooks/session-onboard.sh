@@ -182,18 +182,34 @@ if [ -d "$bufdir" ]; then
     # one of them is a prompt line; zero recognized lines falls through to be
     # counted, matching that prior fail-safe behavior instead of silently
     # dropping a real ended session.
-    # An unreadable/unparseable file (permissions, I/O error) makes grep -c
-    # print nothing at all rather than "0", so both counts default to 0 here -
-    # otherwise the comparison below gets an empty operand and this hook's
+    # An unreadable/unparseable file (permissions, I/O error) makes awk print
+    # nothing at all rather than "0 0 0", so all three counts default to 0 here
+    # - otherwise the comparisons below get an empty operand and this hook's
     # "always silent on error" contract breaks (every other error path here is
     # 2>/dev/null'd; an unguarded integer test on an empty string is the one
     # way that contract leaks a diagnostic to stderr instead of failing quiet).
+    # An empty $_tl_counts also leaves is_ended at its default 0 ("not ended"),
+    # which falls through to the unsure branch below - the same fail-safe
+    # behavior the prior three-grep version had on an unreadable file.
+    #
+    # Single awk pass replaces three separate grep forks/reads over the same
+    # file (issue #16) - total, prompt-only, and session-ended were each their
+    # own full read of $f; awk computes all three in one pass.
     # shellcheck disable=SC2016
-    total=$(grep -cE '^- `[^`]*` \*\*[^*]+\*\*' "$f" 2>/dev/null); total=${total:-0}
-    # shellcheck disable=SC2016
-    promptonly=$(grep -cE '^- `[^`]*` \*\*prompt\*\*' "$f" 2>/dev/null); promptonly=${promptonly:-0}
+    _tl_counts=$(awk '
+      /^- `[^`]*` \*\*[^*]+\*\*/ { total++ }
+      /^- `[^`]*` \*\*prompt\*\*/ { promptonly++ }
+      /^<!-- session-ended/ { is_ended=1 }
+      END { printf "%d %d %d", total+0, promptonly+0, is_ended+0 }
+    ' "$f" 2>/dev/null)
+    # Word splitting here is deliberate: $_tl_counts is awk's own
+    # space-separated "%d %d %d" output (or empty on read failure), never
+    # arbitrary content, so there is nothing to glob or mis-split.
+    # shellcheck disable=SC2086
+    set -- $_tl_counts
+    total=${1:-0}; promptonly=${2:-0}; is_ended=${3:-0}
     [ "$total" -gt 0 ] && [ "$total" -eq "$promptonly" ] && continue
-    if grep -q '^<!-- session-ended' "$f" 2>/dev/null; then
+    if [ "$is_ended" -eq 1 ]; then
       ended=$((ended + 1))
     else
       unsure=$((unsure + 1))

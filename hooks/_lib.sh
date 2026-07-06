@@ -140,6 +140,14 @@ tl_clean_ctrl() {
   printf '%s' "$1" | tr '[:cntrl:]' ' '
 }
 
+# Single source for the on-disk timestamp format, used by every record line and
+# breadcrumb (tl_err, tl_append_line, session-flush.sh, session-precompact.sh).
+# A format change (e.g. adding a timezone offset) now happens in exactly one
+# place instead of drifting across four hand-copied `date` calls.
+tl_now() {
+  date '+%Y-%m-%d %H:%M:%S'
+}
+
 # Best-effort breadcrumb for the swallowed-failure paths in the capture-side
 # hooks (session-capture.sh, session-prompt.sh): capture must never block a
 # tool or a prompt, so every failure there still exits 0, but a write failure
@@ -151,7 +159,7 @@ tl_clean_ctrl() {
 # target depended on buffer/, the one failure mode this exists to report
 # (buffer/ uncreatable) would silently defeat the breadcrumb along with it.
 tl_err() {
-  printf -- '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$1" >> "$(tl_data_dir)/.capture-errors" 2>/dev/null
+  printf -- '%s %s\n' "$(tl_now)" "$1" >> "$(tl_data_dir)/.capture-errors" 2>/dev/null
 }
 
 # Append one timestamped record line to a session buffer, breadcrumbing on write
@@ -162,7 +170,7 @@ tl_err() {
 # class tl_resolve_sid and the redact defs exist to prevent.
 # Args: $1 = buffer dir, $2 = sanitized session id, $3 = formatted content.
 tl_append_line() {
-  _tl_ts=$(date '+%Y-%m-%d %H:%M:%S')
+  _tl_ts=$(tl_now)
   # Backticks are literal markdown; %s are printf specifiers; the format string
   # is intentionally not shell-expanded.
   # shellcheck disable=SC2016
@@ -228,17 +236,29 @@ tl_jq_redact_defs() {
     | gsub("AKIA[0-9A-Z]{12,}"; "AKIA***")
     | gsub("AIza[0-9A-Za-z_\\-]{35}"; "AIza***");
   def _unmask: gsub("\(M)"; "***");
+  # Bearer/Basic scheme-value matchers, parameterized on the length floor
+  # (issue #16): `_auth_scheme` and `_auth_scheme_prose` below used to spell
+  # out the identical bearer/basic character classes twice, differing only in
+  # the quantifier - a future tightening of either char class (e.g. the base64
+  # alphabet) risked being applied to one copy and not the other. $min=1 is
+  # the command path's effectively-unbounded floor (a bare `+` is `{1,}`).
+  # Order and behavior are unchanged from before this refactor; only the two
+  # duplicated literals were consolidated.
+  def _bearer_scheme($min):
+    gsub("(?i)bearer\\s+(?<t>[A-Za-z0-9._\\-]{\($min),})"; "Bearer ***");
+  def _basic_scheme($min):
+    gsub("(?i)\\bbasic\\s+[A-Za-z0-9+/=]{\($min),}"; "Basic ***");
   # Authorization SCHEME rules (Bearer/Basic) - COMMAND-PATH version, used only
   # by `redact`. No length minimum on the bearer value and only an 8-char floor
   # on Basic's base64 run: commands aren't natural language, so "bearer X" /
   # "Basic <8+ chars>" essentially never appears as an innocent phrase there,
   # unlike in prose (see _auth_scheme_prose below, which `redact_prompt` uses
-  # instead - the two are deliberately NOT shared, because the constraint that
-  # makes one safe would either under-redact the other's real shapes or
-  # false-positive on the other's ordinary text).
+  # instead - the two are deliberately NOT unified into one floor, because the
+  # constraint that makes one safe would either under-redact the other's real
+  # shapes or false-positive on the other's ordinary text).
   def _auth_scheme:
-    gsub("(?i)bearer\\s+(?<t>[A-Za-z0-9._\\-]+)"; "Bearer ***")
-    | gsub("(?i)\\bbasic\\s+[A-Za-z0-9+/=]{8,}"; "Basic ***");
+    _bearer_scheme(1)
+    | _basic_scheme(8);
   # Authorization SCHEME rules - PROSE-SAFE version, used only by
   # `redact_prompt`. A bare 8-char base64-alphabet floor or an unbounded bearer
   # value both false-positive constantly on ordinary English: "bearer of good
@@ -255,16 +275,20 @@ tl_jq_redact_defs() {
   # Token <value>"), which redact_prompt lacked entirely until this was added -
   # without it, a Token-scheme header fell through to no rule at all (there is
   # no generic keyword rule left in redact_prompt to catch it either; see the
-  # comment above redact_prompt for why that rule was removed).
+  # comment above redact_prompt for why that rule was removed). Not folded into
+  # _bearer_scheme/_basic_scheme above: it's a third, distinct char class/scheme
+  # word with no command-path counterpart in this def (the command path's Token
+  # rule lives separately in `redact`, below), so there is no duplication to
+  # remove here - only the bearer/basic literals were actually duplicated.
   # Known, DELIBERATE tradeoff, same class as `redact`'s documented gaps: a
   # real credential shorter than 16 chars is not masked by this rule. There is
   # no fallback generic rule in redact_prompt to catch it either - the handoff
   # skill's human re-scan is the sole backstop for that case, same as for any
   # other bare/short secret with no recognizable long-token shape.
   def _auth_scheme_prose:
-    gsub("(?i)bearer\\s+(?<t>[A-Za-z0-9._\\-]{16,})"; "Bearer ***")
+    _bearer_scheme(16)
     | gsub("(?i)\\btoken\\s+(?<t>[A-Za-z0-9._\\-]{16,})"; "Token ***")
-    | gsub("(?i)\\bbasic\\s+[A-Za-z0-9+/=]{16,}"; "Basic ***");
+    | _basic_scheme(16);
   # Full command-path redaction. Shape-specific patterns run BEFORE the generic
   # keyword=value catch-all, so e.g. "Authorization:Basic <base64>" is fully
   # consumed by the Basic-auth rule rather than the generic auth keyword rule
