@@ -280,10 +280,34 @@ cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"x","comma
 printf '%s' '{"session_id":"T","trigger":"manual"}' | sh "$H/session-precompact.sh"
 has "PreCompact writes a compaction-boundary marker" "$(cat "$BUF/session-T.md")" '<!-- compaction-boundary'
 
-# 7. onboard on source=compact points at the live buffer
+# 7. onboard on source=compact inlines the buffer TAIL directly (issue #9),
+#    not just a pointer - saves the model a tool call exactly where
+#    post-compaction recall is weakest.
 O=$(printf '%s' '{"source":"compact","session_id":"T"}' | sh "$H/session-onboard.sh")
 has "onboard(compact) names this session buffer" "$O" 'session-T.md'
 has "onboard(compact) explains recovery" "$O" 'compacted'
+has "onboard(compact) inlines the captured action" "$O" '**bash**'
+has "onboard(compact) inlines the compaction-boundary marker" "$O" '<!-- compaction-boundary'
+
+# 7a. the inline tail is specific to the compact path - startup/resume never
+#     inline buffer content, only the pointer/warning lines.
+O_START=$(printf '%s' '{"source":"startup","session_id":"T"}' | sh "$H/session-onboard.sh")
+hasnt "onboard(startup) does not inline the buffer tail" "$O_START" '**bash**'
+O_RESUME=$(printf '%s' '{"source":"resume","session_id":"T"}' | sh "$H/session-onboard.sh")
+hasnt "onboard(resume) does not inline the buffer tail" "$O_RESUME" '**bash**'
+
+# 7b. the inline tail is BOUNDED to the last N lines - an old line well before
+#     the compaction seam is not inlined, only recent history near it.
+reset_buf
+i=1
+while [ "$i" -le 40 ]; do
+  printf -- '- `t` **bash** line%s - `cmd%s`\n' "$i" "$i" >> "$BUF/session-T.md"
+  i=$((i + 1))
+done
+O_TAIL=$(printf '%s' '{"source":"compact","session_id":"T"}' | sh "$H/session-onboard.sh")
+hasnt "onboard(compact) tail excludes a line beyond the bound" "$O_TAIL" 'cmd10`'
+has   "onboard(compact) tail includes the first line within the bound" "$O_TAIL" 'cmd11`'
+has   "onboard(compact) tail includes the most recent line" "$O_TAIL" 'cmd40`'
 
 # 8. flush stamps ended once, anchored
 printf '%s' '{"session_id":"T","reason":"clear"}' | sh "$H/session-flush.sh"

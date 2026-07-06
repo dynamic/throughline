@@ -3,6 +3,30 @@
 All notable changes to throughline are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); this project uses semantic versioning.
 
+## [0.6.0]
+
+Issue #9 from the v0.4.0 audit (docs/AUDIT-v0.4.0.md, P2): inline post-compaction
+recovery content instead of a pointer. Feature bump - onboard's compact-path
+output now carries actual buffer content, not just a filename. Verified by the
+full 150-assertion suite (7 new) plus shellcheck under both Homebrew and an
+`apt-get install shellcheck` Ubuntu container.
+
+### Added
+- **Inlined post-compaction recovery** (`session-onboard.sh`): on
+  `source=compact`, the last 30 lines of the current session's action
+  buffer - including any trailing `compaction-boundary` marker, which lands
+  there naturally since no captured action can land between PreCompact
+  stamping it and this SessionStart firing - are now printed directly into
+  the SessionStart block, fenced in a code block. Previously this path only
+  printed a pointer ("your buffer survived at `<path>`, read it"), which cost
+  the model a tool call it might not make, at exactly the point where
+  post-compaction recall is weakest. The pointer to the full file is kept
+  alongside the inlined tail for sessions that ran longer than the window.
+  Bounded output: each buffer line is itself length-clamped at capture time,
+  so a fixed line count keeps the inlined block's size bounded regardless of
+  session length. `startup`/`resume`/`clear` sources are unaffected - only
+  `compact` inlines buffer content.
+
 ## [0.5.2]
 
 Hot-path perf batch plus issue #15, which turned out to have a second,

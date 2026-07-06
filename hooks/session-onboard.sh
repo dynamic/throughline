@@ -132,11 +132,22 @@ case "$data" in
     ;;
 esac
 
-# Post-compaction recovery: the conversation was just summarized, but this
-# session's buffer is intact on disk. Point Claude at it explicitly.
+# Post-compaction recovery (issue #9): the conversation was just summarized,
+# but this session's buffer is intact on disk. Inline its TAIL directly into
+# this SessionStart block instead of only pointing at the file - a bare
+# pointer costs the model a tool call it may not make, right where
+# post-compaction recall is weakest. Bounded to the last N lines so a long
+# session's buffer can't balloon this block (each record line is itself
+# clamp()-bounded at capture time, so N lines is also bounded in bytes); the
+# full-file pointer is kept for anything older than the tail.
+TL_COMPACT_TAIL_LINES=30
 if [ "$src" = "compact" ] && [ -n "$sid" ] && [ -f "$bufdir/session-$sid.md" ]; then
+  buf="$bufdir/session-$sid.md"
   echo
-  echo "🧷 Context was just compacted. This session's action buffer survived at \`${bufdir#"$root"/}/session-$sid.md\` - read it to recover what you did before the compaction. The raw actions persist even though the conversation summary dropped detail."
+  echo "🧷 Context was just compacted. The last $TL_COMPACT_TAIL_LINES line(s) of this session's action buffer are inlined below to recover what you did before the compaction, without an extra read - the raw actions persist even though the conversation summary dropped detail. Full history (if the session ran longer than this tail) is at \`${bufdir#"$root"/}/session-$sid.md\`."
+  echo '```'
+  tail -n "$TL_COMPACT_TAIL_LINES" "$buf" 2>/dev/null
+  echo '```'
 fi
 
 # Surface unconsumed buffers from OTHER sessions. Exclude the current session's
