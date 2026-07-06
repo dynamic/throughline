@@ -174,6 +174,25 @@ hasnt "URL credential with no nearby keyword is not stored" "$PLAIN_LINE" 'hunte
 hasnt "internal sentinel never leaks into the buffer" "$PLAIN_LINE" 'TLREDACTSENTINEL'
 has   "URL host/path is preserved" "$PLAIN_LINE" 'example.com/data'
 
+# 2e10. issue #15: a quoted secret value ("...") is fully masked with NO
+#       orphaned trailing quote left in the output - the value-capture group
+#       used to optionally consume a LEADING quote but never a matching
+#       trailing one, so `password="X"` redacted to `password=***"` (the
+#       secret itself was masked; only the stray quote was cosmetic, but it
+#       is malformed output).
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"quotedpw","command":"config: password=\"hunter2superlongvalue\""}}'
+QUOTED_LINE=$(grep quotedpw "$BUF/session-T.md")
+hasnt "quoted secret value is not stored" "$QUOTED_LINE" 'hunter2superlongvalue'
+hasnt "no orphaned trailing quote after the mask" "$QUOTED_LINE" '***"'
+has   "quoted secret value is masked" "$QUOTED_LINE" 'password=***'
+
+# 2e11. an UNTERMINATED quoted value (opening quote, no closing quote anywhere
+#       after it - malformed/truncated input) is still masked rather than
+#       silently falling through to cleartext, matching this rule's
+#       pre-#15-fix behavior for exactly that shape.
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"unclosedpw","command":"config: password=\"hunter2superlongvalue"}}'
+hasnt "unterminated quoted secret is not stored" "$(grep unclosedpw "$BUF/session-T.md")" 'hunter2superlongvalue'
+
 # 2f. redaction applies to the Bash *description* field, not just command
 cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"deploy with ghp_abcdefghij1234567890","command":"true"}}'
 DESC_LINE=$(grep '\*\*bash\*\* deploy' "$BUF/session-T.md")

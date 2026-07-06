@@ -3,6 +3,37 @@
 All notable changes to throughline are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); this project uses semantic versioning.
 
+## [0.5.2]
+
+Hot-path perf batch plus a pre-existing cosmetic fix (issue #15). No new
+runtime dependency; verified by the full 140-assertion suite plus shellcheck
+under both Homebrew and an `apt-get install shellcheck` Ubuntu container.
+
+### Changed
+- **One jq invocation per capture/prompt fire, not two**: `session-capture.sh`
+  and `session-prompt.sh` (the hottest hooks - every matched tool call and
+  every prompt submit) each separately resolved `session_id` via
+  `tl_resolve_sid` and then re-ran a full jq program to build the record line.
+  Both are now produced by a single jq call (`session_id` and the line joined
+  by a tab, split in shell), removing the per-fire process. This matters most
+  for `session-prompt.sh`, which runs synchronously ahead of prompt
+  processing. The id is piped through the shared `clean` def (control-char/
+  backtick stripping) before joining, so the split is unambiguous even for a
+  session_id containing a literal tab; `tl_safe_sid` still runs exactly once,
+  in shell, as the single sanitizer - only the trivial `.session_id // ""`
+  jq expression is duplicated, matching `tl_resolve_sid`'s own, not the
+  sanitizer logic that caused a real desync bug once before. Cold-path hooks
+  (flush/precompact/onboard) are unchanged.
+
+### Fixed
+- **Issue #15**: `redact()`'s generic keyword+separator rule left an orphaned
+  trailing quote on a quoted secret value (`password="X"` redacted to
+  `password=***"` instead of `password=***`). No security impact - the secret
+  itself was always masked - purely malformed output. The value-capture group
+  now distinguishes a balanced quoted value (`"..."`, both quotes consumed) from
+  an unterminated one (opening quote with no matching close, still masked
+  rather than silently left in cleartext) from a bare unquoted run.
+
 ## [0.5.1]
 
 Calmer follow-up pass on the three cleanups v0.5.0's review deferred rather

@@ -38,24 +38,36 @@ bufdir="$data/buffer"
 
 mkdir -p "$bufdir" 2>/dev/null || { tl_err "mkdir failed for buffer dir"; exit 0; }
 
-# Session id is resolved independently of the formatted line below (rather than
-# splitting both out of one combined jq call), via the shared tl_resolve_sid
-# (also used by flush/precompact) so it is derived identically everywhere a
-# buffer filename is keyed off it.
-sid=$(tl_resolve_sid "$input")
-# Drop records with no usable session id rather than poisoning a shared
-# "nosession" bucket that flush never stamps and onboard re-warns about forever.
-# Breadcrumbed like the other silent-loss paths below: currently unreachable
-# (Claude Code always supplies a UUID session_id) but if that assumption ever
-# breaks, the loss should be visible rather than untraceable.
-[ -n "$sid" ] || { tl_err "dropped action: no usable session_id"; exit 0; }
-
 # The redact/clean defs are shared with session-prompt.sh (via
 # tl_jq_redact_defs in _lib.sh) so the rule set can't drift between the two
 # capture-side hooks; the outcome($t) def and the tool-name dispatch below are
-# specific to PostToolUse and stay here. Concatenated into one jq program so
-# this remains a single jq invocation on the hot path.
-line=$(printf '%s' "$input" | jq -r --arg root "$root" "$(tl_jq_redact_defs)"'
+# specific to PostToolUse and stay here.
+#
+# Session id and the formatted line are produced by ONE jq invocation
+# (sid-tab-line), not two: this is the hottest hook in the plugin (fires on
+# every matched tool call), and a second full jq process just to re-derive
+# .session_id was pure overhead. The trivial `.session_id // ""` expression
+# below is byte-identical to tl_resolve_sid's own (_lib.sh) — only that
+# expression is re-inlined here; the actual SANITIZER (tl_safe_sid) still runs
+# exactly once, in shell, on the extracted id, same as tl_resolve_sid does. That
+# distinction matters: the historical desync bug this consolidation must not
+# reintroduce came from two DIFFERENT DERIVATION MECHANISMS (shell vs. jq)
+# disagreeing on a session id, not from two identical jq expressions — see
+# tl_resolve_sid's comment. Cold-path hooks (flush/precompact/onboard, which
+# fire once per session/compaction rather than per tool) are unchanged and
+# still call tl_resolve_sid directly.
+#
+# The id is piped through `clean` (control-char + backtick stripping, defined
+# in tl_jq_redact_defs) before being joined with the tab delimiter, so a raw
+# session_id that happened to contain a literal tab can never be misread as
+# the sid/line boundary — tl_safe_sid maps every disallowed byte (control
+# chars, tab, backtick, space, ...) to the same `_` regardless of whether
+# `clean` already turned it into a space first, so this is a no-op for any
+# session_id shaped like an actual UUID (the only shape Claude Code emits
+# today) and produces the identical final sanitized id even in the
+# currently-unreachable case of a stranger one. A regression test locks in
+# that capture and flush agree on the filename for a tab-containing id.
+out=$(printf '%s' "$input" | jq -r --arg root "$root" "$(tl_jq_redact_defs)"'
   # Observable outcome from the tool result. The Claude Code Bash tool_response
   # exposes "interrupted" but NOT an exit code, so a plain non-zero exit is not
   # visible to a PostToolUse hook and is deliberately left unmarked rather than
@@ -74,7 +86,8 @@ line=$(printf '%s' "$input" | jq -r --arg root "$root" "$(tl_jq_redact_defs)"'
           or ((($r.exit_code? // $r.code? // $r.returncode? // 0) | tostring) != "0"))
       then " `[failed]`"
       else "" end;
-  (.tool_name as $t |
+  ((.session_id // "") | clean) as $sid
+  | ($sid + "\t" + (.tool_name as $t |
     if $t == "Bash" then
       "**bash** " + ((.tool_input.description // "") | redact | clean) + outcome($t) + " - `" +
       ((.tool_input.command // "") | redact | clean | clamp(200; "…[truncated]")) + "`"
@@ -130,8 +143,24 @@ line=$(printf '%s' "$input" | jq -r --arg root "$root" "$(tl_jq_redact_defs)"'
       # other branches rely on to preserve a literal `*` in content like a
       # glob pattern or command.
       "**" + ($t | clean | gsub("\\*"; "")) + "**" + outcome($t)
-    end)
+    end))
 ' 2>/dev/null) || { tl_err "jq filter failed"; exit 0; }
+
+# Split the jq output on the first tab into (sanitized-later) session id and
+# the formatted line. `clean` above guarantees $sid can never itself contain a
+# tab, so this split is unambiguous regardless of what the raw session_id
+# contained. `tl_safe_sid` (the shared sanitizer used by tl_resolve_sid too)
+# still runs here — see the comment above the jq call for why.
+tl_tab=$(printf '\t')
+raw_sid=${out%%"$tl_tab"*}
+line=${out#*"$tl_tab"}
+sid=$(tl_safe_sid "$raw_sid")
+# Drop records with no usable session id rather than poisoning a shared
+# "nosession" bucket that flush never stamps and onboard re-warns about forever.
+# Breadcrumbed like the other silent-loss paths below: currently unreachable
+# (Claude Code always supplies a UUID session_id) but if that assumption ever
+# breaks, the loss should be visible rather than untraceable.
+[ -n "$sid" ] || { tl_err "dropped action: no usable session_id"; exit 0; }
 
 [ -n "$line" ] || exit 0
 

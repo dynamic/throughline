@@ -306,16 +306,23 @@ tl_jq_redact_defs() {
   # "password X" still mask X. That aggressiveness is CORRECT for commands but
   # WRONG for prose (it eats the word after any keyword+copula, inverting
   # "password is not the problem" -> "password is ***"), which is exactly why
-  # prompts use redact_prompt below instead. Value group has no @ or /
-  # exclusion - it matches the sentinel when present, else the unbounded run up
-  # to whitespace/quote - so a secret containing either char is fully masked.
+  # prompts use redact_prompt below instead. Value group tries, in order: a
+  # BALANCED quoted value ("..."), consumed whole (both quotes included in the
+  # match, so the replacement drops them entirely instead of leaving an
+  # orphaned trailing quote - issue #15); the sentinel; an UNTERMINATED quoted
+  # value (opening quote present but no closing quote anywhere after it, e.g.
+  # truncated/malformed input) so that case still gets masked rather than
+  # silently falling through to cleartext, matching this rule's pre-#15-fix
+  # behavior for exactly that shape; then the bare unquoted run. No @ or /
+  # exclusion on the unquoted alternatives, so a secret containing either char
+  # is still fully masked.
   def redact:
     _pem
     | _auth_scheme
     | gsub("(?i)\\btoken\\s+(?<t>[A-Za-z0-9._\\-]+)"; "Token ***")
     | _url
     | _prefix_tokens
-    | gsub("(?i)(?<k>\\w*(?:token|secret|password|passwd|api[_-]?key|access[_-]?key|credential|auth(?:orization)?|client[_-]?id)\\w*)(?<s>\\s*[:=]\\s*|\\s+(?:is|was|are)\\s+|\\s+)(?<v>\"?(?:\(M)|[^\\s\"]+))"; "\(.k)\(.s)***")
+    | gsub("(?i)(?<k>\\w*(?:token|secret|password|passwd|api[_-]?key|access[_-]?key|credential|auth(?:orization)?|client[_-]?id)\\w*)(?<s>\\s*[:=]\\s*|\\s+(?:is|was|are)\\s+|\\s+)(?<v>\"[^\"]*\"|\(M)|\"[^\\s]+|[^\\s\"]+)"; "\(.k)\(.s)***")
     | _unmask;
   # Prose-safe redaction for user prompts (issue #5), and for the WebSearch
   # query / Task description branches in session-capture.sh (also prose).

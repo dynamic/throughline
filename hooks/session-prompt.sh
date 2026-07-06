@@ -26,11 +26,18 @@ bufdir="$data/buffer"
 # why the breadcrumb lives at the data-dir root, not under buffer/.
 mkdir -p "$bufdir" 2>/dev/null || { tl_err "mkdir failed for buffer dir"; exit 0; }
 
-# Same shared session-id derivation as capture/flush/precompact so the prompt
-# line lands on the same buffer file as the actions it precedes.
-sid=$(tl_resolve_sid "$input")
-[ -n "$sid" ] || { tl_err "dropped prompt: no usable session_id"; exit 0; }
-
+# Session id and the formatted line are produced by ONE jq invocation
+# (sid-tab-line), not two, for the same reason as session-capture.sh: this hook
+# runs SYNCHRONOUSLY ahead of prompt processing (see below), so a second full
+# jq process per keystroke-adjacent submit is exactly the wrong place to spend
+# it. See session-capture.sh's comment (same pattern, more detail) for why
+# joining on a `clean`-passed id is safe even for a session_id containing a
+# literal tab, and why the SANITIZER (tl_safe_sid) still runs exactly once, in
+# shell — this consolidation only re-inlines the trivial `.session_id // ""`
+# expression, matching tl_resolve_sid's, not the sanitizer itself. Cold-path
+# hooks (flush/precompact/onboard) are unchanged and still call
+# tl_resolve_sid directly.
+#
 # Build the prompt line. Three deliberate choices, all different from the
 # command capture path:
 #   1. redact_prompt, NOT redact: prompts are prose, and the command-tuned
@@ -42,12 +49,23 @@ sid=$(tl_resolve_sid "$input")
 #      inside that window slips past redaction. The final clamp(200) is what
 #      actually lands in the buffer; its ellipsis reflects the real length.
 #   3. Concatenated with the shared defs into one jq program (single invocation).
-line=$(printf '%s' "$input" | jq -r "$(tl_jq_redact_defs)"'
-  ((.prompt // "") | clamp(2000; "") | redact_prompt | clean) as $p
-  | if ($p | gsub("^\\s+|\\s+$"; "")) == "" then ""
-    else "**prompt** " + ($p | clamp(200; "…[truncated]"))
-    end
+out=$(printf '%s' "$input" | jq -r "$(tl_jq_redact_defs)"'
+  ((.session_id // "") | clean) as $sid
+  | ((.prompt // "") | clamp(2000; "") | redact_prompt | clean) as $p
+  | ($sid + "\t" +
+     (if ($p | gsub("^\\s+|\\s+$"; "")) == "" then ""
+      else "**prompt** " + ($p | clamp(200; "…[truncated]"))
+      end))
 ' 2>/dev/null) || { tl_err "jq filter failed"; exit 0; }
+
+# Split on the first tab (see session-capture.sh's comment: unambiguous because
+# `clean` above guarantees $sid can never itself contain one), then sanitize
+# via the shared tl_safe_sid.
+tl_tab=$(printf '\t')
+raw_sid=${out%%"$tl_tab"*}
+line=${out#*"$tl_tab"}
+sid=$(tl_safe_sid "$raw_sid")
+[ -n "$sid" ] || { tl_err "dropped prompt: no usable session_id"; exit 0; }
 
 # Empty / whitespace-only prompts produce no line.
 [ -n "$line" ] || exit 0
