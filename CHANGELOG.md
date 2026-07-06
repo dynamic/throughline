@@ -3,6 +3,34 @@
 All notable changes to throughline are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); this project uses semantic versioning.
 
+## [0.5.1]
+
+Calmer follow-up pass on the three cleanups v0.5.0's review deferred rather
+than fixing under time pressure (issue #16). No behavior change; verified by
+the full 136-assertion suite plus shellcheck under both Homebrew and an
+`apt-get install shellcheck` Ubuntu container (the exact CI/local mismatch
+that broke v0.5.0's first push).
+
+### Changed
+- **Shared `tl_now()` helper**: the `date '+%Y-%m-%d %H:%M:%S'` format string
+  was spelled out identically in 4 places (`tl_err`, `tl_append_line`,
+  `session-flush.sh`, `session-precompact.sh`). Collapsed to one definition in
+  `hooks/_lib.sh` so a future format change (e.g. a timezone offset) can't be
+  applied to 3 of 4 sites.
+- **Single-pass onboard buffer scan**: `session-onboard.sh`'s per-buffer loop
+  ran 3 separate `grep` passes (total, prompt-only, session-ended) over the
+  same file. Replaced with one `awk` pass computing all three counters,
+  preserving the exact same silent-on-error defaulting contract (an
+  unreadable file still yields "0 0 0" rather than leaking a diagnostic).
+- **Parameterized `_auth_scheme`**: the command-path and prose-path Bearer/
+  Basic regexes duplicated the same character classes, differing only in
+  their length floor. Factored into shared `_bearer_scheme($min)` /
+  `_basic_scheme($min)` defs; `_auth_scheme` and `_auth_scheme_prose` now call
+  them with their existing, unchanged floors (1/8 vs 16/16). The prose path's
+  Token rule and the command path's separately-positioned Token rule are
+  untouched - they were never actually duplicated with each other, only the
+  Bearer/Basic literals were.
+
 ## [0.5.0]
 
 The P1 capture-fidelity batch out of the v0.4.0 audit (docs/AUDIT-v0.4.0.md,

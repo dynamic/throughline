@@ -48,5 +48,5 @@ if tail -n 1 "$buf" 2>/dev/null | grep -q '^<!-- compaction-boundary'; then
 fi
 
 printf -- '\n<!-- compaction-boundary %s (%s) - actions above predate a context compaction; distill them from this buffer, not from conversation recall -->\n' \
-  "$(date '+%Y-%m-%d %H:%M:%S')" "$trigger" >> "$buf" 2>/dev/null
+  "$(tl_now)" "$trigger" >> "$buf" 2>/dev/null
 exit 0
