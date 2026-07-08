@@ -166,13 +166,22 @@ having to carry it. Omit the line entirely for a session that starts something n
 
 7. **Offer to commit + push the handoff artifacts** (offer only, never auto-run -
    the write already happened; this is the review-gated action):
-   - First check `git check-ignore DATA/HANDOFF.md` (and the new session log). If
-     either is ignored, or this isn't a git repo, say so and skip the offer entirely
-     - nothing committable exists (this repo's own `.agent/handoff/` is itself
-     gitignored; the check must handle that case, not just consuming projects).
-   - If committable, offer to stage **exactly** `DATA/HANDOFF.md` and the new
-     `DATA/logs/handoff-*.md` file - never `git add -A`, never `buffer/` or
-     `.capture-errors` (see README "Commit policy").
+   - If `DATA` lives outside the current project's git tree (an absolute
+     `THROUGHLINE_DATA_DIR` pointed at a shared, cross-harness location - a
+     documented, supported config), skip the offer entirely: those files aren't
+     part of this repo's commit at all, and `git check-ignore` on a path outside
+     the repo fails with a fatal error rather than a clean answer (same reasoning
+     `session-onboard.sh`'s gitignore nudge already applies - see its comment there).
+   - Otherwise, check `DATA/HANDOFF.md` and the new session log **independently**
+     with `git check-ignore`. Offer to stage whichever of the two is NOT ignored;
+     if both are ignored, say so and skip the offer - nothing committable exists
+     (this repo's own `.agent/handoff/` is itself gitignored, so this is the
+     common case when dogfooding here).
+   - Stage **exactly** the not-ignored file(s) by their literal paths - `DATA/HANDOFF.md`
+     and/or the specific `DATA/logs/handoff-YYYY-MM-DD-HHMM.md` just written this
+     session. Never a glob like `logs/handoff-*.md` (it would sweep in older,
+     previously-declined session logs too), never `git add -A`, never `buffer/`
+     or `.capture-errors` (see README "Commit policy").
    - Propose a conventional message, e.g. `docs: session handoff - <brief summary>`,
      matching whatever commit-message convention the repo already follows.
    - Treat push as a separate, remote-affecting confirmation after the commit -

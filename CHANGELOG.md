@@ -12,14 +12,16 @@ shellcheck.
 
 ### Added
 - **Issue #21** - Phase 4 now offers (never auto-runs) to stage exactly
-  `HANDOFF.md` and the new session log and commit/push them, with a
-  `git check-ignore` guard that skips the offer entirely when those artifacts
-  aren't actually committable in the caller's layout (this repo's own
-  `.agent/handoff/` is itself gitignored, so the guard has to handle that case
-  too, not just consuming projects). Never stages `buffer/` or
-  `.capture-errors`; push is a separate, remote-affecting confirmation that
-  defers to whatever push-gate/branch conventions the calling agent already
-  follows.
+  `HANDOFF.md` and the new session log by their literal paths (never a glob,
+  which could sweep in older, previously-declined logs) and commit/push them.
+  Guarded by `git check-ignore`, checked **independently per file** so a
+  partially-ignored layout still offers to commit whichever file is actually
+  committable, and skipped entirely when `THROUGHLINE_DATA_DIR` points outside
+  the project's git tree (check-ignore is fatal on an out-of-tree path, the
+  same case `session-onboard.sh`'s gitignore nudge already special-cases).
+  Never stages `buffer/` or `.capture-errors`; push is a separate,
+  remote-affecting confirmation that defers to whatever push-gate/branch
+  conventions the calling agent already follows.
 - **Issue #21** - Phase 4 also emits a compact, copy-pasteable "next session
   briefing" - a pre-written kickoff prompt rendered from the session log's
   existing `## Next steps`/`## Objective`/`## Key learnings & gotchas`, aimed
