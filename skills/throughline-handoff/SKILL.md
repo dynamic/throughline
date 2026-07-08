@@ -149,6 +149,36 @@ having to carry it. Omit the line entirely for a session that starts something n
    clear the file now that it has been distilled - it exists to make a swallowed
    capture failure visible exactly once, not to keep nagging on every future onboard
    after it's already been read and acted on.
+6. **Emit a next-session briefing.** Render a second, compact view of the session
+   log's `## Next steps` (plus `## Objective`, what landed, and the sharpest
+   `## Key learnings & gotchas` item) as a copy-pasteable fenced block in your
+   report - this is not new synthesis, just a different rendering of what the
+   log already holds, aimed at priming a brand-new agent/session rather than
+   documenting for a human reader. Do not write it to a file; emit-only.
+
+   ```
+   ## Next session briefing - <project>
+   Continuing: <one-line objective>
+   Last done: <what just landed - PRs merged, deploys done>
+   Next: <ordered, specific next steps - exact commands/paths where known>
+   Watch out for: <sharpest gotcha from this session, if any>
+   ```
+
+7. **Offer to commit + push the handoff artifacts** (offer only, never auto-run -
+   the write already happened; this is the review-gated action):
+   - First check `git check-ignore DATA/HANDOFF.md` (and the new session log). If
+     either is ignored, or this isn't a git repo, say so and skip the offer entirely
+     - nothing committable exists (this repo's own `.agent/handoff/` is itself
+     gitignored; the check must handle that case, not just consuming projects).
+   - If committable, offer to stage **exactly** `DATA/HANDOFF.md` and the new
+     `DATA/logs/handoff-*.md` file - never `git add -A`, never `buffer/` or
+     `.capture-errors` (see README "Commit policy").
+   - Propose a conventional message, e.g. `docs: session handoff - <brief summary>`,
+     matching whatever commit-message convention the repo already follows.
+   - Treat push as a separate, remote-affecting confirmation after the commit -
+     defer to the calling agent's existing git safety norms (branch-first on a
+     default branch, respect any repo-configured push gate, don't bypass one
+     without explicit authorization each time).
 
 ---
 
@@ -194,6 +224,8 @@ having to carry it. Omit the line entirely for a session that starts something n
   secret was caught, so check what's still readable around it, not just whether
   a mask is present. This is defense in depth, not the sole barrier.
 - **Report, then let the user review.** After writing, show the HANDOFF.md diff +
-  session-log path. The review gate is post-write, not pre-write.
+  session-log path, then the copy-pasteable next-session briefing block, then the
+  commit/push offer. The review gate is post-write, not pre-write - commit/push is
+  the only action in this sequence that waits on an explicit go.
 - **Buffers are the source of truth for *what happened*** — they don't lie about
   which commands ran or files changed, even after a long, compacted session.
