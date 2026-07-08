@@ -167,7 +167,10 @@ tool-agnostic project record.
 teammates and fresh clones get oriented. The raw `buffer/` is scratch (and can contain
 unredacted command text), and `.capture-errors` is a scratch breadcrumb file (capture
 write/permission failures only, no command text) - neither should ever be committed.
-Gitignore both for whichever data dir you use:
+The `throughline-handoff` skill's Phase 4 offers (never auto-runs) to stage exactly
+`HANDOFF.md` + the new session log and commit/push them - it checks `git check-ignore`
+first and skips the offer if they aren't actually committable in your layout. Gitignore
+both scratch paths for whichever data dir you use:
 
 ```gitignore
 # default layout
