@@ -1,0 +1,12 @@
+{
+  "checks": [
+    {
+      "label": "manifest validation",
+      "run": "jq -e '.hooks | keys' hooks/hooks.json >/dev/null && jq -e '.name and .version' .claude-plugin/plugin.json >/dev/null && jq -e '.plugins' .claude-plugin/marketplace.json >/dev/null"
+    },
+    {
+      "label": "hook tests",
+      "run": "sh tests/run.sh"
+    }
+  ]
+}
