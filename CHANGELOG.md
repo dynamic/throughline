@@ -28,6 +28,20 @@ behavior change, verified by the unchanged assertion suite plus shellcheck.
   small handoffs. Closes the gap where consolidate's periodic pass never
   looked at HANDOFF.md's own bloat.
 
+### Fixed (found during review, before merge)
+- **Consolidate Phase 4 instructed writing relocated content into a session
+  log**, directly contradicting the same file's own "leave session logs
+  untouched" rule three lines later and its Reminders section ("session logs
+  are evidence, not scratch - prune nothing from them"). Both skills also
+  assumed every consuming project has a maintained `CHANGELOG.md` mirroring
+  HANDOFF.md's history - true only in throughline's own dogfooded repo. Fixed
+  by gating HANDOFF-diet (home e) on an explicit durable-copy check for each
+  line proposed for removal - an existing `CHANGELOG.md` entry, an existing
+  session-log citation (never an edit), or a new `CHANGELOG.md` entry written
+  as part of the same promotion (creating the file if the project has none) -
+  and refusing to trim anything whose only copy would otherwise be HANDOFF.md
+  itself.
+
 ## [0.8.0]
 
 Flips the default handoff policy: throughline's data is now **local-only by
