@@ -18,7 +18,7 @@ handoff, and binds into Claude Code's native memory system.
 | What it captures | chat transcript, lossy summaries | **actions + state** - commands, files, decisions, git/PR |
 | Capture vs. distill | one lossy step | **separated**: continuous capture, judged handoff |
 | Project state | none | **live git/branch/PR/issue** at load |
-| Artifacts | opaque blobs | **human-readable, editable, committable** |
+| Artifacts | opaque blobs | **human-readable, editable, plain text** |
 | Storage | per-machine, pollutes git | **local by default**, clean gitignore, commit when you choose |
 | Native memory | ignored | **binds** to Claude Code's memory (curated promotion) |
 
