@@ -116,6 +116,21 @@ having to carry it. Omit the line entirely for a session that starts something n
 
 1. Apply the Phase 2 updates to `DATA/HANDOFF.md`. Keep each entry to 1–2 lines —
    it's a reference doc, not a journal. Update its **Last Updated** date.
+   - **Size discipline (HANDOFF.md is read in full every session — it is
+     resident context, paid for on every turn, not a one-time write):**
+     - **"Architecture & Services" is current-state only, never a per-version
+       changelog.** `CHANGELOG.md` already carries the full version-by-version
+       narrative. On an architecture change, *update or replace* the relevant
+       description in place — do not append a new "vX.Y.Z did..." paragraph.
+     - **Cap "Resolved Issues" to the most recent ~8–10 rows.** When adding a
+       new row, drop the oldest row(s) past the cap — its detail already lives
+       in `CHANGELOG.md` and the linked session log, so nothing is lost, only
+       relocated. If the section lacks a pointer line to `CHANGELOG.md`/`logs/`
+       for older issues, add one.
+     - If a section has clearly regrown past these budgets since the last
+       pass (rare between individual handoffs — this is `throughline-consolidate`'s
+       periodic job — but fix it here too if you notice it), trim it the same
+       way: relocate detail to `CHANGELOG.md`/`logs/`, never delete the fact.
 2. Add a link to the new session log under "Recent Session Logs" — keep only the
    **last 5**.
 3. **Memory binding (native system):** ask "did this session surface a durable fact

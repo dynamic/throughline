@@ -42,6 +42,17 @@ work: if a candidate's right home is an auto-memory file, write the one new entr
 3. Confirm scope with the user before reading: which repos/paths, how many logs,
    since when. Default is the **current project only** - mining other repos'
    handoff logs is a deliberate widening, not an assumption.
+4. **Check `DATA/HANDOFF.md`'s own size discipline** (separate from mining the
+   logs below - this looks at HANDOFF.md itself). It is read in full every
+   session, so its size is a standing token cost, not a one-time write; `handoff`
+   enforces a budget per edit (current-state-only "Architecture & Services",
+   "Resolved Issues" capped to ~8-10 rows), but per-edit discipline alone can
+   still drift over many small handoffs. If "Architecture & Services" has
+   regrown version-narrative content, or "Resolved Issues" has regrown past
+   ~8-10 rows, that is a candidate for Phase 3 below (home: HANDOFF-diet - see
+   Phase 3), same as any mined lesson. The content isn't lost by trimming it -
+   it either already exists in `CHANGELOG.md`/`logs/`, or gets moved there as
+   part of the same edit.
 
 ---
 
@@ -79,6 +90,7 @@ For each candidate, propose exactly **one** home:
 | (b) The owning skill, in its source repo | The lesson corrects or extends a specific skill. **File an issue in that repo - never edit another repo's skill directly** |
 | (c) Project `CLAUDE.md` / durable `HANDOFF.md` section | The lesson is project-specific and true every session |
 | (d) Auto-memory file | A confirmed preference or fact that fits the native memory types (`feedback`, `user`, `project`, `reference`) |
+| (e) HANDOFF-diet (trim, don't add) | The candidate is a Phase 1.4 size-discipline finding - HANDOFF.md's own "Architecture & Services" or "Resolved Issues" has regrown past budget. Propose exactly what gets relocated (to `CHANGELOG.md` and/or a session log) vs. what stays, so the reviewer can confirm nothing is actually lost |
 
 Present the **full list** - lesson, evidence, confidence, proposed home - and stop.
 **Nothing is applied without explicit approval, per item.** The user may approve,
@@ -92,7 +104,9 @@ always-loaded files, where one wrong line costs every future session.
 
 1. Apply the **approved** promotions only, each to its agreed home. For home (b),
    opening the issue *is* the promotion - the edit happens in that repo on its own
-   schedule.
+   schedule. For home (e), relocate the approved content into `CHANGELOG.md`
+   and/or the relevant session log exactly as proposed, then trim it from
+   HANDOFF.md - verify the relocated copy exists before removing the original.
 2. Record the pass in `DATA/HANDOFF.md` under "Consolidation passes" (create the
    section if absent): date + what was promoted and where, one line per promotion.
    Update the **Last Updated** date.
