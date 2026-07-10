@@ -102,7 +102,22 @@ else
   echo "No HANDOFF.md yet for this project. One will be written at the next handoff."
 fi
 
-# Nudge toward gitignoring the buffer before anything gets committed.
+# Nudge toward gitignoring bufdir/ - the one subdir that must ALWAYS stay
+# untracked regardless of policy, since it can hold raw, only best-effort-
+# redacted command/path text. Checks bufdir/ specifically rather than $data/
+# (the whole data dir) deliberately: an earlier version of this check used
+# $data/, reasoning that throughline is local-only by default (see README
+# "Local by default") so the whole dir should normally be covered - but
+# `git check-ignore -q "$data/"` can return "ignored" (a directory-glob
+# pattern like `.claude/throughline/*` matches the bare directory path with
+# a trailing slash too) even when a specific file inside it - like the
+# buffer - is genuinely untracked and stageable via `git status`. Checking
+# the coarser ancestor as a proxy for the leaf resource that actually
+# matters is unsound; check-ignore only reliably answers for the exact path
+# you care about. bufdir/ is that path: it is the one thing that must never
+# be exposed even on a project that has deliberately opted in to tracking
+# HANDOFF.md/logs/ (see README "Opting in to tracking" - buffer/ and
+# .capture-errors stay ignored even then).
 # Deliberately NOT gated on "no HANDOFF.md yet": that used to be its only
 # guard, which meant the nudge permanently stopped firing the moment the
 # first handoff ran, even if the buffer was still never actually gitignored.
@@ -127,7 +142,7 @@ case "$data" in
     if [ "$src" != "compact" ] && [ "$in_worktree" = "1" ] \
       && ! git -C "$root" check-ignore -q "$bufdir/" 2>/dev/null; then
       echo
-      echo "⚠️ \`${bufdir#"$root"/}/\` is not gitignored yet - it can contain raw command/path text (best-effort redacted only). Add it to \`.gitignore\` before committing."
+      echo "⚠️ \`${bufdir#"$root"/}/\` is not gitignored yet - it can contain raw command/path text (best-effort redacted only) and must stay untracked. throughline is local-only by default - typically the whole data dir should be gitignored (see README \"Local by default\"), not just this subdir."
     fi
     ;;
 esac

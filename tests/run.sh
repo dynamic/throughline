@@ -513,9 +513,18 @@ else
   ok "failed-bootstrap path-relativization test skipped (running as root)"
 fi
 
-# 12f. first activation nudges toward gitignoring the buffer - but only when
-#      it is not already covered, using git's own ignore resolution rather
-#      than a hand-rolled pattern match.
+# 12f. first activation nudges toward gitignoring bufdir/ specifically - the
+#      one path that must ALWAYS stay untracked - but only when it is not
+#      already covered, using git's own ignore resolution rather than a
+#      hand-rolled pattern match. Checks bufdir/ itself, not a coarser
+#      ancestor like the whole data dir: an earlier draft checked the whole
+#      dir on the theory that it should normally all be covered under the
+#      new local-only-by-default policy, but `check-ignore` on a directory
+#      path can report "ignored" via a directory-glob pattern (e.g.
+#      `.claude/throughline/*`) even when a specific file inside it is
+#      genuinely untracked per `git status` - checking a coarser ancestor as
+#      a proxy for the leaf resource that actually matters is unsound. See
+#      12g3 below for the exact regression this would otherwise miss.
 FRESH_F="$WORK/fresh-f"
 mkdir -p "$FRESH_F"
 ( cd "$FRESH_F" && git init -q && git commit -q --allow-empty -m init ) 2>/dev/null
@@ -528,6 +537,35 @@ printf '.claude/throughline/buffer/\n' > "$FRESH_G/.gitignore"
 ( cd "$FRESH_G" && git init -q && git add .gitignore && git commit -q -m init ) 2>/dev/null
 O10=$(printf '%s' '{"source":"startup","session_id":"T"}' | CLAUDE_PROJECT_DIR="$FRESH_G" sh "$H/session-onboard.sh")
 hasnt "no gitignore nudge when the buffer is already covered" "$O10" 'not gitignored yet'
+
+# 12g2. gitignoring the WHOLE data dir (the README's default recommendation,
+#       no wildcard) also satisfies the check, since an un-wildcarded
+#       directory pattern recursively covers everything nested inside it,
+#       including the buffer - a different authoring style reaching the
+#       same, correctly-detected outcome as 12g.
+FRESH_G2="$WORK/fresh-g2"
+mkdir -p "$FRESH_G2"
+printf '.claude/throughline/\n' > "$FRESH_G2/.gitignore"
+( cd "$FRESH_G2" && git init -q && git add .gitignore && git commit -q -m init ) 2>/dev/null
+O10B=$(printf '%s' '{"source":"startup","session_id":"T"}' | CLAUDE_PROJECT_DIR="$FRESH_G2" sh "$H/session-onboard.sh")
+hasnt "no gitignore nudge when the whole data dir (unwildcarded) covers the buffer too" "$O10B" 'not gitignored yet'
+
+# 12g3. regression guard for the exact xhigh-review finding this fix
+#       addresses: `.claude/throughline/*` + `!.claude/throughline/buffer/`
+#       is a plausible typo'd variant of the opt-in recipe (negating buffer/
+#       instead of HANDOFF.md/logs/) that makes `git check-ignore` report
+#       the DIRECTORY path itself as ignored (the trailing-`*` glob matches
+#       the bare dir too) even though `git status` shows the buffer file
+#       genuinely untracked and stageable. Checking bufdir/ directly (not
+#       the parent dir) must still catch this - confirming 12f's
+#       leaf-not-ancestor reasoning actually holds for the adversarial case,
+#       not just the simple ones above.
+FRESH_G3="$WORK/fresh-g3"
+mkdir -p "$FRESH_G3"
+printf '.claude/throughline/*\n!.claude/throughline/buffer/\n' > "$FRESH_G3/.gitignore"
+( cd "$FRESH_G3" && git init -q && git add .gitignore && git commit -q -m init ) 2>/dev/null
+O10C=$(printf '%s' '{"source":"startup","session_id":"T"}' | CLAUDE_PROJECT_DIR="$FRESH_G3" sh "$H/session-onboard.sh")
+has "gitignore nudge still fires when a wildcard+negation pattern falsely un-ignores the buffer" "$O10C" 'not gitignored yet'
 
 # 12g. flush still stamps an ALREADY-EXISTING buffer even if .throughlineignore
 #      appears mid-session: its job is to finalize a session that legitimately

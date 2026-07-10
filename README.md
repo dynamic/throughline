@@ -19,7 +19,7 @@ handoff, and binds into Claude Code's native memory system.
 | Capture vs. distill | one lossy step | **separated**: continuous capture, judged handoff |
 | Project state | none | **live git/branch/PR/issue** at load |
 | Artifacts | opaque blobs | **human-readable, editable, committable** |
-| Storage | per-machine, pollutes git | **configurable**, clean gitignore, team-shareable handoff |
+| Storage | per-machine, pollutes git | **local by default**, clean gitignore, commit when you choose |
 | Native memory | ignored | **binds** to Claude Code's memory (curated promotion) |
 
 ### Why not just...
@@ -112,7 +112,8 @@ By default, state lives in **`.claude/throughline/`** in each project (the unive
 Claude Code workspace dir). Override the location with an environment variable:
 
 ```sh
-# Unify with a portable .agent/ handoff convention (e.g. for cross-harness use):
+# Opt in to a portable .agent/ handoff convention - e.g. for cross-harness use,
+# or a team that has agreed to commit its handoffs (see "Local by default" below):
 export THROUGHLINE_DATA_DIR=.agent/handoff
 ```
 
@@ -158,34 +159,70 @@ than `.throughlineignore`, which keeps orienting toward already-existing content
 Unset it (or set `0`) to re-enable; existing data is untouched either way.
 
 **Cross-harness handoffs.** The data dir is the one knob that makes throughline
-portable. Point it at `.agent/handoff` and the durable `HANDOFF.md` it produces lives
-in a harness-neutral location any agent or teammate can read, not buried under a
-Claude-Code-specific path. One env var turns per-session memory into a shared,
-tool-agnostic project record.
+portable. Point it at `.agent/handoff` (or any other path) and the durable
+`HANDOFF.md` it produces lives in a harness-neutral location any agent can read,
+not buried under a Claude-Code-specific path - useful if other tooling also drives
+this project. Portability of the *location* is independent of whether you commit
+it - see "Local by default" below.
 
-**Commit policy.** The durable `HANDOFF.md` and `logs/` are meant to be committed so
-teammates and fresh clones get oriented. The raw `buffer/` is scratch (and can contain
-unredacted command text), and `.capture-errors` is a scratch breadcrumb file (capture
-write/permission failures only, no command text) - neither should ever be committed.
-The `throughline-handoff` skill's Phase 4 offers (never auto-runs) to stage exactly
-`HANDOFF.md` + the new session log and commit/push them - it checks `git check-ignore`
-first and skips the offer if they aren't actually committable in your layout. Gitignore
-both scratch paths for whichever data dir you use:
+### Local by default
+
+throughline's data - `HANDOFF.md`, `logs/`, `buffer/`, everything under the data
+dir - is **per-operator working memory, not a shared team artifact**, and stays
+local (gitignored) by default. Gitignore the whole data dir for whichever location
+you use:
 
 ```gitignore
 # default layout
-.claude/throughline/buffer/
-.claude/throughline/.capture-errors
+.claude/throughline/
 # or, if you set THROUGHLINE_DATA_DIR=.agent/handoff
-.agent/handoff/buffer/
-.agent/handoff/.capture-errors
+.agent/handoff/
 ```
 
-> **Heads-up for allowlist-style `.gitignore`.** If your repo ignores all of
-> `.claude/` (a `/*` then `!/keep` pattern), the committable `HANDOFF.md` and `logs/`
-> get swallowed too. Either re-include them (`!/.claude/throughline/HANDOFF.md`,
-> `!/.claude/throughline/logs/`) or set `THROUGHLINE_DATA_DIR=.agent/handoff` so the
-> committed artifacts sit outside the ignored tree.
+**Team projects.** On a project with multiple developers - especially ones not
+using throughline, or already running their own memory/notes tooling - committing
+one operator's session artifacts into the shared tree causes real friction: churn
+and merge conflicts on the single mutable `HANDOFF.md`, review noise on every PR,
+and possible collision with whatever a teammate already relies on. Local-only
+avoids all of it: nothing throughline writes reaches a teammate's checkout unless
+you deliberately choose to share it.
+
+**Opting in to tracking.** For a solo repo, or a team that has all adopted
+throughline, committing `HANDOFF.md` + `logs/` gives fresh clones and teammates a
+shared, readable project record - genuinely useful when everyone is actually
+reading it. To opt in, un-ignore just those two paths (keep `buffer/` and
+`.capture-errors` ignored always - `buffer/` is scratch and can contain unredacted
+command text, and `.capture-errors` is a scratch breadcrumb file):
+
+```gitignore
+.claude/throughline/*
+!.claude/throughline/HANDOFF.md
+!.claude/throughline/logs/
+```
+
+The `throughline-handoff` skill's Phase 4 offers (never auto-runs, and relevant
+only once you've opted in as above) to stage exactly `HANDOFF.md` + the new
+session log and commit/push them - it checks `git check-ignore` first and skips
+the offer entirely when the files aren't actually committable in your layout.
+
+> **Heads-up for allowlist-style `.gitignore`.** If your repo ignores everything
+> by default (a root `/*` then `!/keep` pattern) and you *do* want to opt in to
+> tracking, re-including just the two leaf paths does **not** work - git prunes
+> an excluded directory before it ever evaluates negation patterns for paths
+> inside it, so `.claude` (matched by the root `/*`) is never even descended
+> into. The simplest fix is `THROUGHLINE_DATA_DIR=.agent/handoff` so the
+> opted-in artifacts sit outside the ignored tree entirely. To keep the default
+> location instead, negate **every ancestor directory** on the way down, then
+> re-exclude the scratch paths (which the ancestor negations would otherwise
+> expose too):
+> ```gitignore
+> !/.claude/
+> !/.claude/throughline/
+> !/.claude/throughline/HANDOFF.md
+> !/.claude/throughline/logs/
+> .claude/throughline/buffer/
+> .claude/throughline/.capture-errors
+> ```
 
 ## Housekeeping
 

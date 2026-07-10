@@ -165,7 +165,12 @@ having to carry it. Omit the line entirely for a session that starts something n
    ```
 
 7. **Offer to commit + push the handoff artifacts** (offer only, never auto-run -
-   the write already happened; this is the review-gated action):
+   the write already happened; this is the review-gated action). throughline's
+   data is local-only *by default* (see README "Local by default") - this offer
+   only ever produces a commit when the project has deliberately opted in by
+   un-ignoring `HANDOFF.md`/`logs/`, so on an unmodified default layout it will
+   correctly find nothing to stage and skip silently. Do not treat "nothing
+   offered" as a bug; it's the expected outcome unless the project opted in.
    - If `DATA` lives outside the current project's git tree (an absolute
      `THROUGHLINE_DATA_DIR` pointed at a shared, cross-harness location - a
      documented, supported config), skip the offer entirely: those files aren't
@@ -175,13 +180,14 @@ having to carry it. Omit the line entirely for a session that starts something n
    - Otherwise, check `DATA/HANDOFF.md` and the new session log **independently**
      with `git check-ignore`. Offer to stage whichever of the two is NOT ignored;
      if both are ignored, say so and skip the offer - nothing committable exists
-     (this repo's own `.agent/handoff/` is itself gitignored, so this is the
-     common case when dogfooding here).
+     (the default, local-only layout - including this repo's own dogfooded
+     `.claude/throughline/` - is itself gitignored, so this is the common case).
    - Stage **exactly** the not-ignored file(s) by their literal paths - `DATA/HANDOFF.md`
      and/or the specific `DATA/logs/handoff-YYYY-MM-DD-HHMM.md` just written this
      session. Never a glob like `logs/handoff-*.md` (it would sweep in older,
      previously-declined session logs too), never `git add -A`, never `buffer/`
-     or `.capture-errors` (see README "Commit policy").
+     or `.capture-errors` (see README "Local by default" - those two paths stay
+     gitignored even when a project opts in to tracking `HANDOFF.md`/`logs/`).
    - Propose a conventional message, e.g. `docs: session handoff - <brief summary>`,
      matching whatever commit-message convention the repo already follows.
    - Treat push as a separate, remote-affecting confirmation after the commit -
@@ -219,8 +225,9 @@ having to carry it. Omit the line entirely for a session that starts something n
 - **Re-scan for secrets before writing.** Capture masks obvious credential shapes,
   but it is best-effort pattern matching, not a guarantee — it has no entropy
   analysis, so a bare opaque token with no recognizable keyword or prefix passes
-  through unmasked. Before writing anything into the committed `HANDOFF.md` or
-  `logs/`, scan your draft for token-shaped strings (case-insensitive
+  through unmasked. Before writing anything into `HANDOFF.md` or `logs/` - and
+  especially before any opt-in commit of them - scan your draft for token-shaped
+  strings (case-insensitive
   `token|key|secret|password|credential|auth`, `Bearer`, `ghp_`/`github_pat_`/
   `gh[oprsu]_`/`sk-`/`AKIA`, URL userinfo) **and** for any other long, opaque,
   random-looking string regardless of keyword — reduce all of them to key names
