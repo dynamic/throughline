@@ -116,6 +116,30 @@ having to carry it. Omit the line entirely for a session that starts something n
 
 1. Apply the Phase 2 updates to `DATA/HANDOFF.md`. Keep each entry to 1–2 lines —
    it's a reference doc, not a journal. Update its **Last Updated** date.
+   - **Size discipline (HANDOFF.md is read in full every session — it is
+     resident context, paid for on every turn, not a one-time write). Applies
+     only where the project already has somewhere durable for the detail to
+     live — most likely a maintained `CHANGELOG.md`, which throughline itself
+     has (dogfooded) but a typical consuming project may not. Never drop
+     content whose only copy is HANDOFF.md itself; that's a real loss, not a
+     relocation, no matter how repetitive it looks:**
+     - **"Architecture & Services" is current-state only, never a per-version
+       changelog**, *if and only if* `CHANGELOG.md` (or an equivalent durable
+       doc) already carries that version-by-version narrative — check before
+       trimming, don't assume. On an architecture change, *update or replace*
+       the relevant description in place — do not append a new "vX.Y.Z did..."
+       paragraph. If the project has no such doc, leave the narrative in place;
+       don't invent a new untracked history file to unblock the trim.
+     - **Cap "Resolved Issues" to the most recent ~8–10 rows** — but only drop
+       a row past the cap once its detail is confirmed to already live in
+       `CHANGELOG.md`/a linked session log, or after writing it there yourself
+       as part of this same edit (create `CHANGELOG.md` if the project has
+       none and the fact is worth keeping). If the section lacks a pointer line
+       to where older issues live, add one.
+     - If a section has clearly regrown past these budgets since the last pass
+       (rare between individual handoffs — this is `throughline-consolidate`'s
+       periodic job — but fix it here too if you notice it), trim it the same
+       way, under the same durable-copy-exists condition above.
 2. Add a link to the new session log under "Recent Session Logs" — keep only the
    **last 5**.
 3. **Memory binding (native system):** ask "did this session surface a durable fact

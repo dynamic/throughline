@@ -42,6 +42,24 @@ work: if a candidate's right home is an auto-memory file, write the one new entr
 3. Confirm scope with the user before reading: which repos/paths, how many logs,
    since when. Default is the **current project only** - mining other repos'
    handoff logs is a deliberate widening, not an assumption.
+4. **Check `DATA/HANDOFF.md`'s own size discipline** (separate from mining the
+   logs below - this looks at HANDOFF.md itself). It is read in full every
+   session (see `throughline-handoff` Phase 4 for the resident-cost rationale);
+   `handoff` enforces a budget per edit (current-state-only "Architecture &
+   Services", "Resolved Issues" capped to ~8-10 rows), but per-edit discipline
+   alone can still drift over many small handoffs. If "Architecture & Services"
+   has regrown version-narrative content, or "Resolved Issues" has regrown past
+   ~8-10 rows, that is a candidate for Phase 3 below (home: HANDOFF-diet - see
+   Phase 3), same as any mined lesson.
+   - **Don't assume the project has a `CHANGELOG.md`.** throughline itself does
+     (dogfooded), but this skill runs against arbitrary consuming projects,
+     most of which won't. For each line proposed for removal, confirm where its
+     surviving copy lives or will live: an *existing* `CHANGELOG.md` entry, an
+     *existing* session log (to be cited, never edited - see Phase 4), or a
+     *new* `CHANGELOG.md` entry to be written as part of this same promotion
+     (creating the file if the project has none). A candidate with nowhere for
+     its content to survive doesn't qualify for HANDOFF-diet - cutting it would
+     be a real loss, not a relocation.
 
 ---
 
@@ -79,6 +97,7 @@ For each candidate, propose exactly **one** home:
 | (b) The owning skill, in its source repo | The lesson corrects or extends a specific skill. **File an issue in that repo - never edit another repo's skill directly** |
 | (c) Project `CLAUDE.md` / durable `HANDOFF.md` section | The lesson is project-specific and true every session |
 | (d) Auto-memory file | A confirmed preference or fact that fits the native memory types (`feedback`, `user`, `project`, `reference`) |
+| (e) HANDOFF-diet (trim, don't add) | The candidate is a Phase 1.4 size-discipline finding - HANDOFF.md's own "Architecture & Services" or "Resolved Issues" has regrown past budget. For each line proposed for removal, state exactly where its surviving copy lives or will be written (existing `CHANGELOG.md` entry, existing session-log citation, or a new `CHANGELOG.md` entry to add in this same promotion), so the reviewer can confirm nothing is actually lost |
 
 Present the **full list** - lesson, evidence, confidence, proposed home - and stop.
 **Nothing is applied without explicit approval, per item.** The user may approve,
@@ -92,7 +111,12 @@ always-loaded files, where one wrong line costs every future session.
 
 1. Apply the **approved** promotions only, each to its agreed home. For home (b),
    opening the issue *is* the promotion - the edit happens in that repo on its own
-   schedule.
+   schedule. For home (e): write any *new* backing entries into `CHANGELOG.md`
+   (creating the file if the project has none) exactly as proposed, re-verify
+   every cited *existing* `CHANGELOG.md`/session-log copy still checks out, then
+   trim the now-redundant content from HANDOFF.md. **Never write into a session
+   log** - they are append-only historical evidence (see Reminders); a candidate
+   with nothing durable to point to never reaches this step (gated in Phase 1.4).
 2. Record the pass in `DATA/HANDOFF.md` under "Consolidation passes" (create the
    section if absent): date + what was promoted and where, one line per promotion.
    Update the **Last Updated** date.

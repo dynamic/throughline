@@ -3,6 +3,45 @@
 All notable changes to throughline are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); this project uses semantic versioning.
 
+## [0.9.0]
+
+Token-efficiency batch (issue #26), driven by a usage audit in a consuming project:
+`HANDOFF.md` is read in full by every session's onboard pass, so it is resident
+context paid for on every turn, not a one-time write - it had grown to ~5.3K
+resident tokens (measured at ~12% of that project's total session token usage),
+~105 of its ~199 content lines duplicating history already captured verbatim in
+`CHANGELOG.md` and `logs/`. Nothing previously capped its growth: `handoff` only
+appends (Pending → Resolved), and `consolidate` promotes lessons *out* but left
+HANDOFF.md's own accumulated history untouched. Skill-content only - no hook
+behavior change, verified by the unchanged assertion suite plus shellcheck.
+
+### Changed
+- **`skills/throughline-handoff/SKILL.md` Phase 4** - adds explicit size
+  discipline: "Architecture & Services" is current-state only, never a
+  per-version changelog (that narrative belongs in `CHANGELOG.md`); "Resolved
+  Issues" is capped to the most recent ~8-10 rows, with older rows relocated
+  (not deleted) to `CHANGELOG.md`/`logs/` as the cap is enforced.
+- **`skills/throughline-consolidate/SKILL.md`** - Phase 1 gains a step that
+  checks `HANDOFF.md`'s own size discipline (separate from mining the session
+  logs), and Phase 3's promotion-home table gains a new home, "(e) HANDOFF-diet
+  (trim, don't add)", for when per-edit discipline alone has drifted over many
+  small handoffs. Closes the gap where consolidate's periodic pass never
+  looked at HANDOFF.md's own bloat.
+
+### Fixed (found during review, before merge)
+- **Consolidate Phase 4 instructed writing relocated content into a session
+  log**, directly contradicting the same file's own "leave session logs
+  untouched" rule three lines later and its Reminders section ("session logs
+  are evidence, not scratch - prune nothing from them"). Both skills also
+  assumed every consuming project has a maintained `CHANGELOG.md` mirroring
+  HANDOFF.md's history - true only in throughline's own dogfooded repo. Fixed
+  by gating HANDOFF-diet (home e) on an explicit durable-copy check for each
+  line proposed for removal - an existing `CHANGELOG.md` entry, an existing
+  session-log citation (never an edit), or a new `CHANGELOG.md` entry written
+  as part of the same promotion (creating the file if the project has none) -
+  and refusing to trim anything whose only copy would otherwise be HANDOFF.md
+  itself.
+
 ## [0.8.0]
 
 Flips the default handoff policy: throughline's data is now **local-only by
