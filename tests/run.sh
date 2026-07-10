@@ -532,6 +532,20 @@ printf '.claude/throughline/\n' > "$FRESH_G/.gitignore"
 O10=$(printf '%s' '{"source":"startup","session_id":"T"}' | CLAUDE_PROJECT_DIR="$FRESH_G" sh "$H/session-onboard.sh")
 hasnt "no gitignore nudge when the whole data dir is already covered" "$O10" 'not gitignored yet'
 
+# 12f2. regression guard: gitignoring ONLY buffer/ (the old, narrower pre-
+#       v0.8.0 target) must NOT suppress the nudge - HANDOFF.md/logs/ are
+#       local-only by default too now, so the nudge has to check the whole
+#       data dir, not just the scratch subdir. This is the specific
+#       intermediate case 12f/12g don't cover (neither-ignored vs.
+#       whole-dir-ignored) - without it, a future edit reverting the nudge's
+#       check-ignore target back to bufdir/ would pass 12f/12g unchanged.
+FRESH_G2="$WORK/fresh-g2"
+mkdir -p "$FRESH_G2"
+printf '.claude/throughline/buffer/\n' > "$FRESH_G2/.gitignore"
+( cd "$FRESH_G2" && git init -q && git add .gitignore && git commit -q -m init ) 2>/dev/null
+O10B=$(printf '%s' '{"source":"startup","session_id":"T"}' | CLAUDE_PROJECT_DIR="$FRESH_G2" sh "$H/session-onboard.sh")
+has "gitignore nudge still fires when only buffer/ is covered, not the whole data dir" "$O10B" 'not gitignored yet'
+
 # 12g. flush still stamps an ALREADY-EXISTING buffer even if .throughlineignore
 #      appears mid-session: its job is to finalize a session that legitimately
 #      captured, not to decide whether tracking should continue. Without this,

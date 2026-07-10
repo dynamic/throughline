@@ -219,8 +219,10 @@ tl_append_line() {
 tl_jq_redact_defs() {
   cat <<'TL_JQ_DEFS'
   # Mask common secret shapes so raw credentials never sit in the buffer. The
-  # buffer is gitignored, but a later handoff distills it into committed logs;
-  # this is defense-in-depth, not the only barrier (the skill scrubs too).
+  # buffer is gitignored, and even HANDOFF.md/logs/ are local-only by default
+  # now (see README "Local by default") - but a project can opt in to tracking
+  # them, and the handoff skill itself re-scans before writing either way, so
+  # this masking is defense-in-depth, not the only barrier.
   # Best-effort: this is pattern/keyword matching, not entropy analysis, so a
   # bare opaque token with no recognizable shape or keyword will not be caught.
   # Known gap, not fixable here without a high false-positive cost: a
