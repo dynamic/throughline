@@ -47,7 +47,7 @@ Three layers, each doing what it's actually capable of:
    high-signal read-side tools (Grep/WebFetch/WebSearch/Task/agents) and MCP tools
    are captured; the noisiest (Read/Glob) are deliberately skipped so the buffer
    stays skimmable. Mechanical and cheap. You never see it; it just protects you.
-2. **Judged handoff** (`throughline-handoff` skill) - at wrap-up, the agent distills
+2. **Judged handoff** (`handoff` skill) - at wrap-up, the agent distills
    the buffer + context into a durable `HANDOFF.md` and a timestamped session log,
    and promotes any durable facts into native memory. This is the judgment layer, so
    it's a skill, not a hook. It runs proactively at detected wrap-up and reports the
@@ -58,10 +58,10 @@ Three layers, each doing what it's actually capable of:
 
 Orientation is automated too: a `SessionStart` hook injects a HANDOFF.md pointer +
 live git state, complementing Claude Code's native `MEMORY.md` load. The
-`throughline-onboard` skill does the full pass (open PRs/issues, deep read) on demand.
+`onboard` skill does the full pass (open PRs/issues, deep read) on demand.
 
 And over months, the same lesson can appear in session log after session log without
-ever graduating. The `throughline-consolidate` skill is the periodic pass (monthly,
+ever graduating. The `consolidate` skill is the periodic pass (monthly,
 or on demand) that mines the handoff logs for lessons recurring 2+ times and proposes
 promoting each one - to a global CLAUDE.md rule, an issue on the owning skill's
 source repo, a durable project section, or native memory - with every promotion
@@ -200,7 +200,7 @@ command text, and `.capture-errors` is a scratch breadcrumb file):
 !.claude/throughline/logs/
 ```
 
-The `throughline-handoff` skill's Phase 4 offers (never auto-runs, and relevant
+The `handoff` skill's Phase 4 offers (never auto-runs, and relevant
 only once you've opted in as above) to stage exactly `HANDOFF.md` + the new
 session log and commit/push them - it checks `git check-ignore` first and skips
 the offer entirely when the files aren't actually committable in your layout.
@@ -232,7 +232,7 @@ background cleanup process, deliberately, to keep the plugin's footprint at
 and what isn't:
 
 **Safe to delete:**
-- `buffer/archive/*.md` older than your last `throughline-consolidate` pass -
+- `buffer/archive/*.md` older than your last `consolidate` pass -
   once a consolidation has mined a log for recurring lessons, an archived raw
   buffer behind it has nothing left to give. As a simple rule of thumb, an
   archived buffer older than ~90 days with no open question against it is safe
@@ -242,7 +242,7 @@ and what isn't:
   once, not a running log.
 
 **Not safe to delete:**
-- `logs/`: these are the evidence trail. `throughline-consolidate` explicitly
+- `logs/`: these are the evidence trail. `consolidate` explicitly
   never prunes them, and HANDOFF.md's own "Recent Session Logs" list only ever
   points at the last 5, so older logs are already off the beaten path without
   needing to be deleted.
@@ -260,7 +260,7 @@ The handoff skill is written to run proactively when the agent detects the sessi
 winding down. To reinforce it, add one line to your project or global `CLAUDE.md`:
 
 > When a session reaches a natural stopping point or the user signals they're done,
-> run the `throughline-handoff` skill and report the diff - don't wait to be asked.
+> run the `handoff` skill and report the diff - don't wait to be asked.
 
 ## Layout
 
@@ -278,9 +278,9 @@ throughline/
 │  ├─ session-precompact.sh  # PreCompact: stamp the compaction-boundary marker
 │  └─ session-flush.sh       # SessionEnd: safety-net stamp
 ├─ skills/
-│  ├─ throughline-onboard/SKILL.md     # full orientation
-│  ├─ throughline-handoff/SKILL.md     # judged distillation + memory binding
-│  └─ throughline-consolidate/SKILL.md # periodic promotion of recurring lessons
+│  ├─ onboard/SKILL.md     # full orientation
+│  ├─ handoff/SKILL.md     # judged distillation + memory binding
+│  └─ consolidate/SKILL.md # periodic promotion of recurring lessons
 ├─ tests/run.sh              # fixture-driven hook tests (shellcheck + CI)
 ├─ docs/                     # promo site + review report
 └─ CHANGELOG.md
