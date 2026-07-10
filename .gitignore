@@ -10,7 +10,3 @@
 # local-only policy. If this repo ever opts in to tracking HANDOFF.md/logs/,
 # narrow this back per the README's opt-in pattern.)
 .claude/throughline/
-# TODO(local-only-handoff-migration): remove once this session's active data
-# is migrated .agent/handoff/ -> .claude/throughline/ (workspace Layer A, last
-# step) - kept here in the meantime so the currently-live buffer stays covered.
-.agent/handoff/
