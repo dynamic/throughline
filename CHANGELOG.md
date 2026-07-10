@@ -3,6 +3,38 @@
 All notable changes to throughline are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); this project uses semantic versioning.
 
+## [0.8.0]
+
+Flips the default handoff policy: throughline's data is now **local-only by
+default** (per-operator working memory, not a shared team artifact), with
+tracking as a deliberate opt-in - reversal of prior guidance ("meant to be
+committed so teammates get oriented"). Driver: on a multi-developer project
+where other devs don't use throughline, or run their own memory tooling,
+committing HANDOFF.md/logs/ into the shared tree causes churn, merge
+conflicts on the single mutable HANDOFF.md, and review noise. throughline
+already made this call for its own repo; this makes it the recommended
+default for consuming projects too. No hook logic added or removed - the
+existing `git check-ignore` gates (onboard nudge, handoff Phase 4 commit
+offer) are unchanged in shape, just re-targeted/re-worded for the new
+default. Verified by the updated 154-assertion suite plus shellcheck.
+
+### Changed
+- **README "Commit policy" → "Local by default"** - rewritten to state the
+  local-only default, added a "Team projects" section explaining the
+  multi-developer rationale, and an explicit "Opting in to tracking" section
+  for solo repos or teams that have all adopted throughline.
+- **`hooks/session-onboard.sh` gitignore nudge** - now checks the *whole* data
+  dir root (`$data/`) instead of only `buffer/`, since `HANDOFF.md`/`logs/`
+  are local-only by default too now. Message reworded accordingly.
+- **`skills/throughline-handoff/SKILL.md` Phase 4 step 7** (commit/push
+  offer) - reframed as relevant only once a project has opted in to tracking;
+  on the (now default) local-only layout it correctly finds nothing
+  committable and skips silently - documented as expected, not a bug.
+- **`docs/index.html`** and the README comparison table - "team-shareable"
+  positioning replaced with "local by default, commit when you choose."
+- **`plugin.json` description** - "committable artifacts" → "local-first
+  artifacts (commit them if you choose)".
+
 ## [0.7.0]
 
 Closes the loop at the end of `throughline-handoff` Phase 4 (issue #21, found

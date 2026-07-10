@@ -1,15 +1,16 @@
 .DS_Store
 *.log
 
-# This repo is throughline's own public source, not a project consuming the
-# plugin - the README's "Commit policy" (HANDOFF.md/logs/ should be committed,
-# only buffer/ and .capture-errors are scratch) is guidance for consuming
-# projects, not a rule for this repo. Here, all session data - however
-# THROUGHLINE_DATA_DIR is configured - stays purely local; the maintainer's
-# own dev notes aren't tracked in the public repo. Deliberate choice, not an
-# oversight (a prior version of this file scoped only buffer/ and
-# .capture-errors here too, which silently blocked committing this repo's own
-# already-written HANDOFF.md - if that policy ever changes, narrow these back
-# to match the README's documented pattern).
+# throughline's data is local-only by default (see README "Local by default") -
+# per-operator working memory, not a shared team artifact. This repo dogfoods
+# that default rather than opting in to tracking: the maintainer's own dev
+# notes aren't committed to the public repo. (A prior version of this file
+# scoped only buffer/ and .capture-errors here, which was actually a narrower,
+# opt-IN-leaning stance than intended - broadened to match the now-default
+# local-only policy. If this repo ever opts in to tracking HANDOFF.md/logs/,
+# narrow this back per the README's opt-in pattern.)
 .claude/throughline/
+# TODO(local-only-handoff-migration): remove once this session's active data
+# is migrated .agent/handoff/ -> .claude/throughline/ (workspace Layer A, last
+# step) - kept here in the meantime so the currently-live buffer stays covered.
 .agent/handoff/

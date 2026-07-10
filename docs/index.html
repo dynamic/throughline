@@ -189,7 +189,7 @@
             <tr><td class="feature">Capture vs. distill</td><td class="them">One lossy step</td><td class="us"><strong>Separated</strong>: continuous capture, judged handoff</td></tr>
             <tr><td class="feature">Project state</td><td class="them">None</td><td class="us"><strong>Live git, branch, PR, issue</strong> at load</td></tr>
             <tr><td class="feature">Artifacts</td><td class="them">Opaque blobs</td><td class="us"><strong>Human-readable</strong>, editable, committable</td></tr>
-            <tr><td class="feature">Storage</td><td class="them">Per-machine, pollutes git</td><td class="us"><strong>Configurable</strong>, clean gitignore, team-shareable</td></tr>
+            <tr><td class="feature">Storage</td><td class="them">Per-machine, pollutes git</td><td class="us"><strong>Local by default</strong>, clean gitignore, commit when you choose</td></tr>
             <tr><td class="feature">Native memory</td><td class="them">Ignored</td><td class="us"><strong>Binds</strong> to Claude Code's memory</td></tr>
           </tbody>
         </table>
@@ -274,9 +274,9 @@
 export THROUGHLINE_DATA_DIR=.agent/handoff</pre>
         </div>
         <div class="card">
-          <h3>3. Keep the buffer out of git</h3>
+          <h3>3. Keep it out of git (default)</h3>
           <pre><span class="c"># in your project's .gitignore</span>
-.claude/throughline/buffer/</pre>
+.claude/throughline/</pre>
         </div>
         <div class="card">
           <h3>4. Reinforce auto-handoff (optional)</h3>
@@ -289,8 +289,9 @@ the diff, don't wait to be asked.</pre>
       <p class="sub" style="margin-top:28px">
         throughline activates automatically the first time any hook fires in a project - no manual opt-in
         step. To keep it out of a specific project, drop an empty <code>.throughlineignore</code> file at
-        the project root. The durable HANDOFF.md and logs/ are meant to be committed so teammates and fresh
-        clones get oriented; the raw buffer/ is scratch, so gitignore it.
+        the project root. All of it - HANDOFF.md, logs/, buffer/ - is per-operator working memory and stays
+        local by default; committing HANDOFF.md/logs/ so teammates and fresh clones get oriented is a
+        deliberate opt-in (see the README's "Local by default"), not the default.
         Requires <code>git</code> and <code>jq</code> on your PATH; without jq, capture cannot run and the
         SessionStart block says so instead of failing silently.
       </p>

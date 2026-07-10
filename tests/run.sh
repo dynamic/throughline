@@ -513,21 +513,24 @@ else
   ok "failed-bootstrap path-relativization test skipped (running as root)"
 fi
 
-# 12f. first activation nudges toward gitignoring the buffer - but only when
-#      it is not already covered, using git's own ignore resolution rather
-#      than a hand-rolled pattern match.
+# 12f. first activation nudges toward gitignoring the WHOLE data dir (local-
+#      only by default) - but only when it is not already covered, using
+#      git's own ignore resolution rather than a hand-rolled pattern match.
+#      Gitignoring only buffer/ (the old, narrower expectation) is no longer
+#      enough to suppress the nudge, since HANDOFF.md/logs/ are local-only by
+#      default too now.
 FRESH_F="$WORK/fresh-f"
 mkdir -p "$FRESH_F"
 ( cd "$FRESH_F" && git init -q && git commit -q --allow-empty -m init ) 2>/dev/null
 O9=$(printf '%s' '{"source":"startup","session_id":"T"}' | CLAUDE_PROJECT_DIR="$FRESH_F" sh "$H/session-onboard.sh")
-has "first activation nudges to gitignore the buffer when not covered" "$O9" 'not gitignored yet'
+has "first activation nudges to gitignore the data dir when not covered" "$O9" 'not gitignored yet'
 
 FRESH_G="$WORK/fresh-g"
 mkdir -p "$FRESH_G"
-printf '.claude/throughline/buffer/\n' > "$FRESH_G/.gitignore"
+printf '.claude/throughline/\n' > "$FRESH_G/.gitignore"
 ( cd "$FRESH_G" && git init -q && git add .gitignore && git commit -q -m init ) 2>/dev/null
 O10=$(printf '%s' '{"source":"startup","session_id":"T"}' | CLAUDE_PROJECT_DIR="$FRESH_G" sh "$H/session-onboard.sh")
-hasnt "no gitignore nudge when the buffer is already covered" "$O10" 'not gitignored yet'
+hasnt "no gitignore nudge when the whole data dir is already covered" "$O10" 'not gitignored yet'
 
 # 12g. flush still stamps an ALREADY-EXISTING buffer even if .throughlineignore
 #      appears mid-session: its job is to finalize a session that legitimately
@@ -568,7 +571,7 @@ O11=$(printf '%s' '{"source":"startup","session_id":"T"}' | CLAUDE_PROJECT_DIR="
 has "onboard still points to an existing HANDOFF.md despite .throughlineignore" "$O11" 'Durable handoff exists'
 
 # 12j. the gitignore nudge fires even AFTER a HANDOFF.md exists, as long as
-#      the buffer genuinely still is not covered - it used to be nested only
+#      the data dir genuinely still is not covered - it used to be nested only
 #      inside the "no HANDOFF.md yet" branch, so it permanently stopped firing
 #      the moment the first handoff ran regardless of gitignore state.
 FRESH_K="$WORK/fresh-k"
@@ -580,7 +583,7 @@ has "gitignore nudge still fires after a handoff has already run" "$O12" 'not gi
 
 # 12k. the gitignore nudge does not repeat on a `compact` re-fire within the
 #      same already-running session - it still fires on genuinely new session
-#      starts until the buffer is actually covered.
+#      starts until the data dir is actually covered.
 FRESH_L="$WORK/fresh-l"
 mkdir -p "$FRESH_L"
 ( cd "$FRESH_L" && git init -q && git commit -q --allow-empty -m init ) 2>/dev/null

@@ -102,17 +102,23 @@ else
   echo "No HANDOFF.md yet for this project. One will be written at the next handoff."
 fi
 
-# Nudge toward gitignoring the buffer before anything gets committed.
+# Nudge toward gitignoring the WHOLE data dir. throughline is local-only by
+# default (per-operator working memory, not a shared team artifact) - see
+# README "Local by default" - so the expectation is that nothing under $data
+# gets committed unless a project deliberately opts in. This used to check
+# only bufdir/ (the one subdir that must never be committed regardless of
+# policy, since it can hold unredacted raw text); now it checks $data itself,
+# since HANDOFF.md/logs/ are local-only too unless opted in.
 # Deliberately NOT gated on "no HANDOFF.md yet": that used to be its only
 # guard, which meant the nudge permanently stopped firing the moment the
-# first handoff ran, even if the buffer was still never actually gitignored.
+# first handoff ran, even if the dir was still never actually gitignored.
 # Auto-activation means this can now be the very first thing to happen in a
 # project, with no manual opt-in step that would have naturally prompted the
 # user to set this up first. Skipped on `compact` re-fires so it does not
 # repeat within one already-running session as it compacts - it still fires
-# on every new session start until the buffer is actually covered. Uses git's
+# on every new session start until the dir is actually covered. Uses git's
 # own ignore resolution (a trailing slash lets it match a directory pattern
-# even before the buffer dir itself exists) rather than a hand-rolled pattern
+# even before the dir itself exists) rather than a hand-rolled pattern
 # match, so this only fires when it is actually needed. Skipped entirely when
 # $data lives outside the project's own git tree (an absolute
 # THROUGHLINE_DATA_DIR pointed at a shared, cross-harness location - a
@@ -125,9 +131,9 @@ fi
 case "$data" in
   "$root"/*)
     if [ "$src" != "compact" ] && [ "$in_worktree" = "1" ] \
-      && ! git -C "$root" check-ignore -q "$bufdir/" 2>/dev/null; then
+      && ! git -C "$root" check-ignore -q "$data/" 2>/dev/null; then
       echo
-      echo "⚠️ \`${bufdir#"$root"/}/\` is not gitignored yet - it can contain raw command/path text (best-effort redacted only). Add it to \`.gitignore\` before committing."
+      echo "⚠️ \`${data#"$root"/}/\` is not gitignored yet - throughline is local-only by default and this can contain raw command/path text (best-effort redacted only). Gitignore it, or see README \"Local by default\" to opt in to tracking \`HANDOFF.md\`/\`logs/\`."
     fi
     ;;
 esac
