@@ -13,19 +13,22 @@ where other devs don't use throughline, or run their own memory tooling,
 committing HANDOFF.md/logs/ into the shared tree causes churn, merge
 conflicts on the single mutable HANDOFF.md, and review noise. throughline
 already made this call for its own repo; this makes it the recommended
-default for consuming projects too. No hook logic added or removed - the
-existing `git check-ignore` gates (onboard nudge, handoff Phase 4 commit
-offer) are unchanged in shape, just re-targeted/re-worded for the new
-default. Verified by the updated 154-assertion suite plus shellcheck.
+default for consuming projects too. Review (xhigh, run twice) caught three
+real bugs before merge - see "Fixed" - including a wrong first-draft change
+to the onboard nudge's `check-ignore` target that would have silently missed
+a genuine buffer exposure; that target is unchanged from v0.7.0 in the
+shipped version. Verified by the test suite (see `tests/run.sh` - it prints
+its own total; 156 assertions as of this release) plus shellcheck.
 
 ### Changed
 - **README "Commit policy" → "Local by default"** - rewritten to state the
   local-only default, added a "Team projects" section explaining the
   multi-developer rationale, and an explicit "Opting in to tracking" section
   for solo repos or teams that have all adopted throughline.
-- **`hooks/session-onboard.sh` gitignore nudge** - now checks the *whole* data
-  dir root (`$data/`) instead of only `buffer/`, since `HANDOFF.md`/`logs/`
-  are local-only by default too now. Message reworded accordingly.
+- **`hooks/session-onboard.sh` gitignore nudge** - message reworded for the
+  new local-only-by-default framing. The `check-ignore` target stays
+  `buffer/` specifically (see "Fixed" below for why a whole-data-dir target
+  was tried and reverted).
 - **`skills/throughline-handoff/SKILL.md` Phase 4 step 7** (commit/push
   offer) - reframed as relevant only once a project has opted in to tracking;
   on the (now default) local-only layout it correctly finds nothing
@@ -34,6 +37,28 @@ default. Verified by the updated 154-assertion suite plus shellcheck.
   positioning replaced with "local by default, commit when you choose."
 - **`plugin.json` description** - "committable artifacts" → "local-first
   artifacts (commit them if you choose)".
+
+### Fixed
+- A first-draft change re-targeted the onboard nudge's `check-ignore` from
+  `buffer/` to the whole data dir, reasoning the whole dir should normally be
+  covered under the new default. Reverted: `check-ignore` on a directory path
+  can report "ignored" via a directory-glob pattern (`.claude/throughline/*`
+  matches the bare directory too) even when a specific file inside it -
+  including the buffer, which must *always* stay untracked regardless of
+  opt-in status - is genuinely exposed per `git status`. Checking a coarser
+  ancestor as a proxy for the leaf path that actually matters was unsound;
+  reverted to checking `buffer/` directly, which correctly catches this case
+  (added as a regression test).
+- The README's allowlist-style-`.gitignore` opt-in guidance re-included only
+  the two leaf paths (`!/.claude/throughline/HANDOFF.md`, `!/.claude/throughline/logs/`),
+  which does not work - git prunes an excluded directory before evaluating
+  negation patterns for paths inside it, so re-including a leaf file whose
+  ancestor directory is still excluded is a no-op. Rewritten with the correct
+  ancestor-negation chain (verified against a real repo) and
+  `THROUGHLINE_DATA_DIR=.agent/handoff` given as the simpler alternative.
+- `hooks/_lib.sh`'s redaction comment still claimed committed logs as a
+  defense-in-depth barrier, contradicting the new local-by-default policy
+  (that file was outside the first commit's changed-file list).
 
 ## [0.7.0]
 

@@ -513,38 +513,59 @@ else
   ok "failed-bootstrap path-relativization test skipped (running as root)"
 fi
 
-# 12f. first activation nudges toward gitignoring the WHOLE data dir (local-
-#      only by default) - but only when it is not already covered, using
-#      git's own ignore resolution rather than a hand-rolled pattern match.
-#      Gitignoring only buffer/ (the old, narrower expectation) is no longer
-#      enough to suppress the nudge, since HANDOFF.md/logs/ are local-only by
-#      default too now.
+# 12f. first activation nudges toward gitignoring bufdir/ specifically - the
+#      one path that must ALWAYS stay untracked - but only when it is not
+#      already covered, using git's own ignore resolution rather than a
+#      hand-rolled pattern match. Checks bufdir/ itself, not a coarser
+#      ancestor like the whole data dir: an earlier draft checked the whole
+#      dir on the theory that it should normally all be covered under the
+#      new local-only-by-default policy, but `check-ignore` on a directory
+#      path can report "ignored" via a directory-glob pattern (e.g.
+#      `.claude/throughline/*`) even when a specific file inside it is
+#      genuinely untracked per `git status` - checking a coarser ancestor as
+#      a proxy for the leaf resource that actually matters is unsound. See
+#      12g3 below for the exact regression this would otherwise miss.
 FRESH_F="$WORK/fresh-f"
 mkdir -p "$FRESH_F"
 ( cd "$FRESH_F" && git init -q && git commit -q --allow-empty -m init ) 2>/dev/null
 O9=$(printf '%s' '{"source":"startup","session_id":"T"}' | CLAUDE_PROJECT_DIR="$FRESH_F" sh "$H/session-onboard.sh")
-has "first activation nudges to gitignore the data dir when not covered" "$O9" 'not gitignored yet'
+has "first activation nudges to gitignore the buffer when not covered" "$O9" 'not gitignored yet'
 
 FRESH_G="$WORK/fresh-g"
 mkdir -p "$FRESH_G"
-printf '.claude/throughline/\n' > "$FRESH_G/.gitignore"
+printf '.claude/throughline/buffer/\n' > "$FRESH_G/.gitignore"
 ( cd "$FRESH_G" && git init -q && git add .gitignore && git commit -q -m init ) 2>/dev/null
 O10=$(printf '%s' '{"source":"startup","session_id":"T"}' | CLAUDE_PROJECT_DIR="$FRESH_G" sh "$H/session-onboard.sh")
-hasnt "no gitignore nudge when the whole data dir is already covered" "$O10" 'not gitignored yet'
+hasnt "no gitignore nudge when the buffer is already covered" "$O10" 'not gitignored yet'
 
-# 12f2. regression guard: gitignoring ONLY buffer/ (the old, narrower pre-
-#       v0.8.0 target) must NOT suppress the nudge - HANDOFF.md/logs/ are
-#       local-only by default too now, so the nudge has to check the whole
-#       data dir, not just the scratch subdir. This is the specific
-#       intermediate case 12f/12g don't cover (neither-ignored vs.
-#       whole-dir-ignored) - without it, a future edit reverting the nudge's
-#       check-ignore target back to bufdir/ would pass 12f/12g unchanged.
+# 12g2. gitignoring the WHOLE data dir (the README's default recommendation,
+#       no wildcard) also satisfies the check, since an un-wildcarded
+#       directory pattern recursively covers everything nested inside it,
+#       including the buffer - a different authoring style reaching the
+#       same, correctly-detected outcome as 12g.
 FRESH_G2="$WORK/fresh-g2"
 mkdir -p "$FRESH_G2"
-printf '.claude/throughline/buffer/\n' > "$FRESH_G2/.gitignore"
+printf '.claude/throughline/\n' > "$FRESH_G2/.gitignore"
 ( cd "$FRESH_G2" && git init -q && git add .gitignore && git commit -q -m init ) 2>/dev/null
 O10B=$(printf '%s' '{"source":"startup","session_id":"T"}' | CLAUDE_PROJECT_DIR="$FRESH_G2" sh "$H/session-onboard.sh")
-has "gitignore nudge still fires when only buffer/ is covered, not the whole data dir" "$O10B" 'not gitignored yet'
+hasnt "no gitignore nudge when the whole data dir (unwildcarded) covers the buffer too" "$O10B" 'not gitignored yet'
+
+# 12g3. regression guard for the exact xhigh-review finding this fix
+#       addresses: `.claude/throughline/*` + `!.claude/throughline/buffer/`
+#       is a plausible typo'd variant of the opt-in recipe (negating buffer/
+#       instead of HANDOFF.md/logs/) that makes `git check-ignore` report
+#       the DIRECTORY path itself as ignored (the trailing-`*` glob matches
+#       the bare dir too) even though `git status` shows the buffer file
+#       genuinely untracked and stageable. Checking bufdir/ directly (not
+#       the parent dir) must still catch this - confirming 12f's
+#       leaf-not-ancestor reasoning actually holds for the adversarial case,
+#       not just the simple ones above.
+FRESH_G3="$WORK/fresh-g3"
+mkdir -p "$FRESH_G3"
+printf '.claude/throughline/*\n!.claude/throughline/buffer/\n' > "$FRESH_G3/.gitignore"
+( cd "$FRESH_G3" && git init -q && git add .gitignore && git commit -q -m init ) 2>/dev/null
+O10C=$(printf '%s' '{"source":"startup","session_id":"T"}' | CLAUDE_PROJECT_DIR="$FRESH_G3" sh "$H/session-onboard.sh")
+has "gitignore nudge still fires when a wildcard+negation pattern falsely un-ignores the buffer" "$O10C" 'not gitignored yet'
 
 # 12g. flush still stamps an ALREADY-EXISTING buffer even if .throughlineignore
 #      appears mid-session: its job is to finalize a session that legitimately
@@ -585,7 +606,7 @@ O11=$(printf '%s' '{"source":"startup","session_id":"T"}' | CLAUDE_PROJECT_DIR="
 has "onboard still points to an existing HANDOFF.md despite .throughlineignore" "$O11" 'Durable handoff exists'
 
 # 12j. the gitignore nudge fires even AFTER a HANDOFF.md exists, as long as
-#      the data dir genuinely still is not covered - it used to be nested only
+#      the buffer genuinely still is not covered - it used to be nested only
 #      inside the "no HANDOFF.md yet" branch, so it permanently stopped firing
 #      the moment the first handoff ran regardless of gitignore state.
 FRESH_K="$WORK/fresh-k"
@@ -597,7 +618,7 @@ has "gitignore nudge still fires after a handoff has already run" "$O12" 'not gi
 
 # 12k. the gitignore nudge does not repeat on a `compact` re-fire within the
 #      same already-running session - it still fires on genuinely new session
-#      starts until the data dir is actually covered.
+#      starts until the buffer is actually covered.
 FRESH_L="$WORK/fresh-l"
 mkdir -p "$FRESH_L"
 ( cd "$FRESH_L" && git init -q && git commit -q --allow-empty -m init ) 2>/dev/null

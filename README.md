@@ -205,11 +205,24 @@ only once you've opted in as above) to stage exactly `HANDOFF.md` + the new
 session log and commit/push them - it checks `git check-ignore` first and skips
 the offer entirely when the files aren't actually committable in your layout.
 
-> **Heads-up for allowlist-style `.gitignore`.** If your repo ignores all of
-> `.claude/` (a `/*` then `!/keep` pattern) and you *do* want to opt in to
-> tracking, re-include the two paths explicitly (`!/.claude/throughline/HANDOFF.md`,
-> `!/.claude/throughline/logs/`) or set `THROUGHLINE_DATA_DIR=.agent/handoff` so
-> the opted-in artifacts sit outside the ignored tree.
+> **Heads-up for allowlist-style `.gitignore`.** If your repo ignores everything
+> by default (a root `/*` then `!/keep` pattern) and you *do* want to opt in to
+> tracking, re-including just the two leaf paths does **not** work - git prunes
+> an excluded directory before it ever evaluates negation patterns for paths
+> inside it, so `.claude` (matched by the root `/*`) is never even descended
+> into. The simplest fix is `THROUGHLINE_DATA_DIR=.agent/handoff` so the
+> opted-in artifacts sit outside the ignored tree entirely. To keep the default
+> location instead, negate **every ancestor directory** on the way down, then
+> re-exclude the scratch paths (which the ancestor negations would otherwise
+> expose too):
+> ```gitignore
+> !/.claude/
+> !/.claude/throughline/
+> !/.claude/throughline/HANDOFF.md
+> !/.claude/throughline/logs/
+> .claude/throughline/buffer/
+> .claude/throughline/.capture-errors
+> ```
 
 ## Housekeeping
 
