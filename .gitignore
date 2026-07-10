@@ -10,3 +10,10 @@
 # local-only policy. If this repo ever opts in to tracking HANDOFF.md/logs/,
 # narrow this back per the README's opt-in pattern.)
 .claude/throughline/
+
+# .agent/ is the retired pre-v0.8.0 THROUGHLINE_DATA_DIR convention. It should
+# no longer be created, but a session whose process env still carries a stale
+# THROUGHLINE_DATA_DIR (set before a settings.json edit removing it takes
+# effect - see HANDOFF.md "Environment & Infrastructure") can still recreate
+# it. Same local-only policy applies regardless of which convention wrote it.
+.agent/

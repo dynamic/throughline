@@ -1,5 +1,5 @@
 ---
-name: throughline-handoff
+name: handoff
 description: Distill the current session into the durable HANDOFF.md plus a timestamped session log, using the throughline capture buffer as source. Run when the user asks to "handoff", "wrap up", "save the session", "checkpoint", or when the session is clearly winding down (work complete, user signals done/thanks/that's all). Proactively offer or run this at detected wrap-up — do not wait to be asked.
 ---
 
@@ -137,7 +137,7 @@ having to carry it. Omit the line entirely for a session that starts something n
        none and the fact is worth keeping). If the section lacks a pointer line
        to where older issues live, add one.
      - If a section has clearly regrown past these budgets since the last pass
-       (rare between individual handoffs — this is `throughline-consolidate`'s
+       (rare between individual handoffs — this is `consolidate`'s
        periodic job — but fix it here too if you notice it), trim it the same
        way, under the same durable-copy-exists condition above.
 2. Add a link to the new session log under "Recent Session Logs" — keep only the

@@ -1,5 +1,5 @@
 ---
-name: throughline-consolidate
+name: consolidate
 description: Periodic consolidation pass that mines the timestamped handoff session logs for lessons recurring across sessions and proposes promoting them into durable homes, with a human gate on every promotion. Run when the user says "consolidate handoffs", "mine the handoff logs", "consolidation pass", or "promote lessons" - or roughly monthly, or when HANDOFF.md has grown stale or bloated and the same lessons keep being re-learned session after session.
 ---
 
@@ -44,7 +44,7 @@ work: if a candidate's right home is an auto-memory file, write the one new entr
    handoff logs is a deliberate widening, not an assumption.
 4. **Check `DATA/HANDOFF.md`'s own size discipline** (separate from mining the
    logs below - this looks at HANDOFF.md itself). It is read in full every
-   session (see `throughline-handoff` Phase 4 for the resident-cost rationale);
+   session (see `handoff` Phase 4 for the resident-cost rationale);
    `handoff` enforces a budget per edit (current-state-only "Architecture &
    Services", "Resolved Issues" capped to ~8-10 rows), but per-edit discipline
    alone can still drift over many small handoffs. If "Architecture & Services"

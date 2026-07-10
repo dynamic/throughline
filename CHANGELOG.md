@@ -3,6 +3,33 @@
 All notable changes to throughline are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); this project uses semantic versioning.
 
+## [0.10.0]
+
+Renames the three skills to drop the redundant `throughline-` prefix (issue
+#29): `throughline-handoff` → `handoff`, `throughline-onboard` → `onboard`,
+`throughline-consolidate` → `consolidate`. The plugin is already namespaced
+`throughline`, so invoking a skill produced an awkward double-prefix
+(`throughline:throughline-handoff`); the skill's own name shouldn't duplicate
+what the plugin namespace already carries. No backward-compatibility path -
+the sole consumer of this plugin approved a clean break while there's still
+time to settle the invocation surface before anyone else depends on it.
+Skill-content and documentation only - no hook, test, or plugin-config change
+(skill discovery is purely directory-based).
+
+### Changed
+- Directory renames: `skills/throughline-{handoff,onboard,consolidate}/` →
+  `skills/{handoff,onboard,consolidate}/` (via `git mv`, history preserved).
+- `name:` frontmatter in each `SKILL.md` updated to match. `description:`
+  bodies untouched - their "handoff"/"onboard"/"consolidate" mentions are
+  natural-language trigger phrases, not the identifier.
+- The two places the skills reference each other by name (`consolidate`'s
+  Phase 1.4, `handoff`'s Phase 4) updated to the short form.
+- `README.md` (10 references, including the file-tree diagram) and
+  `docs/index.html` (2 references) updated to match.
+- Historical mentions in `CHANGELOG.md` and `docs/REVIEW-v0.1.0.md` left
+  untouched - they accurately describe repo state at the time, same principle
+  already applied to every past entry here.
+
 ## [0.9.0]
 
 Token-efficiency batch (issue #26), driven by a usage audit in a consuming project:

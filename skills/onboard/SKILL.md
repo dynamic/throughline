@@ -1,5 +1,5 @@
 ---
-name: throughline-onboard
+name: onboard
 description: Full project orientation at the start of a sustained session — reads the durable HANDOFF.md, checks live git/PR/issue state, and surfaces any unconsumed capture buffers. Use when starting work on a project, resuming after a break, or when the user says "onboard", "catch me up", "where were we", or "what's the state".
 ---
 
