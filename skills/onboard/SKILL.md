@@ -9,7 +9,7 @@ description: Full project orientation at the start of a sustained session — re
 The SessionStart hook already injects a lightweight pointer + git state; this skill
 is the **full** pass when you want depth.
 
-**Data directory:** `$THROUGHLINE_DATA_DIR` if set, else `<project-root>/.claude/throughline/`. Below, `DATA` refers to that path.
+**Data directory:** `$THROUGHLINE_DATA_DIR` if set, else `<project-root>/.claude/throughline/`. Below, `DATA` refers to that path. In a linked git worktree, `<project-root>` here is the **main** working tree, not the worktree itself (see README "Git worktrees") - so `DATA` is shared across every worktree of the repo.
 
 ---
 

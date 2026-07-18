@@ -3,6 +3,73 @@
 All notable changes to throughline are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); this project uses semantic versioning.
 
+## [0.11.0]
+
+Shares the data dir across git worktrees (issue #31). Claude Code's
+auto-worktree-per-branch workflow (`<project>/.claude/worktrees/<name>`) points
+`CLAUDE_PROJECT_DIR` at the linked worktree, which previously made every
+worktree accumulate its own `HANDOFF.md`/`logs/`/`buffer/` - a fresh session in
+one worktree had no visibility into a handoff written minutes earlier in
+another. Now, in a linked worktree, the data dir resolves to the **main**
+working tree's `.claude/throughline/` by default, so every worktree of a repo
+plus its main checkout share one durable handoff.
+
+### Added
+- `tl_data_root()` in `hooks/_lib.sh`: resolves to the main working tree when
+  the session is a linked git worktree (via `git rev-parse --git-dir` vs.
+  `--git-common-dir` to detect it, then `git worktree list` to find the main
+  tree's path), else falls through to `tl_root()` unchanged. Used only for the
+  data-dir anchor - file-path relativization and live git state in
+  `session-onboard.sh`/`session-capture.sh` stay anchored to `tl_root()` (the
+  session's own working tree), since those should describe where the session
+  is actually working, not the main tree.
+- Migration safety: a worktree that already accumulated its own data dir
+  before this default existed keeps resolving to its own root, permanently -
+  sharing only applies to worktrees that had no prior throughline data, so
+  upgrading never silently strands a pre-existing `HANDOFF.md`.
+- The `.throughlineignore` opt-out check honors a marker at *either* the
+  shared main root or the session's own worktree root, so a marker placed in
+  a worktree before this default existed keeps being honored there too.
+- `THROUGHLINE_WORKTREE_SHARED=0` (or `false`/`no`/`off`) opts back into the
+  previous per-worktree isolation, for users who want parallel worktrees to
+  keep independent handoffs.
+- `session-onboard.sh` prints a one-line note (`🔗 throughline data is shared
+  with the main working tree at ...`) whenever the redirect is active, so the
+  sharing is visible rather than only inferable from where `HANDOFF.md`
+  happens to live.
+- Falls back to per-worktree behavior (unchanged) for non-git directories and
+  git < 2.31 (no `--path-format` flag). **Known, narrow gap** (verified
+  against git 2.55.0, not expected to be fixable at the shell-script level):
+  a main checkout created via a *fresh* `git init --separate-git-dir=<elsewhere>`
+  (git-dir relocated before any `git worktree add` ever ran) leaves
+  `core.worktree` unset, and in that state `git worktree list` itself - not
+  just this heuristic - misreports the git-dir's own container as the "main"
+  worktree. This is git's own worktree-tracking model, not a gap this script
+  can close with a better query; it does not affect the ordinary case (`git
+  worktree add` off a normal repo) issue #31 and Claude Code's own
+  auto-worktree workflow actually produce. `THROUGHLINE_WORKTREE_SHARED=0` or
+  an absolute `THROUGHLINE_DATA_DIR` sidesteps it if ever hit.
+
+### Changed
+- `tl_data_dir()` and the `.throughlineignore` opt-out check now anchor to
+  `tl_data_root()` (plus `tl_root()` for the opt-out, see above) instead of
+  `tl_root()` alone.
+- `session-onboard.sh`'s data-path display strips (`HANDOFF.md` pointer,
+  capture-errors, unconsumed-buffer warnings, the gitignore nudge) now
+  relativize against the resolved data root, not the session's working tree.
+- `tl_data_root()`'s resolution is memoized per hook-script run via
+  `tl_resolve_data_root()`, an out-parameter helper (same convention as
+  `$_tl_active_reason`) called as a bare statement rather than through command
+  substitution - a naive cache inside `tl_data_root()` itself does not survive
+  `$(...)`'s subshell, so without this the two hottest hooks
+  (`session-capture.sh`, `session-prompt.sh`) forked git 6 times per tool
+  call/prompt instead of 2.
+- `skills/handoff/SKILL.md`'s Phase 4 commit-offer step now runs `git
+  check-ignore` against the directory that actually contains `DATA` (which
+  may be the main tree, not the session's own worktree) to avoid a fatal
+  "outside repository" error, and `README.md`'s opt-out instructions now
+  restate the worktree caveat at the point of use.
+
 ## [0.10.0]
 
 Renames the three skills to drop the redundant `throughline-` prefix (issue

@@ -20,6 +20,13 @@ DIR=$(unset CDPATH; cd -- "$(dirname -- "$0")" && pwd)
 tl_disabled && exit 0
 
 root=$(tl_root)
+# Bare call, not $(tl_data_root): caches into $_tl_data_root in THIS shell (not
+# a discarded subshell), so the tl_data_dir() and tl_active()/tl_data_exists()
+# calls below - each still individually subshelled or not - inherit the
+# already-resolved value instead of re-running the git-worktree resolution
+# from scratch. See tl_resolve_data_root()'s comment in _lib.sh.
+tl_resolve_data_root
+droot="$_tl_data_root"
 data=$(tl_data_dir)
 
 # tl_data_exists (not tl_active) gates whether there is anything to report:
@@ -36,7 +43,7 @@ if ! tl_data_exists && ! tl_active; then
   # "no more silent chicken-and-egg trap" this auto-activation exists to fix
   # becomes a new, harder-to-diagnose silent failure of its own.
   if [ "${_tl_active_reason:-}" = "bootstrap-failed" ]; then
-    echo "⚠️ throughline could not create its data directory (\`${data#"$root"/}\`) - check permissions/disk space on the project root. Capture will not run until this is resolved."
+    echo "⚠️ throughline could not create its data directory (\`${data#"$droot"/}\`) - check permissions/disk space on the project root. Capture will not run until this is resolved."
   fi
   exit 0
 fi
@@ -77,6 +84,14 @@ else
 fi
 echo
 
+# Make worktree-sharing (issue #31) non-silent: when this session is a linked
+# worktree and its data anchored to the main tree instead, say so plainly
+# rather than leaving it to be inferred from where HANDOFF.md happens to live.
+if [ "$droot" != "$root" ]; then
+  echo "🔗 throughline data is shared with the main working tree at \`$droot\` (this is a linked worktree)."
+  echo
+fi
+
 # jq is required for action capture. If it is missing, capture silently no-ops,
 # so say so loudly here (the one place throughline has a visible voice).
 if ! tl_have_jq; then
@@ -91,12 +106,12 @@ fi
 # couldn't be created.
 if [ -f "$data/.capture-errors" ]; then
   errn=$(grep -c '.' "$data/.capture-errors" 2>/dev/null | tr -d ' ')
-  echo "⚠️ $errn capture failure(s) recorded in \`${data#"$root"/}/.capture-errors\` - some actions may be missing from the buffer. Check disk space / permissions on \`${data#"$root"/}/\`, then clear the file once resolved."
+  echo "⚠️ $errn capture failure(s) recorded in \`${data#"$droot"/}/.capture-errors\` - some actions may be missing from the buffer. Check disk space / permissions on \`${data#"$droot"/}/\`, then clear the file once resolved."
   echo
 fi
 
 if [ -f "$hf" ]; then
-  echo "Durable handoff exists at \`${hf#"$root"/}\` - read it before starting."
+  echo "Durable handoff exists at \`${hf#"$droot"/}\` - read it before starting."
   grep -m1 -i "last updated" "$hf" 2>/dev/null
 else
   echo "No HANDOFF.md yet for this project. One will be written at the next handoff."
@@ -129,20 +144,23 @@ fi
 # own ignore resolution (a trailing slash lets it match a directory pattern
 # even before the buffer dir itself exists) rather than a hand-rolled pattern
 # match, so this only fires when it is actually needed. Skipped entirely when
-# $data lives outside the project's own git tree (an absolute
+# $data lives outside the data root's own git tree (an absolute
 # THROUGHLINE_DATA_DIR pointed at a shared, cross-harness location - a
 # documented, supported configuration): `git check-ignore` on a path outside
 # the repo fails with a fatal error rather than "not ignored", which the
 # negated check here would otherwise treat identically to "not gitignored" -
 # printing an unsatisfiable warning on every single SessionStart forever,
 # since a path outside the repo can never be matched by that repo's
-# .gitignore in the way check-ignore verifies.
+# .gitignore in the way check-ignore verifies. Checked (and check-ignore run)
+# against $droot, not $root: in a linked worktree $data lives under the MAIN
+# tree (tl_data_root), so that main tree's .gitignore is the one that actually
+# governs it - $root's own working directory has no bearing on that lookup.
 case "$data" in
-  "$root"/*)
+  "$droot"/*)
     if [ "$src" != "compact" ] && [ "$in_worktree" = "1" ] \
-      && ! git -C "$root" check-ignore -q "$bufdir/" 2>/dev/null; then
+      && ! git -C "$droot" check-ignore -q "$bufdir/" 2>/dev/null; then
       echo
-      echo "⚠️ \`${bufdir#"$root"/}/\` is not gitignored yet - it can contain raw command/path text (best-effort redacted only) and must stay untracked. throughline is local-only by default - typically the whole data dir should be gitignored (see README \"Local by default\"), not just this subdir."
+      echo "⚠️ \`${bufdir#"$droot"/}/\` is not gitignored yet - it can contain raw command/path text (best-effort redacted only) and must stay untracked. throughline is local-only by default - typically the whole data dir should be gitignored (see README \"Local by default\"), not just this subdir."
     fi
     ;;
 esac
@@ -166,7 +184,7 @@ TL_COMPACT_TAIL_LINE_CHARS=300
 if [ "$src" = "compact" ] && [ -n "$sid" ] && [ -f "$bufdir/session-$sid.md" ]; then
   buf="$bufdir/session-$sid.md"
   echo
-  echo "🧷 Context was just compacted. The last $TL_COMPACT_TAIL_LINES line(s) of this session's action buffer are inlined below to recover what you did before the compaction, without an extra read - the raw actions persist even though the conversation summary dropped detail. Full history (if the session ran longer than this tail) is at \`${bufdir#"$root"/}/session-$sid.md\`."
+  echo "🧷 Context was just compacted. The last $TL_COMPACT_TAIL_LINES line(s) of this session's action buffer are inlined below to recover what you did before the compaction, without an extra read - the raw actions persist even though the conversation summary dropped detail. Full history (if the session ran longer than this tail) is at \`${bufdir#"$droot"/}/session-$sid.md\`."
   echo '```'
   tail -n "$TL_COMPACT_TAIL_LINES" "$buf" 2>/dev/null | awk -v max="$TL_COMPACT_TAIL_LINE_CHARS" '
     { if (length($0) > max) print substr($0, 1, max) " …[line truncated]"
@@ -253,11 +271,11 @@ if [ -d "$bufdir" ]; then
   done
   if [ "$ended" -ne 0 ]; then
     echo
-    echo "⚠️ $ended unconsumed session buffer(s) in \`${bufdir#"$root"/}/\` from sessions that ended without being distilled into a handoff. Consider running the handoff to fold them in."
+    echo "⚠️ $ended unconsumed session buffer(s) in \`${bufdir#"$droot"/}/\` from sessions that ended without being distilled into a handoff. Consider running the handoff to fold them in."
   fi
   if [ "$unsure" -ne 0 ]; then
     echo
-    echo "ℹ️ $unsure other session buffer(s) in \`${bufdir#"$root"/}/\` with no end-stamp - could be live in another terminal, or could have exited without a clean shutdown. If none are still running, consider running the handoff."
+    echo "ℹ️ $unsure other session buffer(s) in \`${bufdir#"$droot"/}/\` with no end-stamp - could be live in another terminal, or could have exited without a clean shutdown. If none are still running, consider running the handoff."
   fi
 fi
 
