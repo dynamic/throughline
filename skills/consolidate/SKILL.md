@@ -12,7 +12,10 @@ propose promoting it - with a human gate - into the durable layer where it stops
 needing to be re-learned.
 
 **Data directory** (resolve once): `$THROUGHLINE_DATA_DIR` if set, else
-`<project-root>/.claude/throughline/`. Below, `DATA` refers to that path.
+`<project-root>/.claude/throughline/`. Below, `DATA` refers to that path. In a
+linked git worktree, `<project-root>` here is the **main** working tree, not the
+worktree itself (see README "Git worktrees") - so `DATA` is shared across every
+worktree of the repo.
 
 - Session logs: `DATA/logs/handoff-YYYY-MM-DD-HHMM.md`
 - Some repos also keep session logs at `.agent/handoff/logs/` (the singular

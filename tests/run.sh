@@ -274,6 +274,81 @@ eq "tl_data_dir honors absolute THROUGHLINE_DATA_DIR" \
   "$(THROUGHLINE_DATA_DIR="$ABS_DIR" CLAUDE_PROJECT_DIR="$WORK/proj" sh -c '. "'"$H"'/_lib.sh"; tl_data_dir')" \
   "$ABS_DIR"
 
+# 5e. issue #31: a LINKED git worktree shares its data dir with the MAIN
+#     working tree instead of accumulating its own - the fix for handoff data
+#     silently stranding per-worktree. THROUGHLINE_DATA_DIR stays at the
+#     harness-wide relative default (".claude/throughline") for these cases,
+#     so the only variable is which root it resolves against.
+WT_MAIN="$WORK/wt-main"
+mkdir -p "$WT_MAIN"
+( cd "$WT_MAIN" && git init -q && git commit -q --allow-empty -m init \
+    && git worktree add -q "$WORK/wt-linked" -b feat ) 2>/dev/null
+WT_LINK="$WORK/wt-linked"
+D_LINK=$(CLAUDE_PROJECT_DIR="$WT_LINK" sh -c '. "'"$H"'/_lib.sh"; tl_data_dir')
+has   "linked worktree data dir points at the MAIN tree" "$D_LINK" "wt-main/.claude/throughline"
+hasnt "linked worktree data dir is NOT under the worktree itself" "$D_LINK" "wt-linked/.claude"
+
+# 5e2. the main working tree still resolves to its own data dir (no-op case -
+#      tl_data_root falls through to tl_root when git-dir == git-common-dir).
+D_MAIN=$(CLAUDE_PROJECT_DIR="$WT_MAIN" sh -c '. "'"$H"'/_lib.sh"; tl_data_dir')
+has "main working tree resolves to its own data dir" "$D_MAIN" "wt-main/.claude/throughline"
+
+# 5e3. THROUGHLINE_WORKTREE_SHARED=0 opts back into the old per-worktree
+#      behavior - the documented escape hatch for parallel-feature-work users
+#      who want isolated handoffs per worktree.
+D_OPT=$(THROUGHLINE_WORKTREE_SHARED=0 CLAUDE_PROJECT_DIR="$WT_LINK" sh -c '. "'"$H"'/_lib.sh"; tl_data_dir')
+has "THROUGHLINE_WORKTREE_SHARED=0 keeps per-worktree data dirs" "$D_OPT" "wt-linked/.claude/throughline"
+
+# 5e4. onboard surfaces the sharing note (issue #31 review point: the
+#      redirection must not be silent, or the original confusion - "why did my
+#      handoff not show up?" - just relocates instead of resolving).
+O_WT=$(printf '%s' '{"source":"startup","session_id":"T"}' | CLAUDE_PROJECT_DIR="$WT_LINK" sh "$H/session-onboard.sh")
+has "onboard notes worktree data sharing" "$O_WT" 'shared with the main working tree'
+
+# 5e5. and does NOT print that note from the main working tree, where droot
+#      and root are the same - only a linked worktree needs the redirect
+#      surfaced.
+O_MAIN=$(printf '%s' '{"source":"startup","session_id":"T"}' | CLAUDE_PROJECT_DIR="$WT_MAIN" sh "$H/session-onboard.sh")
+hasnt "onboard does not note sharing from the main working tree" "$O_MAIN" 'shared with the main working tree'
+
+# 5e6. migration safety (issue #31 review finding): a linked worktree that
+#      ALREADY accumulated its own data dir before worktree-sharing existed
+#      keeps resolving to its own root - the shared main tree has no data of
+#      its own yet, so redirecting would make the pre-existing HANDOFF.md
+#      silently invisible rather than just relocating where new data lands.
+WT_OLD_MAIN="$WORK/wt-old-main"
+mkdir -p "$WT_OLD_MAIN"
+( cd "$WT_OLD_MAIN" && git init -q && git commit -q --allow-empty -m init \
+    && git worktree add -q "$WORK/wt-old-linked" -b old ) 2>/dev/null
+WT_OLD_LINK="$WORK/wt-old-linked"
+mkdir -p "$WT_OLD_LINK/.claude/throughline"
+printf -- '# Test\n**Last Updated:** 2024-01-01\n' > "$WT_OLD_LINK/.claude/throughline/HANDOFF.md"
+D_OLD=$(CLAUDE_PROJECT_DIR="$WT_OLD_LINK" sh -c '. "'"$H"'/_lib.sh"; tl_data_dir')
+has "a worktree with PRE-EXISTING data keeps resolving to its own root" "$D_OLD" "wt-old-linked/.claude/throughline"
+
+# 5e7. once the shared main root ALSO has data (or is later adopted), sharing
+#      applies going forward - the migration guard only protects data that
+#      would otherwise be stranded, not a permanent per-worktree carve-out.
+mkdir -p "$WT_OLD_MAIN/.claude/throughline"
+printf -- '# Main\n**Last Updated:** 2024-06-01\n' > "$WT_OLD_MAIN/.claude/throughline/HANDOFF.md"
+D_OLD2=$(CLAUDE_PROJECT_DIR="$WT_OLD_LINK" sh -c '. "'"$H"'/_lib.sh"; tl_data_dir')
+has "once main tree also has data, the worktree still keeps its own (guard is sticky, not one-shot)" "$D_OLD2" "wt-old-linked/.claude/throughline"
+
+# 5e8. the .throughlineignore opt-out check honors a marker at EITHER the
+#      shared main root OR the session's own worktree root (issue #31 review
+#      finding): a marker a user placed in their own worktree before
+#      worktree-sharing existed must keep working, not be silently ignored
+#      the moment the shared main root becomes the sole place checked.
+WT_IGN_MAIN="$WORK/wt-ign-main"
+mkdir -p "$WT_IGN_MAIN"
+( cd "$WT_IGN_MAIN" && git init -q && git commit -q --allow-empty -m init \
+    && git worktree add -q "$WORK/wt-ign-linked" -b ign ) 2>/dev/null
+WT_IGN_LINK="$WORK/wt-ign-linked"
+: > "$WT_IGN_LINK/.throughlineignore"
+O_IGN=$(printf '%s' '{"source":"startup","session_id":"T"}' | CLAUDE_PROJECT_DIR="$WT_IGN_LINK" sh "$H/session-onboard.sh")
+eq "a legacy per-worktree .throughlineignore is still honored after upgrading" "$O_IGN" ""
+absent "no data dir bootstrapped under the shared main root" "$WT_IGN_MAIN/.claude"
+
 # 5d. capture and flush derive the SAME sanitized filename for a session_id
 #     containing a tab character (regression: capture used to tab-split a
 #     combined jq output, desyncing it from how other hooks resolve the id).

@@ -5,11 +5,166 @@
 #   1. $THROUGHLINE_DATA_DIR (absolute, or relative to the project root)
 #   2. .claude/throughline/   (default — universal Claude Code workspace dir)
 #
+# "Project root" here is tl_data_root(), not necessarily the session's own
+# working tree: in a linked git worktree it resolves to the MAIN working tree
+# by default, so every worktree shares one data dir (see tl_data_root() below;
+# THROUGHLINE_WORKTREE_SHARED=0 opts back into per-worktree isolation).
+#
 # Set THROUGHLINE_DATA_DIR=.agent/handoff in your environment to unify with a
 # portable .agent/ handoff convention used by other harnesses.
 
 tl_root() {
   printf '%s' "${CLAUDE_PROJECT_DIR:-$PWD}"
+}
+
+# The project root throughline's DATA dir anchors to. Normally the session's own
+# working tree (tl_root). In a LINKED git worktree, anchors to the MAIN working
+# tree instead, so every worktree of a repo plus its main checkout share one
+# HANDOFF.md/logs/buffer rather than each linked worktree silently accumulating
+# its own (issue #31: Claude Code's auto-worktree-per-branch workflow left
+# handoff data stranded per-worktree, invisible to a fresh session started
+# anywhere else in the same repo).
+#
+# Deliberately NOT folded into tl_root() itself: tl_root also anchors file-path
+# relativization (session-capture.sh) and the live-git-state block
+# (session-onboard.sh), both of which are correctly worktree-relative - a
+# captured file path or "current branch" should describe where the session is
+# actually working, not the main tree. Only the DATA location wants the shared
+# main root, so this is a second, narrower resolver used solely by
+# tl_data_dir() and the .throughlineignore check, not a general replacement.
+#
+# THROUGHLINE_WORKTREE_SHARED=0 (or false/no/off) opts back into the old
+# per-worktree behavior, unconditionally skipping the git lookup below.
+#
+# Falls back to tl_root (i.e. today's behavior) for: the opt-out knob above,
+# directories that are not a git repo at all, and git < 2.31 (no --path-format
+# flag, so the git call fails and the `||` branch returns tl_root).
+#
+# Memoized in $_tl_data_root_cache: this is on the hot path (session-capture.sh
+# and session-prompt.sh each call it, directly or via tl_active/tl_data_dir,
+# multiple times per invocation), and every uncached call forks 2-3 git
+# subprocesses. A hook script is a single short-lived process, so a plain
+# shell-variable cache (no cross-process persistence needed or attempted) is
+# sufficient to fully de-duplicate repeat calls within one run without having
+# to thread the resolved root through every caller as an argument.
+tl_data_root() {
+  tl_resolve_data_root
+  printf '%s' "$_tl_data_root"
+}
+
+# Does the actual memoized resolution, caching into $_tl_data_root as a plain
+# (non-subshell) side effect - and every OTHER caller in this file that needs
+# the value calls this directly rather than `$(tl_data_root)`.
+#
+# This split exists because caching inside tl_data_root() itself, the first
+# version of this fix, silently did not work: EVERY call site (tl_active(),
+# tl_data_dir(), and tl_data_root() being handed to command substitution by
+# callers like `droot=$(tl_data_root)`) invoked it as `$(tl_data_root)`, and
+# `$(...)` command substitution always runs its command in a SUBSHELL - a copy
+# of the calling shell's variables, whose own writes are discarded the instant
+# the subshell exits and control returns to the parent. A cache variable set
+# inside a function called that way never survives past the single call that
+# set it, so every one of the (measured) 3 calls per hot-path hook run
+# recomputed from scratch regardless (6 git forks, not the intended 2).
+#
+# The fix: tl_active() - the first thing every hot-path hook calls, and always
+# called as a bare statement (`tl_active || exit 0`), never `$(tl_active)` -
+# calls tl_resolve_data_root directly (also a bare call, no subshell), so its
+# write to $_tl_data_root lands in the REAL hook-script shell. Every later
+# call, even ones still wrapped in `$(...)` for convenience (tl_data_dir()'s
+# own body, or a hook's `data=$(tl_data_dir)`), then forks a subshell that
+# INHERITS the parent's already-set $_tl_data_root at fork time - subshells
+# see the parent's existing variables even though they can't write back to
+# them - so the `${_tl_data_root+x}` guard below sees it as already resolved
+# and skips recomputation. Same convention as $_tl_active_reason elsewhere in
+# this file: an out-parameter a caller reads immediately after a bare call,
+# not a return value threaded through every intermediate function signature.
+tl_resolve_data_root() {
+  if [ -z "${_tl_data_root+x}" ]; then
+    _tl_data_root=$(_tl_compute_data_root)
+  fi
+}
+
+# The actual computation behind tl_data_root(), split out so the memoization
+# above stays a thin, obviously-correct wrapper around it.
+#
+# Compares --git-dir to --git-common-dir (both git-reported, so the comparison
+# is immune to $_tl_wt itself being a non-canonical path, e.g. macOS's
+# /var -> /private/var symlink) to detect a linked worktree, rather than
+# comparing a derived main-tree path to $_tl_wt: the main worktree's own
+# --git-dir already equals its --git-common-dir, so this sidesteps ever having
+# to prove "is $_tl_wt itself the main tree" - the two git-reported values
+# already answer that, and the main-worktree case returns $_tl_wt completely
+# untouched (never substitutes a git-canonicalized path for it).
+_tl_compute_data_root() {
+  _tl_wt=$(tl_root)
+  case "${THROUGHLINE_WORKTREE_SHARED:-1}" in
+    0|false|no|off) printf '%s' "$_tl_wt"; return ;;
+  esac
+  # Two separate invocations rather than one call requesting both flags and
+  # splitting the two-line output: `$(...)` command substitution unconditionally
+  # strips ALL trailing newlines, which makes a portable embedded-newline
+  # separator for splitting that output a real POSIX-sh landmine (an earlier
+  # version of this function split on `$(printf '\n')`, which command
+  # substitution collapses to an EMPTY string, silently truncating every
+  # extracted field to "" - it never once matched).
+  _tl_gd=$(git -C "$_tl_wt" rev-parse --path-format=absolute --git-dir 2>/dev/null) \
+    || { printf '%s' "$_tl_wt"; return; }
+  _tl_cd=$(git -C "$_tl_wt" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) \
+    || { printf '%s' "$_tl_wt"; return; }
+  # gd == cd means this IS the main worktree - nothing to redirect, return the
+  # original $_tl_wt untouched.
+  if [ "$_tl_gd" = "$_tl_cd" ]; then
+    printf '%s' "$_tl_wt"
+    return
+  fi
+  # Confirmed linked worktree. Ask git directly for the MAIN worktree's path
+  # via `git worktree list` (it always lists the MAIN working tree first)
+  # rather than deriving it by stripping "/.git" off --git-common-dir: the
+  # derivation is a hardcoded assumption that the git-dir is literally named
+  # ".git" and sits where dirname() expects, which a custom GIT_DIR location
+  # need not satisfy even when git itself tracks it correctly (core.worktree
+  # set) - `worktree list` asks git instead of re-deriving git's own answer.
+  #
+  # KNOWN, NARROW GAP this does NOT fix (verified against git 2.55.0): a main
+  # checkout created via a fresh `git init --separate-git-dir=<elsewhere>`
+  # (relocating the git-dir before any `git worktree add` ever ran) leaves
+  # core.worktree unset, and in that specific state `git worktree list` itself
+  # - not just this heuristic - reports the git-dir's own container directory
+  # as the "main" entry, even after core.worktree is set by hand afterward.
+  # This is git's own worktree-tracking model being unable to resolve the
+  # configuration, not a gap this script can close with a better query; it
+  # only affects that one relocation pattern (ordinary `git worktree add` off
+  # a normal repo - the case issue #31 and Claude Code's own auto-worktree
+  # workflow actually produce - resolves correctly). THROUGHLINE_WORKTREE_SHARED=0
+  # or an absolute THROUGHLINE_DATA_DIR sidesteps it if ever hit.
+  _tl_main=$(git -C "$_tl_wt" worktree list --porcelain 2>/dev/null \
+    | awk '/^worktree /{print substr($0,10); exit}')
+  if [ -z "$_tl_main" ] || [ ! -d "$_tl_main" ]; then
+    printf '%s' "$_tl_wt"
+    return
+  fi
+  # Migration safety: don't strand data a worktree already accumulated under
+  # its OWN root before this sharing default existed (issue #31 review
+  # finding). If this worktree's own would-be data dir already has content (a
+  # HANDOFF.md, or the dir itself), keep resolving here permanently rather
+  # than silently making pre-existing HANDOFF.md/logs/buffer invisible -
+  # deliberately STICKY, not a one-shot check that flips to sharing the first
+  # time the main root happens to gain data of its own (from a sibling
+  # worktree's session, say): matches tl_data_exists()'s existing precedent
+  # elsewhere in this file (once a data dir exists, it stays authoritative;
+  # nothing here auto-migrates it). A worktree that has never been used with
+  # throughline (the common case going forward, and every case in a fresh
+  # repo) has no such directory, so it shares as designed from the start.
+  # Skipped entirely when THROUGHLINE_DATA_DIR is absolute: both roots then
+  # resolve to the identical path anyway, so there is nothing to disambiguate.
+  _tl_own=$(_tl_dir_under "$_tl_wt")
+  if [ "$_tl_own" != "$(_tl_dir_under "$_tl_main")" ] \
+    && { [ -d "$_tl_own" ] || [ -f "$_tl_own/HANDOFF.md" ]; }; then
+    printf '%s' "$_tl_wt"
+    return
+  fi
+  printf '%s' "$_tl_main"
 }
 
 # Machine-wide kill switch: THROUGHLINE_DISABLE set to anything but "0" turns
@@ -25,16 +180,28 @@ tl_disabled() {
 
 # POSIX sh has no `local`; helpers prefix their temporaries with `_tl_` so they do
 # not clobber a same-named variable in the sourcing hook.
-tl_data_dir() {
-  _tl_root=$(tl_root)
+#
+# Applies the $THROUGHLINE_DATA_DIR precedence rule against an arbitrary root.
+# Factored out of tl_data_dir() so _tl_compute_data_root() (above) can also
+# compute "what would the data dir be under THIS worktree's own root" (the
+# pre-worktree-sharing location) to check for pre-existing data there, without
+# duplicating the precedence rule inline or calling tl_data_dir() itself (which
+# would recurse back through tl_data_root()). Pure string manipulation, no
+# subprocess.
+_tl_dir_under() {
   if [ -n "$THROUGHLINE_DATA_DIR" ]; then
     case "$THROUGHLINE_DATA_DIR" in
       /*) printf '%s' "$THROUGHLINE_DATA_DIR" ;;
-      *)  printf '%s/%s' "$_tl_root" "$THROUGHLINE_DATA_DIR" ;;
+      *)  printf '%s/%s' "$1" "$THROUGHLINE_DATA_DIR" ;;
     esac
   else
-    printf '%s/.claude/throughline' "$_tl_root"
+    printf '%s/.claude/throughline' "$1"
   fi
+}
+
+tl_data_dir() {
+  tl_resolve_data_root
+  _tl_dir_under "$_tl_data_root"
 }
 
 # True when a data dir already exists for this project, or a HANDOFF.md is
@@ -58,8 +225,18 @@ tl_data_exists() {
 
 # Activation decision for this project, in strict precedence:
 #   0. THROUGHLINE_DISABLE (tl_disabled) -> OFF machine-wide, unconditionally.
-#   1. .throughlineignore at the project root -> OFF for NEW tracking
+#   1. .throughlineignore at the data root (tl_data_root - the main working
+#      tree when worktree-sharing applies, else the project root) OR at the
+#      session's own working tree (tl_root) -> OFF for NEW tracking
 #      unconditionally (existing data, per tl_data_exists, is unaffected).
+#      Checking tl_root too (not just tl_data_root) matters specifically for a
+#      linked worktree: a marker a user placed in their OWN worktree before
+#      worktree-sharing existed - back when tl_root and tl_data_root were the
+#      same path - must keep working, or upgrading silently reactivates
+#      capture in a worktree the user had deliberately opted out (issue #31
+#      review finding). Going forward the README documents the shared main
+#      root as where to place a NEW marker; this is what keeps a pre-existing
+#      one honored either way.
 #   2. data dir already exists, or a HANDOFF.md is present -> already active.
 #   3. otherwise auto-activate: bootstrap the data dir. Every project touched by
 #      Claude Code with throughline installed activates on the first hook fire.
@@ -80,7 +257,11 @@ tl_active() {
     _tl_active_reason="disabled"
     return 1
   fi
-  if [ -f "$(tl_root)/.throughlineignore" ]; then
+  # Bare call (not $(tl_data_root)): this is the FIRST resolution in every
+  # hot-path hook's run, so its cache write must land in the real hook-script
+  # shell, not a discarded subshell - see tl_resolve_data_root()'s comment.
+  tl_resolve_data_root
+  if [ -f "$_tl_data_root/.throughlineignore" ] || [ -f "$(tl_root)/.throughlineignore" ]; then
     _tl_active_reason="ignored"
     return 1
   fi

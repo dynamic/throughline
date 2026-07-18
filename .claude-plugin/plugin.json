@@ -1,7 +1,7 @@
 {
   "name": "throughline",
   "description": "Continuous, state-aware session memory for Claude Code. Captures what you did and what is (commands, file changes, decisions, and live git/PR state), then hands it off with judgment at session wrap-up. Readable, local-first artifacts (commit them if you choose); binds to Claude's native memory.",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "author": {
     "name": "Dynamic Agency",
     "email": "support@dynamicagency.com"

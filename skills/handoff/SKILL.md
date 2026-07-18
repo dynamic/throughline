@@ -10,7 +10,10 @@ project memory. Capture is automatic (hooks); **distillation is this skill** —
 judgment layer that decides signal vs. noise.
 
 **Data directory** (resolve once): `$THROUGHLINE_DATA_DIR` if set, else
-`<project-root>/.claude/throughline/`. Below, `DATA` refers to that path.
+`<project-root>/.claude/throughline/`. Below, `DATA` refers to that path. In a
+linked git worktree, `<project-root>` here is the **main** working tree, not the
+worktree itself (see README "Git worktrees") - so `DATA` is shared across every
+worktree of the repo.
 
 - Durable handoff: `DATA/HANDOFF.md`
 - Session logs: `DATA/logs/handoff-YYYY-MM-DD-HHMM.md`
@@ -201,6 +204,15 @@ having to carry it. Omit the line entirely for a session that starts something n
      part of this repo's commit at all, and `git check-ignore` on a path outside
      the repo fails with a fatal error rather than a clean answer (same reasoning
      `session-onboard.sh`'s gitignore nudge already applies - see its comment there).
+   - **In a linked git worktree with worktree-sharing active, `DATA` lives under
+     the MAIN working tree, not the worktree the session is actually running in**
+     (see README "Git worktrees"). Run `git check-ignore` with `-C` pointed at
+     (or `cd` into) the directory that actually contains `DATA` before checking
+     it, not the session's own cwd - `git check-ignore` on a path outside the
+     repo it's invoked from fails with the same kind of fatal error as the
+     outside-the-git-tree case above (exit 128, "outside repository"), which is
+     NOT distinguishable from "not ignored" by exit code alone. Treat that fatal
+     error the same as the skip-the-offer case above, not as "not ignored."
    - Otherwise, check `DATA/HANDOFF.md` and the new session log **independently**
      with `git check-ignore`. Offer to stage whichever of the two is NOT ignored;
      if both are ignored, say so and skip the offer - nothing committable exists

@@ -123,6 +123,20 @@ export THROUGHLINE_DATA_DIR=.agent/handoff
   manual opt-in. To keep it out of a specific project, drop an empty
   `.throughlineignore` file at the project root (see "Opting a project out" below).
 
+### Git worktrees
+
+In a **linked git worktree** (e.g. Claude Code's `claude/<branch>` auto-worktree
+workflow, under `<project>/.claude/worktrees/<name>/`), "the project root" above
+resolves to the **main working tree**, not the worktree itself - so every worktree
+of a repo, plus its main checkout, share one `HANDOFF.md`/`logs/`/`buffer/` instead
+of each worktree silently accumulating its own. `session-onboard.sh` prints a note
+when this redirect is active. Live git state (current branch, `git status`) and
+captured file paths still describe the worktree you're actually in.
+
+Set `THROUGHLINE_WORKTREE_SHARED=0` to opt back into isolated per-worktree data
+dirs. Requires git 2.31+; falls back to per-worktree behavior for bare repos,
+submodules, and older git.
+
 ### Opting a project out
 
 throughline activates automatically in every project. To disable it for one
@@ -131,6 +145,12 @@ project, add an empty marker file at the project root:
 ```sh
 touch .throughlineignore
 ```
+
+**In a linked git worktree** (see "Git worktrees" above), place this at the
+**main** working tree's root, not the worktree you're sitting in - that's where
+the opt-out check now looks by default. (A marker already sitting in a worktree
+from before worktree-sharing existed is still honored there too, so upgrading
+never silently re-enables a pre-existing opt-out.)
 
 With that file present, no new data dir is created, and `onboard`/`capture` stop
 adding anything new - regardless of `THROUGHLINE_DATA_DIR` or any pre-existing
