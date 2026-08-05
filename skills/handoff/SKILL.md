@@ -52,18 +52,28 @@ refined by the next. Never run it more than once per unchanged state.
 
 ---
 
-## Phase 2: Synthesize (signal vs. noise)
+## Phase 2: Synthesize (signal vs. noise, then durable vs. in-flight)
 
-Decide what is a **permanent, reusable change** vs. session-specific noise. For each
-applicable area, prepare concise updates (skip what doesn't apply):
+First cut: decide what is a **permanent, reusable change** vs. session-specific noise.
+Discard the noise.
 
-- **Architecture & services** — components/repos/topology added, removed, restructured
-- **Environment & infra** — deploys, config changes, version bumps
-- **Tools & integrations** — added/renamed/removed; auth or token-handling changes
-- **Configuration & secrets** — config touched; new env vars / key **names** (never values)
-- **Resolved issues** — move from Pending → Resolved with root cause + fix
-- **Pending items** — new problems, refactors, next steps surfaced this session
-- **Key files & resources** — important new files, scripts, directories
+Second cut, and the one that keeps `HANDOFF.md` from bloating: of what's left, split
+by **durability**, using the test *"would this still be true in three months?"*
+
+- **Yes → native memory, not `HANDOFF.md`.** Architecture/topology, environment/infra
+  facts, tool/integration inventory, config & secret **names** (never values), key
+  files & resources, and anything else that reads as a fact about the project rather
+  than a status. Write it as a memory topic file per Phase 4 step 3 below — that store
+  is durably-recalled and does not cost resident context every turn the way
+  `HANDOFF.md` does.
+- **No → `HANDOFF.md`.** Only genuinely volatile, in-flight state belongs here:
+  - **Resolved issues** — recently closed, not yet promoted to memory (see Phase 4 cap)
+  - **Pending items** — open problems, next steps surfaced this session
+  - **Current state** — what's mid-flight: uncommitted work, open PRs/branches, blockers
+
+If you're unsure which bucket something falls in, prefer memory — `HANDOFF.md` is read
+in full every session (see Phase 4's size discipline); memory topic files are read on
+demand.
 
 ---
 
@@ -117,43 +127,46 @@ having to carry it. Omit the line entirely for a session that starts something n
 
 ## Phase 4: Update durable HANDOFF.md + memory binding
 
-1. Apply the Phase 2 updates to `DATA/HANDOFF.md`. Keep each entry to 1–2 lines —
-   it's a reference doc, not a journal. Update its **Last Updated** date.
-   - **Size discipline (HANDOFF.md is read in full every session — it is
-     resident context, paid for on every turn, not a one-time write). Applies
-     only where the project already has somewhere durable for the detail to
-     live — most likely a maintained `CHANGELOG.md`, which throughline itself
-     has (dogfooded) but a typical consuming project may not. Never drop
-     content whose only copy is HANDOFF.md itself; that's a real loss, not a
-     relocation, no matter how repetitive it looks:**
-     - **"Architecture & Services" is current-state only, never a per-version
-       changelog**, *if and only if* `CHANGELOG.md` (or an equivalent durable
-       doc) already carries that version-by-version narrative — check before
-       trimming, don't assume. On an architecture change, *update or replace*
-       the relevant description in place — do not append a new "vX.Y.Z did..."
-       paragraph. If the project has no such doc, leave the narrative in place;
-       don't invent a new untracked history file to unblock the trim.
-     - **Cap "Resolved Issues" to the most recent ~8–10 rows** — but only drop
-       a row past the cap once its detail is confirmed to already live in
-       `CHANGELOG.md`/a linked session log, or after writing it there yourself
-       as part of this same edit (create `CHANGELOG.md` if the project has
-       none and the fact is worth keeping). If the section lacks a pointer line
-       to where older issues live, add one.
-     - If a section has clearly regrown past these budgets since the last pass
-       (rare between individual handoffs — this is `consolidate`'s
-       periodic job — but fix it here too if you notice it), trim it the same
-       way, under the same durable-copy-exists condition above.
+1. Apply the Phase 2 updates to `DATA/HANDOFF.md`: durable facts go to memory (step 3
+   below), only in-flight state stays here. Keep each entry to 1–2 lines — it's a
+   reference doc, not a journal. Update its **Last Updated** date.
+   - **Match length to substance.** Cover the actual in-flight state; do not pad with
+     filler sections, redundant summaries, or boilerplate. An empty section (nothing
+     durable was moved out, nothing in-flight exists) should not appear at all.
+   - **Size discipline is a measured stop condition, not guidance — this is the
+     part that previously failed twice (see throughline#26).** `HANDOFF.md` is read
+     in full every session: it is resident context, paid for on every turn, not a
+     one-time write. After writing, **count it**: `wc -l DATA/HANDOFF.md`. Target
+     **150 lines / ~2,000 tokens**. If the count exceeds **200 lines**, you are not
+     done — go back and cut before finishing this phase, the same way Claude Code's
+     own `MEMORY.md` index refuses a write past its 200-line/25KB limit rather than
+     silently accepting it:
+     - First, re-check every section against the Phase 2 durability test. Anything
+       that would still be true in three months and isn't already in memory is the
+       likely offender — move it now, don't defer it to a later `consolidate` pass.
+     - **Cap "Resolved Issues" to the most recent ~5 rows.** Past the cap, promote
+       the row to a memory topic file (Phase 4 step 3) if the fact is worth keeping,
+       then drop it here — never leave the only copy of a fact in an
+       already-over-budget file.
+     - If nothing left to cut is actually droppable (every line is genuinely
+       in-flight state), the count is real signal that there's too much in flight
+       at once — say so in your report rather than forcing an artificial trim.
 2. Add a link to the new session log under "Recent Session Logs" — keep only the
    **last 5**.
-3. **Memory binding (native system):** ask "did this session surface a durable fact
-   worth pinning?" Types: a confirmed preference (`feedback`), a fact about the
-   user/context (`user`), a project constraint/decision (`project`), a resource
+3. **Memory binding (native system) — the default destination for anything durable.**
+   Every durable item identified in Phase 2 gets written here, not just "insights."
+   Types: a confirmed preference (`feedback`), a fact about the user/context
+   (`user`), a project constraint/decision/architecture fact (`project`), a resource
    pointer (`reference`). Native memory is two layers: `MEMORY.md` is an
    always-loaded index (truncated past 200 lines, so every entry there must stay a
    single short line), and each entry's full content lives in its own topic file
-   under `~/.claude/projects/<slug>/memory/`, read on demand. If yes, write the
-   topic file with frontmatter shaped like this, then add its one-line pointer to
-   `MEMORY.md`:
+   under `~/.claude/projects/<slug>/memory/`, read on demand. **Topic files have no
+   enforced limit, so they need the same discipline applied by hand: keep each to
+   ~400 words** (match the length to the fact — a one-line preference doesn't need
+   400 words either; this is a ceiling, not a target) **and split a topic that grows
+   past it into two files** rather than letting one file become a second journal.
+   Write the topic file with frontmatter shaped like this, then add its one-line
+   pointer to `MEMORY.md`:
    ```markdown
    ---
    name: short-kebab-case-slug
@@ -235,23 +248,28 @@ having to carry it. Omit the line entirely for a session that starts something n
 
 ## Phase 5: HANDOFF.md template (if absent)
 
+In-flight state only — no Architecture/Environment/Tools/Auth/Key-Files sections.
+Those are durable facts; they go to native memory (Phase 4 step 3), not here:
+
 ```markdown
 # <Project> — Handoff
 **Last Updated:** <YYYY-MM-DD>
 
-## Architecture & Services
-## Environment & Infrastructure
-## Tools & Integrations
-## Authentication & Secrets
 ## Resolved Issues
 | Issue | Resolution | Date |
+<!-- most recent ~5 rows only; promote older ones to memory, then drop -->
 ## Pending Items
 | Item | Priority | Tracking |
-## Key Files & Resources
-| Resource | Path |
+## Current State
+<!-- what's mid-flight: uncommitted work, open PRs/branches, blockers -->
 ## Recent Session Logs
 1. [Title](logs/handoff-YYYY-MM-DD-HHMM.md) — YYYY-MM-DD
 ```
+
+A project migrating from the old template: at the next handoff, sort its existing
+Architecture/Environment/Tools/Auth/Key-Files content into memory topic files (Phase 4
+step 3), then delete those sections. Don't do this migration silently — report the
+diff same as any other handoff.
 
 ---
 

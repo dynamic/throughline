@@ -3,6 +3,40 @@
 All notable changes to throughline are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); this project uses semantic versioning.
 
+## [0.12.0]
+
+Fixes `HANDOFF.md` outgrowing its own budget on Claude 5 (issue #34). The prior
+per-entry guidance ("1-2 lines", "cap Resolved Issues to ~8-10 rows") had already
+failed once in production (issue #26, closed, then regrown to 97KB on a real
+consuming project) because nothing measured the result.
+
+### Changed
+- `handoff` Phase 2 now splits synthesized updates by durability, not just
+  signal-vs-noise: anything that would "still be true in three months" goes to
+  native memory, never to `HANDOFF.md`. Only in-flight state (resolved issues,
+  pending items, current state) stays in the handoff doc.
+- `handoff` Phase 4 replaces the per-entry size guidance with a **measured**
+  stop condition: count `HANDOFF.md` with `wc -l` after writing, target
+  150 lines/~2,000 tokens, hard stop at 200 - the same enforcement model
+  Claude Code's own `MEMORY.md` index uses. If over, cut before finishing the
+  phase rather than deferring to the next `consolidate` pass.
+- The Phase 5 `HANDOFF.md` template drops its five durable-fact sections
+  (Architecture & Services, Environment & Infrastructure, Tools & Integrations,
+  Authentication & Secrets, Key Files & Resources) entirely - that content now
+  belongs in native memory topic files, which `handoff` already knew how to
+  write but treated as optional.
+- Memory topic files get an explicit (unenforced, by-hand) ~400-word ceiling,
+  since only the `MEMORY.md` index has a real limit and the topic-file half of
+  the store was starting to show the same unbounded growth (one observed at
+  5,678 words).
+- `consolidate` Phase 1.4 and Phase 3 updated to check the new 200-line cap and
+  the memory-first destination instead of the retired template sections.
+
+### Migration
+Existing `HANDOFF.md` files keep their old sections until the next `handoff`
+run, which sorts any Architecture/Environment/Tools/Auth/Key-Files content into
+memory topic files, reports the diff, then drops those sections.
+
 ## [0.11.0]
 
 Shares the data dir across git worktrees (issue #31). Claude Code's
