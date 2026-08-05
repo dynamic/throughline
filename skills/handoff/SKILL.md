@@ -49,6 +49,14 @@ refined by the next. Never run it more than once per unchanged state.
 3. Cross-reference the buffer against the live conversation: the buffer says *what
    happened*; the conversation says *why*. Distillation needs both (subject to the
    boundary caveat above).
+4. **Check for legacy durable-fact sections, unconditionally — not just when the
+   file is over budget.** If `DATA/HANDOFF.md` still has an "Architecture &
+   Services", "Environment & Infrastructure", "Tools & Integrations",
+   "Authentication & Secrets", or "Key Files & Resources" section (the pre-this-PR
+   template), migrate it this run per Phase 5's migration note, regardless of the
+   file's current size. A file can carry all five sections and still read as
+   "under budget" today; leaving them until the size gate trips just delays the
+   fix and lets the content erode the new budget as the file is edited meanwhile.
 
 ---
 
@@ -274,14 +282,19 @@ Those are durable facts; they go to native memory (Phase 4 step 4), not here:
 <!-- what's mid-flight: uncommitted work, open PRs/branches, blockers -->
 ## Recent Session Logs
 1. [Title](logs/handoff-YYYY-MM-DD-HHMM.md) — YYYY-MM-DD
-## Consolidation Passes
-<!-- owned by the consolidate skill; omit this section until its first run -->
 ```
+
+Do not pre-seed a **"Consolidation passes"** section (note the exact casing — matches
+Phase 2 and `consolidate`'s own lookup, which is case-sensitive). Leave it absent until
+`consolidate`'s own Phase 4 creates it on its first pass; adding an empty one here just
+gives `consolidate` a stray, differently-worded header to reconcile against.
 
 A project migrating from the old template: at the next handoff, sort its existing
 Architecture/Environment/Tools/Auth/Key-Files content into memory topic files (Phase 4
 step 4), then delete those sections. Don't do this migration silently — report the
-diff same as any other handoff.
+diff same as any other handoff. **This check is unconditional, not just for an
+over-budget file** — run it whenever any of those five sections still exist, even if
+the file is currently under the 150/200-line target (see Phase 1 step 4 below).
 
 ---
 
