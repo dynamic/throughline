@@ -26,10 +26,10 @@ worktree of the repo.
   conflate, so check for both.
 
 **Scope boundary:** this skill owns the **handoff session logs**. Auto-memory files
-(`~/.claude/projects/<slug>/memory/`) are the `consolidate-memory` skill's job -
+(`~/.claude/projects/<slug>/memory/`) are the [`consolidate-memory`](../consolidate-memory/SKILL.md) skill's job -
 merging duplicates, fixing stale facts, pruning the index. Don't duplicate that
 work: if a candidate's right home is an auto-memory file, write the one new entry
-(Phase 4) and leave the reflective cleanup of the memory dir to consolidate-memory.
+(Phase 4) and leave the reflective cleanup of the memory dir to [`consolidate-memory`](../consolidate-memory/SKILL.md).
 
 ---
 
@@ -147,5 +147,5 @@ always-loaded files, where one wrong line costs every future session.
 - **Cross-repo promotions are issues, not edits** - the owning repo reviews the
   lesson on its own terms.
 - **Session logs are evidence, not scratch** - prune nothing from them.
-- **Stay off consolidate-memory's turf** - one new memory entry per approved
+- **Stay off [`consolidate-memory`](../consolidate-memory/SKILL.md)'s turf** - one new memory entry per approved
   candidate is fine; restructuring the memory dir is not this skill's job.

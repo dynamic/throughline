@@ -1,0 +1,16 @@
+{
+  "name": "consolidate-memory",
+  "version": "1.0.0",
+  "description": "Memory file hygiene and consolidation for project memories - detects duplicates, stale entries, unindexed orphans, and index orphans in ~/.claude/projects/<project-slug>/memory/",
+  "author": "dynamic",
+  "license": "MIT",
+  "triggers": [
+    "memory consolidation",
+    "memory cleanup",
+    "memory file hygiene",
+    "duplicate memory files",
+    "stale memory entries",
+    "unindexed memory files",
+    "memory index orphans"
+  ]
+}
