@@ -7,6 +7,8 @@ description: Memory file hygiene and consolidation for project memories - detect
 
 **Goal:** Memory file hygiene pass that detects duplicates, stale entries, and index drift - proposing cleanup actions with human approval gates.
 
+**Data directory** (resolve once): `$THROUGHLINE_DATA_DIR` if set, else `<project-root>/.claude/throughline/`. Below, `DATA` refers to that path.
+
 Handles memory file hygiene for project memories, scanning for duplicates, stale entries, unindexed orphans, and index orphans in `~/.claude/projects/<project-slug>/memory/`.
 
 ## Problem Types Scanned
@@ -26,17 +28,20 @@ Handles memory file hygiene for project memories, scanning for duplicates, stale
 ## Phase 2: Extract Candidates
 
 Scan for the four problem types listed above:
-- Calculate text similarity: use `difflib.SequenceMatcher` on file descriptions (frontmatter `description` field or first heading paragraph) - similarity > 90% flags as duplicate candidate, 80-90% as manual review
+- Calculate text similarity between descriptions (frontmatter `description` field or first heading paragraph) using any sequence comparison method - similarity > 90% flags as duplicate candidate, 80-90% as manual review
 - Extract `originSessionId` from frontmatter and compare against staleness threshold (90 days default) - older files with no recent `updatedAt` are stale
 - Cross-reference actual files against indexed entries in MEMORY.md
 - Identify any dead links in the index
 
 ## Phase 3: Propose Promotions (Human Gate)
 
-Present each candidate with:
-- Problem type + evidence (file paths, similarity scores, dates)
-- Proposed action (merge, update, add-to-index, remove-from-index, delete-file)
-- Confidence level (based on similarity score / staleness / etc.)
+Present candidates in a markdown table format:
+
+| File | Problem | Evidence | Proposed Action | Confidence |
+|------|---------|----------|-----------------|------------|
+| project_x.md | Duplicate | 92% similar to project_y.md | Merge into project_y.md | High |
+| project_old.md | Stale | Created 180 days ago | Review and update or delete | Medium |
+| orphan.md | Unindexed | Not in MEMORY.md | Add to index | High |
 
 For duplicates, show content comparison and suggest a canonical file to merge into.
 
