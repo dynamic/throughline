@@ -63,13 +63,15 @@ by **durability**, using the test *"would this still be true in three months?"*
 - **Yes → native memory, not `HANDOFF.md`.** Architecture/topology, environment/infra
   facts, tool/integration inventory, config & secret **names** (never values), key
   files & resources, and anything else that reads as a fact about the project rather
-  than a status. Write it as a memory topic file per Phase 4 step 3 below — that store
+  than a status. Write it as a memory topic file per Phase 4 step 4 below — that store
   is durably-recalled and does not cost resident context every turn the way
   `HANDOFF.md` does.
 - **No → `HANDOFF.md`.** Only genuinely volatile, in-flight state belongs here:
   - **Resolved issues** — recently closed, not yet promoted to memory (see Phase 4 cap)
   - **Pending items** — open problems, next steps surfaced this session
   - **Current state** — what's mid-flight: uncommitted work, open PRs/branches, blockers
+  - **Consolidation passes** — not durable-vs-in-flight at all, it's the `consolidate`
+    skill's own scope-tracking record. Never touch it here; leave it exactly as found.
 
 If you're unsure which bucket something falls in, prefer memory — `HANDOFF.md` is read
 in full every session (see Phase 4's size discipline); memory topic files are read on
@@ -127,46 +129,56 @@ having to carry it. Omit the line entirely for a session that starts something n
 
 ## Phase 4: Update durable HANDOFF.md + memory binding
 
-1. Apply the Phase 2 updates to `DATA/HANDOFF.md`: durable facts go to memory (step 3
+1. Apply the Phase 2 updates to `DATA/HANDOFF.md`: durable facts go to memory (step 4
    below), only in-flight state stays here. Keep each entry to 1–2 lines — it's a
-   reference doc, not a journal. Update its **Last Updated** date.
+   reference doc, not a journal. Update its **Last Updated** date. Keep the
+   **"Consolidation passes"** section untouched if present (owned by `consolidate`,
+   not a candidate for this trim).
    - **Match length to substance.** Cover the actual in-flight state; do not pad with
      filler sections, redundant summaries, or boilerplate. An empty section (nothing
      durable was moved out, nothing in-flight exists) should not appear at all.
-   - **Size discipline is a measured stop condition, not guidance — this is the
-     part that previously failed twice (see throughline#26).** `HANDOFF.md` is read
-     in full every session: it is resident context, paid for on every turn, not a
-     one-time write. After writing, **count it**: `wc -l DATA/HANDOFF.md`. Target
-     **150 lines / ~2,000 tokens**. If the count exceeds **200 lines**, you are not
-     done — go back and cut before finishing this phase, the same way Claude Code's
-     own `MEMORY.md` index refuses a write past its 200-line/25KB limit rather than
-     silently accepting it:
-     - First, re-check every section against the Phase 2 durability test. Anything
-       that would still be true in three months and isn't already in memory is the
-       likely offender — move it now, don't defer it to a later `consolidate` pass.
-     - **Cap "Resolved Issues" to the most recent ~5 rows.** Past the cap, promote
-       the row to a memory topic file (Phase 4 step 3) if the fact is worth keeping,
-       then drop it here — never leave the only copy of a fact in an
-       already-over-budget file.
-     - If nothing left to cut is actually droppable (every line is genuinely
-       in-flight state), the count is real signal that there's too much in flight
-       at once — say so in your report rather than forcing an artificial trim.
+   - **Cap "Resolved Issues" to the most recent ~5 rows.** Past the cap, promote
+     the row to a memory topic file (step 4 below) if the fact is worth keeping,
+     then drop it here — never leave the only copy of a fact in an
+     already-over-budget file.
 2. Add a link to the new session log under "Recent Session Logs" — keep only the
    **last 5**.
-3. **Memory binding (native system) — the default destination for anything durable.**
-   Every durable item identified in Phase 2 gets written here, not just "insights."
-   Types: a confirmed preference (`feedback`), a fact about the user/context
-   (`user`), a project constraint/decision/architecture fact (`project`), a resource
-   pointer (`reference`). Native memory is two layers: `MEMORY.md` is an
-   always-loaded index (truncated past 200 lines, so every entry there must stay a
-   single short line), and each entry's full content lives in its own topic file
-   under `~/.claude/projects/<slug>/memory/`, read on demand. **Topic files have no
-   enforced limit, so they need the same discipline applied by hand: keep each to
-   ~400 words** (match the length to the fact — a one-line preference doesn't need
-   400 words either; this is a ceiling, not a target) **and split a topic that grows
-   past it into two files** rather than letting one file become a second journal.
-   Write the topic file with frontmatter shaped like this, then add its one-line
-   pointer to `MEMORY.md`:
+3. **Now that the file is final, measure it — a stop condition, not guidance.** This
+   is the part that previously failed once already (see throughline#26: closed,
+   then regrown past budget in production). `HANDOFF.md` is read in full every
+   session — it is resident context, paid for on every turn, not a one-time write.
+   Count it: `wc -l DATA/HANDOFF.md` and `wc -c DATA/HANDOFF.md`. Target **150
+   lines / ~8KB (~2,000 tokens)**. The byte count is the binding number — this file
+   is table-heavy, so line count alone can look fine while running well over budget
+   in tokens. If either exceeds the hard stop (**200 lines or ~11KB**), you are not
+   done — go back to step 1 and cut before finishing this phase. (Native memory's
+   own `MEMORY.md` index enforces a comparable limit at load time — writes past
+   200 lines/25KB get truncated silently on every load — which is the failure mode
+   this measured check exists to avoid here, by catching it at write time instead.)
+   - First, re-check every section against the Phase 2 durability test. Anything
+     that would still be true in three months and isn't already in memory is the
+     likely offender — move it now, don't defer it to a later `consolidate` pass.
+   - If nothing left to cut is actually droppable (every line is genuinely
+     in-flight state), the count is real signal that there's too much in flight
+     at once — say so in your report rather than forcing an artificial trim.
+4. **Memory binding (native system) — the default destination for anything durable.**
+   Every durable item identified in Phase 2 gets written here, not just rare
+   standout insights — but still **curated**, not auto-dumped: one entry per genuine
+   fact, and check `MEMORY.md`'s existing index first so you update or merge into an
+   existing topic file instead of writing a near-duplicate one. Types: a confirmed
+   preference (`feedback`), a fact about the user/context (`user`), a project
+   constraint/decision/architecture fact (`project`), a resource pointer
+   (`reference`). Native memory is two layers: `MEMORY.md` is an always-loaded index
+   (**truncated silently past 200 lines/25KB on every load** — a write past that
+   limit isn't rejected, but everything past the cutoff becomes invisible to future
+   sessions, so every entry there must stay a single short line), and each entry's
+   full content lives in its own topic file under `~/.claude/projects/<slug>/memory/`,
+   read on demand. **Topic files have no enforced limit, so they need the same
+   discipline applied by hand: keep each to ~400 words** (match the length to the
+   fact — a one-line preference doesn't need 400 words either; this is a ceiling,
+   not a target) **and split a topic that grows past it into two files** rather than
+   letting one file become a second journal. Write the topic file with frontmatter
+   shaped like this, then add its one-line pointer to `MEMORY.md`:
    ```markdown
    ---
    name: short-kebab-case-slug
@@ -177,19 +189,17 @@ having to carry it. Omit the line entirely for a session that starts something n
      originSessionId: <current session id>
    ---
    ```
-   This promotion is **curated**: never auto-dump the buffer into memory. One entry
-   per genuine insight; skip if nothing new.
-4. **Consume the buffers:** move distilled `DATA/buffer/session-*.md` into
+5. **Consume the buffers:** move distilled `DATA/buffer/session-*.md` into
    `DATA/buffer/archive/` so they aren't re-processed next session. Archive only,
    never delete: an archived buffer is the recovery path if a distillation later
    turns out to have missed something. See "Housekeeping" in the README for when an
    archived buffer is old enough to actually delete.
-5. **Clear resolved breadcrumbs:** if `DATA/.capture-errors` exists and its contents
+6. **Clear resolved breadcrumbs:** if `DATA/.capture-errors` exists and its contents
    were surfaced above (as a Phase 2 "Resolved Issues" entry or in the session log),
    clear the file now that it has been distilled - it exists to make a swallowed
    capture failure visible exactly once, not to keep nagging on every future onboard
    after it's already been read and acted on.
-6. **Emit a next-session briefing.** Render a second, compact view of the session
+7. **Emit a next-session briefing.** Render a second, compact view of the session
    log's `## Next steps` (plus `## Objective`, what landed, and the sharpest
    `## Key learnings & gotchas` item) as a copy-pasteable fenced block in your
    report - this is not new synthesis, just a different rendering of what the
@@ -204,7 +214,7 @@ having to carry it. Omit the line entirely for a session that starts something n
    Watch out for: <sharpest gotcha from this session, if any>
    ```
 
-7. **Offer to commit + push the handoff artifacts** (offer only, never auto-run -
+8. **Offer to commit + push the handoff artifacts** (offer only, never auto-run -
    the write already happened; this is the review-gated action). throughline's
    data is local-only *by default* (see README "Local by default") - this offer
    only ever produces a commit when the project has deliberately opted in by
@@ -249,7 +259,7 @@ having to carry it. Omit the line entirely for a session that starts something n
 ## Phase 5: HANDOFF.md template (if absent)
 
 In-flight state only — no Architecture/Environment/Tools/Auth/Key-Files sections.
-Those are durable facts; they go to native memory (Phase 4 step 3), not here:
+Those are durable facts; they go to native memory (Phase 4 step 4), not here:
 
 ```markdown
 # <Project> — Handoff
@@ -264,11 +274,13 @@ Those are durable facts; they go to native memory (Phase 4 step 3), not here:
 <!-- what's mid-flight: uncommitted work, open PRs/branches, blockers -->
 ## Recent Session Logs
 1. [Title](logs/handoff-YYYY-MM-DD-HHMM.md) — YYYY-MM-DD
+## Consolidation Passes
+<!-- owned by the consolidate skill; omit this section until its first run -->
 ```
 
 A project migrating from the old template: at the next handoff, sort its existing
 Architecture/Environment/Tools/Auth/Key-Files content into memory topic files (Phase 4
-step 3), then delete those sections. Don't do this migration silently — report the
+step 4), then delete those sections. Don't do this migration silently — report the
 diff same as any other handoff.
 
 ---

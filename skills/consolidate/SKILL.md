@@ -48,19 +48,21 @@ work: if a candidate's right home is an auto-memory file, write the one new entr
 4. **Check `DATA/HANDOFF.md`'s own size discipline** (separate from mining the
    logs below - this looks at HANDOFF.md itself). It is read in full every
    session (see `handoff` Phase 4 for the resident-cost rationale). `handoff`
-   now enforces a **measured** cap per edit (target 150 lines / ~2,000 tokens,
-   hard stop at 200 lines - not guidance, a count it checks after every write),
-   plus a template with no durable-fact sections at all: architecture,
-   environment, tools, and auth/secrets content has no home in HANDOFF.md
-   anymore, only in native memory. Per-edit discipline can still drift over
-   many small handoffs, so re-run the count here: `wc -l DATA/HANDOFF.md`.
-   - **If it's over 200 lines, or if any durable-fact content has crept back in**
-     (an "Architecture & Services"-shaped section, a stale environment/tooling
-     paragraph, anything that would still be true in three months), that is a
-     candidate for Phase 3 below (home: HANDOFF-diet - see Phase 3).
+   now enforces a **measured** cap per edit (target 150 lines / ~8KB, hard stop
+   200 lines / ~11KB, byte count binding since the file is table-heavy - not
+   guidance, a count it checks after every write), plus a template with no
+   durable-fact sections at all: architecture, environment, tools, and
+   auth/secrets content has no home in HANDOFF.md anymore, only in native
+   memory. Per-edit discipline can still drift over many small handoffs, so
+   re-run the count here: `wc -l DATA/HANDOFF.md` and `wc -c DATA/HANDOFF.md`.
+   - **If it's over the 200-line/~11KB hard stop, or if any durable-fact content
+     has crept back in** (an "Architecture & Services"-shaped section, a stale
+     environment/tooling paragraph, anything that would still be true in three
+     months), that is a candidate for Phase 3 below (home: HANDOFF-diet - see
+     Phase 3).
    - For each line proposed for removal, confirm where it survives: an
      *existing* memory topic file, a *new* memory topic file to write as part
-     of this promotion (per `handoff` Phase 4 step 3's frontmatter shape), or
+     of this promotion (per `handoff` Phase 4 step 4's frontmatter shape), or
      an *existing* session log (cited, never edited - see Phase 4). A candidate
      with nowhere durable to land doesn't qualify for HANDOFF-diet - cutting it
      would be a real loss, not a relocation. `CHANGELOG.md` remains a valid
@@ -101,9 +103,9 @@ For each candidate, propose exactly **one** home:
 |---|---|
 | (a) Global `CLAUDE.md` rule | The lesson holds across all projects |
 | (b) The owning skill, in its source repo | The lesson corrects or extends a specific skill. **File an issue in that repo - never edit another repo's skill directly** |
-| (c) Project `CLAUDE.md` / durable `HANDOFF.md` section | The lesson is project-specific and true every session |
-| (d) Auto-memory file | A confirmed preference or fact that fits the native memory types (`feedback`, `user`, `project`, `reference`) |
-| (e) HANDOFF-diet (trim, don't add) | The candidate is a Phase 1.4 size-discipline finding - HANDOFF.md is over its 200-line cap, or durable-fact content has crept back into it. For each line proposed for removal, state exactly where its surviving copy lives or will be written (existing memory topic file, a new one to write in this same promotion, existing session-log citation, or an existing `CHANGELOG.md` entry), so the reviewer can confirm nothing is actually lost |
+| (c) Project `CLAUDE.md` | The lesson is project-specific, true every session, and belongs in the project's own instructions rather than a memory fact |
+| (d) Auto-memory file | A confirmed preference or fact that fits the native memory types (`feedback`, `user`, `project`, `reference`) — the default for anything "project-specific and true every session" that isn't an instruction. `HANDOFF.md` is never a home here: it holds in-flight state only (see `handoff` Phase 2), so a durable lesson routed there would just become a fresh HANDOFF-diet finding (row (e)) |
+| (e) HANDOFF-diet (trim, don't add) | The candidate is a Phase 1.4 size-discipline finding - HANDOFF.md is over its 200-line/~11KB cap, or durable-fact content has crept back into it. For each line proposed for removal, state exactly where its surviving copy lives or will be written (existing memory topic file, a new one to write in this same promotion, existing session-log citation, or an existing `CHANGELOG.md` entry), so the reviewer can confirm nothing is actually lost |
 
 Present the **full list** - lesson, evidence, confidence, proposed home - and stop.
 **Nothing is applied without explicit approval, per item.** The user may approve,
@@ -117,12 +119,15 @@ always-loaded files, where one wrong line costs every future session.
 
 1. Apply the **approved** promotions only, each to its agreed home. For home (b),
    opening the issue *is* the promotion - the edit happens in that repo on its own
-   schedule. For home (e): write any *new* backing entries into `CHANGELOG.md`
-   (creating the file if the project has none) exactly as proposed, re-verify
-   every cited *existing* `CHANGELOG.md`/session-log copy still checks out, then
-   trim the now-redundant content from HANDOFF.md. **Never write into a session
-   log** - they are append-only historical evidence (see Reminders); a candidate
-   with nothing durable to point to never reaches this step (gated in Phase 1.4).
+   schedule. For home (e): write any *new* backing entry exactly as proposed in
+   Phase 3 - a *new* memory topic file (per `handoff` Phase 4 step 4's frontmatter
+   shape) or a *new* `CHANGELOG.md` entry **only when the project already
+   maintains a `CHANGELOG.md`** (never create one solely for this; see Phase 1.4) -
+   re-verify every cited *existing* memory file/`CHANGELOG.md`/session-log copy
+   still checks out, then trim the now-redundant content from HANDOFF.md. **Never
+   write into a session log** - they are append-only historical evidence (see
+   Reminders); a candidate with nothing durable to point to never reaches this
+   step (gated in Phase 1.4).
 2. Record the pass in `DATA/HANDOFF.md` under "Consolidation passes" (create the
    section if absent): date + what was promoted and where, one line per promotion.
    Update the **Last Updated** date.

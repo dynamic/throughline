@@ -16,21 +16,28 @@ consuming project) because nothing measured the result.
   native memory, never to `HANDOFF.md`. Only in-flight state (resolved issues,
   pending items, current state) stays in the handoff doc.
 - `handoff` Phase 4 replaces the per-entry size guidance with a **measured**
-  stop condition: count `HANDOFF.md` with `wc -l` after writing, target
-  150 lines/~2,000 tokens, hard stop at 200 - the same enforcement model
-  Claude Code's own `MEMORY.md` index uses. If over, cut before finishing the
-  phase rather than deferring to the next `consolidate` pass.
+  stop condition, run only after the file's content is otherwise final: count
+  `HANDOFF.md` with both `wc -l` and `wc -c` (the byte count is binding - the
+  file is table-heavy, so line count alone can pass while running well over
+  budget in tokens), target 150 lines/~8KB (~2,000 tokens), hard stop at
+  200 lines/~11KB. If over, cut before finishing the phase rather than
+  deferring to the next `consolidate` pass.
+- "Resolved Issues" tightened from ~8-10 rows to ~5.
 - The Phase 5 `HANDOFF.md` template drops its five durable-fact sections
   (Architecture & Services, Environment & Infrastructure, Tools & Integrations,
   Authentication & Secrets, Key Files & Resources) entirely - that content now
   belongs in native memory topic files, which `handoff` already knew how to
-  write but treated as optional.
+  write but treated as optional. "Consolidation Passes" is kept - it's
+  `consolidate`'s own scope-tracking record, not a durable-vs-in-flight fact,
+  and `handoff` never touches it.
 - Memory topic files get an explicit (unenforced, by-hand) ~400-word ceiling,
   since only the `MEMORY.md` index has a real limit and the topic-file half of
   the store was starting to show the same unbounded growth (one observed at
   5,678 words).
-- `consolidate` Phase 1.4 and Phase 3 updated to check the new 200-line cap and
-  the memory-first destination instead of the retired template sections.
+- `consolidate` Phase 1.4, Phase 3, and Phase 4 updated in lockstep: the new
+  200-line/~11KB cap, memory topic files (not `HANDOFF.md`) as the durable
+  destination for a promoted lesson, and `CHANGELOG.md` only as a destination
+  where the project already maintains one - never created solely for this.
 
 ### Migration
 Existing `HANDOFF.md` files keep their old sections until the next `handoff`
