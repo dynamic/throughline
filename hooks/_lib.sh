@@ -34,10 +34,9 @@ _tl_canonicalize_path() {
 }
 
 tl_root() {
-  _tl_orig_root="${CLAUDE_PROJECT_DIR:-$PWD}"
-  # Canonicalize the path to handle macOS /tmp vs /private/tmp symlink issue
-  _tl_canonical_root=$(_tl_canonicalize_path "$_tl_orig_root")
-  printf '%s' "$_tl_canonical_root"
+  # Return the raw path - don't canonicalize
+  # File relativization needs to match tool input paths exactly
+  printf '%s' "${CLAUDE_PROJECT_DIR:-$PWD}"
 }
 
 # The project root throughline's DATA dir anchors to. Normally the session's own
@@ -120,12 +119,14 @@ tl_resolve_data_root() {
 # already answer that, and the main-worktree case returns $_tl_wt completely
 # untouched (never substitutes a git-canonicalized path for it).
 #
-# Since tl_root() now canonicalizes paths, all worktree paths will use the same
-# canonical form regardless of whether they come from symlinked or canonical paths.
+# Since tl_root() returns the raw path, we need to canonicalize only for git
+# operations to handle macOS /tmp vs /private/tmp symlink issue.
 _tl_compute_data_root() {
   _tl_wt=$(tl_root)
+  # Canonicalize for git operations to handle symlink resolution
+  _tl_wt_canonical=$(_tl_canonicalize_path "$_tl_wt")
   case "${THROUGHLINE_WORKTREE_SHARED:-1}" in
-    0|false|no|off) printf '%s' "$_tl_wt"; return ;;
+    0|false|no|off) printf '%s' "$_tl_wt_canonical"; return ;;
   esac
   # Two separate invocations rather than one call requesting both flags and
   # splitting the output: `$(...)` command substitution unconditionally
@@ -134,14 +135,14 @@ _tl_compute_data_root() {
   # version of this function split on `$(printf '\n')`, which command
   # substitution collapses to an EMPTY string, silently truncating every
   # extracted field to "" - it never once matched).
-  _tl_gd=$(git -C "$_tl_wt" rev-parse --path-format=absolute --git-dir 2>/dev/null) \
-    || { printf '%s' "$_tl_wt"; return; }
-  _tl_cd=$(git -C "$_tl_wt" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) \
-    || { printf '%s' "$_tl_wt"; return; }
+  _tl_gd=$(git -C "$_tl_wt_canonical" rev-parse --path-format=absolute --git-dir 2>/dev/null) \
+    || { printf '%s' "$_tl_wt_canonical"; return; }
+  _tl_cd=$(git -C "$_tl_wt_canonical" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) \
+    || { printf '%s' "$_tl_wt_canonical"; return; }
   # gd == cd means this IS the main worktree - nothing to redirect, return the
-  # original $_tl_wt untouched.
+  # canonical path.
   if [ "$_tl_gd" = "$_tl_cd" ]; then
-    printf '%s' "$_tl_wt"
+    printf '%s' "$_tl_wt_canonical"
     return
   fi
   # Confirmed linked worktree. Ask git directly for the MAIN worktree's path
@@ -164,12 +165,15 @@ _tl_compute_data_root() {
   # a normal repo - the case issue #31 and Claude Code's own auto-worktree
   # workflow actually produce - resolves correctly). THROUGHLINE_WORKTREE_SHARED=0
   # or an absolute THROUGHLINE_DATA_DIR sidesteps it if ever hit.
-  _tl_main=$(git -C "$_tl_wt" worktree list --porcelain 2>/dev/null \
+  _tl_main=$(git -C "$_tl_wt_canonical" worktree list --porcelain 2>/dev/null \
     | awk '/^worktree /{print substr($0,10); exit}')
   if [ -z "$_tl_main" ] || [ ! -d "$_tl_main" ]; then
     printf '%s' "$_tl_wt"
     return
   fi
+  # Canonicalize the main worktree path BEFORE migration safety check
+  # to ensure consistent path comparison
+  _tl_main=$(_tl_canonicalize_path "$_tl_main")
   # Migration safety: don't strand data a worktree already accumulated under
   # its OWN root before this sharing default existed (issue #31 review
   # finding). If this worktree's own would-be data dir already has content (a
@@ -190,8 +194,7 @@ _tl_compute_data_root() {
     printf '%s' "$_tl_wt"
     return
   fi
-  # Canonicalize the main worktree path to be consistent with canonicalized $_tl_wt
-  _tl_main=$(_tl_canonicalize_path "$_tl_main")
+  # Return canonicalized main worktree path for data sharing
   printf '%s' "$_tl_main"
 }
 
