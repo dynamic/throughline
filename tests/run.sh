@@ -303,7 +303,8 @@ eq "tl_data_dir honors absolute THROUGHLINE_DATA_DIR" \
 WT_MAIN="$WORK/wt-main"
 mkdir -p "$WT_MAIN"
 ( cd "$WT_MAIN" && git init -q && git commit -q --allow-empty -m init \
-    && git worktree add -q "$WORK/wt-linked" -b feat ) 2>/dev/null
+    && git worktree add -q "$WORK/wt-linked" -b feat ) 2>/dev/null \
+  || bad "fixture setup failed: wt-linked (git init/commit/worktree add)"
 WT_LINK="$WORK/wt-linked"
 D_LINK=$(CLAUDE_PROJECT_DIR="$WT_LINK" sh -c '. "'"$H"'/_lib.sh"; tl_data_dir')
 has   "linked worktree data dir points at the MAIN tree" "$D_LINK" "wt-main/.claude/throughline"
@@ -340,12 +341,27 @@ hasnt "onboard does not note sharing from the main working tree" "$O_MAIN" 'shar
 WT_OLD_MAIN="$WORK/wt-old-main"
 mkdir -p "$WT_OLD_MAIN"
 ( cd "$WT_OLD_MAIN" && git init -q && git commit -q --allow-empty -m init \
-    && git worktree add -q "$WORK/wt-old-linked" -b old ) 2>/dev/null
+    && git worktree add -q "$WORK/wt-old-linked" -b old ) 2>/dev/null \
+  || bad "fixture setup failed: wt-old-linked (git init/commit/worktree add)"
 WT_OLD_LINK="$WORK/wt-old-linked"
 mkdir -p "$WT_OLD_LINK/.claude/throughline"
 printf -- '# Test\n**Last Updated:** 2024-01-01\n' > "$WT_OLD_LINK/.claude/throughline/HANDOFF.md"
 D_OLD=$(CLAUDE_PROJECT_DIR="$WT_OLD_LINK" sh -c '. "'"$H"'/_lib.sh"; tl_data_dir')
 has "a worktree with PRE-EXISTING data keeps resolving to its own root" "$D_OLD" "wt-old-linked/.claude/throughline"
+
+# 5e6b. issue #42 review finding: onboard's sharing note must NOT fire for
+#       this worktree - it is deliberately NOT sharing (the migration guard
+#       above keeps it on its own root). _tl_compute_data_root() used to
+#       return this branch's path raw (uncanonicalized) while every other
+#       branch returned canonical, so on a symlinked $WORK (true of macOS's
+#       mktemp -d, /tmp -> /private/tmp) onboard's raw-vs-canonical
+#       comparison saw two different-looking strings for the SAME directory
+#       and wrongly printed a sharing note - the exact opposite of what this
+#       branch exists to guarantee. Both sides of that comparison are
+#       canonical now; this pins the observable (the printed message), not
+#       just the internal path value 5e6 above already checks.
+O_OLD=$(printf '%s' '{"source":"startup","session_id":"T"}' | CLAUDE_PROJECT_DIR="$WT_OLD_LINK" sh "$H/session-onboard.sh")
+hasnt "onboard does not claim sharing for a worktree keeping its own data" "$O_OLD" 'shared with the main working tree'
 
 # 5e7. once the shared main root ALSO has data (or is later adopted), sharing
 #      applies going forward - the migration guard only protects data that
@@ -363,7 +379,8 @@ has "once main tree also has data, the worktree still keeps its own (guard is st
 WT_IGN_MAIN="$WORK/wt-ign-main"
 mkdir -p "$WT_IGN_MAIN"
 ( cd "$WT_IGN_MAIN" && git init -q && git commit -q --allow-empty -m init \
-    && git worktree add -q "$WORK/wt-ign-linked" -b ign ) 2>/dev/null
+    && git worktree add -q "$WORK/wt-ign-linked" -b ign ) 2>/dev/null \
+  || bad "fixture setup failed: wt-ign-linked (git init/commit/worktree add)"
 WT_IGN_LINK="$WORK/wt-ign-linked"
 : > "$WT_IGN_LINK/.throughlineignore"
 O_IGN=$(printf '%s' '{"source":"startup","session_id":"T"}' | CLAUDE_PROJECT_DIR="$WT_IGN_LINK" sh "$H/session-onboard.sh")
