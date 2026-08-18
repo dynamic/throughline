@@ -168,7 +168,13 @@ _tl_compute_data_root() {
   _tl_main=$(git -C "$_tl_wt_canonical" worktree list --porcelain 2>/dev/null \
     | awk '/^worktree /{print substr($0,10); exit}')
   if [ -z "$_tl_main" ] || [ ! -d "$_tl_main" ]; then
-    printf '%s' "$_tl_wt"
+    # Canonicalized, like every other return path in this function (issue
+    # #42 review finding): a caller that compares this return value against
+    # a separately-canonicalized tl_root() - as session-onboard.sh's
+    # worktree-sharing note does - needs both sides consistently resolved,
+    # or a raw path here reads as "different location" purely from a
+    # symlink (macOS /tmp vs /private/tmp) even when it's the same one.
+    printf '%s' "$_tl_wt_canonical"
     return
   fi
   # Canonicalize the main worktree path BEFORE migration safety check
@@ -191,7 +197,12 @@ _tl_compute_data_root() {
   _tl_own=$(_tl_dir_under "$_tl_wt")
   if [ "$_tl_own" != "$(_tl_dir_under "$_tl_main")" ] \
     && { [ -d "$_tl_own" ] || [ -f "$_tl_own/HANDOFF.md" ]; }; then
-    printf '%s' "$_tl_wt"
+    # Canonicalized (issue #42 review finding) - same reasoning as the
+    # worktree-list-unparseable branch above: every return path in this
+    # function must agree on raw vs. canonical, or a caller comparing this
+    # value against a separately-canonicalized path (session-onboard.sh's
+    # sharing note) sees a false "different location" from a symlink alone.
+    printf '%s' "$_tl_wt_canonical"
     return
   fi
   # Return canonicalized main worktree path for data sharing

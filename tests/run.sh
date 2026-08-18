@@ -17,6 +17,27 @@
 # shellcheck disable=SC2016
 
 set -u
+
+# Fixtures below run `git commit` (and `git worktree add`, which needs a
+# real commit to branch from) against throwaway repos under $WORK. Git
+# refuses to commit without an author identity, and a bare CI runner has no
+# global user.email/user.name configured (actions/checkout doesn't set one
+# for the runner's global config, only for its own internal auth) — so on
+# such a runner every fixture below silently failed the commit, which
+# silently skipped worktree add (all of it chained with `&&` and swallowed
+# by `2>/dev/null`), which left every downstream worktree-detection
+# assertion resolving against a directory that was never created. That
+# looked exactly like a bug in hooks/_lib.sh's worktree logic and wasn't —
+# see dynamic/throughline#42. Setting these env vars (not global git config)
+# makes every git commit in this script self-contained regardless of the
+# ambient environment's identity config, matching how the rest of this
+# script already avoids depending on ambient state.
+GIT_AUTHOR_NAME="throughline-tests"
+GIT_AUTHOR_EMAIL="throughline-tests@localhost"
+GIT_COMMITTER_NAME="throughline-tests"
+GIT_COMMITTER_EMAIL="throughline-tests@localhost"
+export GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL
+
 ROOT=$(unset CDPATH; cd -- "$(dirname -- "$0")/.." && pwd)
 H="$ROOT/hooks"
 PASS=0
@@ -282,7 +303,8 @@ eq "tl_data_dir honors absolute THROUGHLINE_DATA_DIR" \
 WT_MAIN="$WORK/wt-main"
 mkdir -p "$WT_MAIN"
 ( cd "$WT_MAIN" && git init -q && git commit -q --allow-empty -m init \
-    && git worktree add -q "$WORK/wt-linked" -b feat ) 2>/dev/null
+    && git worktree add -q "$WORK/wt-linked" -b feat ) 2>/dev/null \
+  || bad "fixture setup failed: wt-linked (git init/commit/worktree add)"
 WT_LINK="$WORK/wt-linked"
 D_LINK=$(CLAUDE_PROJECT_DIR="$WT_LINK" sh -c '. "'"$H"'/_lib.sh"; tl_data_dir')
 has   "linked worktree data dir points at the MAIN tree" "$D_LINK" "wt-main/.claude/throughline"
@@ -319,12 +341,27 @@ hasnt "onboard does not note sharing from the main working tree" "$O_MAIN" 'shar
 WT_OLD_MAIN="$WORK/wt-old-main"
 mkdir -p "$WT_OLD_MAIN"
 ( cd "$WT_OLD_MAIN" && git init -q && git commit -q --allow-empty -m init \
-    && git worktree add -q "$WORK/wt-old-linked" -b old ) 2>/dev/null
+    && git worktree add -q "$WORK/wt-old-linked" -b old ) 2>/dev/null \
+  || bad "fixture setup failed: wt-old-linked (git init/commit/worktree add)"
 WT_OLD_LINK="$WORK/wt-old-linked"
 mkdir -p "$WT_OLD_LINK/.claude/throughline"
 printf -- '# Test\n**Last Updated:** 2024-01-01\n' > "$WT_OLD_LINK/.claude/throughline/HANDOFF.md"
 D_OLD=$(CLAUDE_PROJECT_DIR="$WT_OLD_LINK" sh -c '. "'"$H"'/_lib.sh"; tl_data_dir')
 has "a worktree with PRE-EXISTING data keeps resolving to its own root" "$D_OLD" "wt-old-linked/.claude/throughline"
+
+# 5e6b. issue #42 review finding: onboard's sharing note must NOT fire for
+#       this worktree - it is deliberately NOT sharing (the migration guard
+#       above keeps it on its own root). _tl_compute_data_root() used to
+#       return this branch's path raw (uncanonicalized) while every other
+#       branch returned canonical, so on a symlinked $WORK (true of macOS's
+#       mktemp -d, /tmp -> /private/tmp) onboard's raw-vs-canonical
+#       comparison saw two different-looking strings for the SAME directory
+#       and wrongly printed a sharing note - the exact opposite of what this
+#       branch exists to guarantee. Both sides of that comparison are
+#       canonical now; this pins the observable (the printed message), not
+#       just the internal path value 5e6 above already checks.
+O_OLD=$(printf '%s' '{"source":"startup","session_id":"T"}' | CLAUDE_PROJECT_DIR="$WT_OLD_LINK" sh "$H/session-onboard.sh")
+hasnt "onboard does not claim sharing for a worktree keeping its own data" "$O_OLD" 'shared with the main working tree'
 
 # 5e7. once the shared main root ALSO has data (or is later adopted), sharing
 #      applies going forward - the migration guard only protects data that
@@ -342,7 +379,8 @@ has "once main tree also has data, the worktree still keeps its own (guard is st
 WT_IGN_MAIN="$WORK/wt-ign-main"
 mkdir -p "$WT_IGN_MAIN"
 ( cd "$WT_IGN_MAIN" && git init -q && git commit -q --allow-empty -m init \
-    && git worktree add -q "$WORK/wt-ign-linked" -b ign ) 2>/dev/null
+    && git worktree add -q "$WORK/wt-ign-linked" -b ign ) 2>/dev/null \
+  || bad "fixture setup failed: wt-ign-linked (git init/commit/worktree add)"
 WT_IGN_LINK="$WORK/wt-ign-linked"
 : > "$WT_IGN_LINK/.throughlineignore"
 O_IGN=$(printf '%s' '{"source":"startup","session_id":"T"}' | CLAUDE_PROJECT_DIR="$WT_IGN_LINK" sh "$H/session-onboard.sh")

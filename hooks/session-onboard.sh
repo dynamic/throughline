@@ -87,7 +87,20 @@ echo
 # Make worktree-sharing (issue #31) non-silent: when this session is a linked
 # worktree and its data anchored to the main tree instead, say so plainly
 # rather than leaving it to be inferred from where HANDOFF.md happens to live.
-if [ "$droot" != "$root" ]; then
+#
+# $droot is canonicalized (see _tl_compute_data_root in _lib.sh); $root is
+# deliberately NOT (tl_root()'s own doc comment - it anchors file-path
+# relativization elsewhere in this script and must match tool input paths
+# exactly). Comparing them directly is therefore a symlink false-positive
+# waiting to happen: on any project whose raw path passes through a symlink
+# (macOS's /tmp -> /private/tmp being the everyday case), $root and $droot
+# differ even for the literal main working tree, wrongly claiming sharing on
+# every single session there. Canonicalize $root ONLY for this comparison -
+# not the variable itself - so the "is this actually a different location"
+# check compares like with like without disturbing $root's other uses below
+# (issue #42 investigation; the CI-only worktree-fixture bug it was filed
+# for was unrelated to this and is fixed separately in tests/run.sh).
+if [ "$droot" != "$(_tl_canonicalize_path "$root")" ]; then
   echo "🔗 throughline data is shared with the main working tree at \`$droot\` (this is a linked worktree)."
   echo
 fi
