@@ -107,30 +107,51 @@ within the OpenCode ecosystem.
 
 ### Installation
 
-1. Copy the `.opencode-plugin/` directory to your OpenCode configuration directory (typically `~/.config/opencode/plugins/`)
-2. Add the plugin to your `opencode.json` plugins array:
+OpenCode's plugin config key is `plugin` (singular) in `opencode.json`, and each
+entry is either a local path or an npm package name - there is no separate
+`plugins/` directory to copy into.
+
+1. Clone this repo (or a checkout you already have) somewhere stable, e.g.
+   `~/AI/skills/throughline`.
+2. Add the plugin's local path to your `opencode.json`:
 
 ```json
 {
-  "plugins": [
-    "throughline-opencode"
+  "plugin": [
+    "/absolute/path/to/throughline/.opencode-plugin"
   ]
 }
 ```
 
+3. Restart OpenCode. Check `~/.local/share/opencode/log/opencode.log` for a load
+   error against that path if session capture doesn't appear to be running.
+
+Once throughline is published to npm, this will collapse to a package name
+(`"throughline-opencode"`) like any other plugin - no local path or clone required.
+
 ### Requirements
 
 - Node.js 18+ (no `jq` required - TypeScript uses native JSON parsing)
+- OpenCode loads the plugin's TypeScript entry point directly (via Bun) - no
+  build step required to install it.
 
 ### Features
 
 The OpenCode plugin provides the same session capture capabilities as the Claude Code plugin:
 
 - Continuous capture of user prompts and tool executions
-- Automatic creation of HANDOFF.md pointers and live git state
+- HANDOFF.md pointer and live git state injected into the system prompt at
+  session start, via OpenCode's `experimental.chat.system.transform` hook -
+  OpenCode has no direct equivalent of Claude Code's SessionStart context
+  injection today, so this rides an `experimental.*` API that may change
+  upstream.
 - Action capture with redaction of sensitive information
 - Compaction boundary markers to preserve context across session compaction
-- Session end stamps for proper bookkeeping
+- A "last known idle point" marker in the buffer, refreshed each time the
+  session goes idle. OpenCode's `session.idle` fires after every turn, not
+  once at process exit like Claude Code's SessionEnd, so this is not a
+  one-shot end-of-session stamp - it tells `onboard` whether the buffer has
+  seen activity since the agent last went idle.
 - All 5 hooks are implemented: session-created, chat-message, tool-execute-after, session-compacted, session-idle
 
 ### Data Directory Compatibility
@@ -329,8 +350,7 @@ throughline/
 │  ├─ plugin.json
 │  └─ marketplace.json
 ├─ .opencode-plugin/
-│  ├─ plugin.json           # OpenCode plugin manifest
-│  ├─ package.json          # Node dependencies
+│  ├─ package.json          # Node dependencies + plugin entry point (main)
 │  ├─ tsconfig.json         # TypeScript config
 │  ├─ .gitignore            # Excludes node_modules/ and dist/
 │  └─ src/

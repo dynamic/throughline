@@ -14,8 +14,11 @@ All notable changes to throughline are documented here. Format loosely follows
   (TypeScript uses native JSON parsing).
 - Worktree-aware data directory resolution — shares main tree data across worktrees,
   matching the Claude Code plugin behavior.
-- Comprehensive test suite: 72 tests passing (51 unit + 21 integration) covering
-  redaction logic, hook implementations, and plugin entry point.
+- Comprehensive test suite: 83 tests passing (51 unit + 32 integration) covering
+  redaction logic, hook implementations, and plugin entry point — driven through
+  real `@opencode-ai/sdk` payload shapes (event envelopes, `UserMessage`/`parts`,
+  lowercase tool ids), not hand-shaped fixtures that could drift from the actual
+  wire format.
 
 ## [0.12.0]
 

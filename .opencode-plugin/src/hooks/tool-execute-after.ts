@@ -6,17 +6,29 @@
  * handoff distills from. Mechanical and cheap — no model call.
  * Always exits cleanly; never blocks a tool.
  *
- * Which tools land here is decided by the filter below: the mutating
- * tools (Bash/Edit/Write/NotebookEdit) plus the high-signal read-side
- * tools (Grep/WebFetch/WebSearch/Task/Agent) and MCP tools (mcp__*).
- * Read and Glob are deliberately skipped — they are the noisiest tools
- * by far, and a buffer that logs every file read stops being skimmable.
+ * Which tools land here is decided by the switch below: the mutating
+ * tools (bash/edit/write) plus the high-signal read-side tools
+ * (grep/webfetch/websearch/task) and MCP tools (mcp__*). read and glob are
+ * deliberately skipped — they are the noisiest tools by far, and a buffer
+ * that logs every file read stops being skimmable.
  *
- * Port of hooks/session-capture.sh lines 71-147.
+ * OpenCode's built-in tool ids are lowercase (`bash`, `edit`, `write`,
+ * `grep`, `webfetch`, `websearch`, `task`, ...) — confirmed against
+ * packages/opencode/src/tool/*.ts in anomalyco/opencode (the sst/opencode
+ * successor) and against `permission=...` lines in this machine's
+ * opencode.log. This does NOT match Claude Code's PascalCase tool names
+ * (Bash/Edit/Write/Grep/WebFetch/WebSearch/Task), so the arg field names
+ * below are OpenCode's own (`filePath`, not `file_path`; no NotebookEdit
+ * or Agent alias; the bash tool has no `description` field, only
+ * `command`/`timeout`/`workdir`).
+ *
+ * Port of hooks/session-capture.sh lines 71-147, adapted to the OpenCode
+ * tool surface rather than Claude Code's.
  */
 
 import { join } from "node:path";
 import { mkdirSync } from "node:fs";
+import type { Hooks } from "@opencode-ai/plugin";
 import {
   type ThroughlineContext,
   tlActive,
@@ -26,23 +38,14 @@ import {
 } from "../lib.js";
 import { redact, redactPrompt, clean, clamp } from "../utils/redaction.js";
 
-interface ToolExecuteAfterInput {
-  tool: string;
-  sessionID: string;
-  callID: string;
-  args: Record<string, unknown>;
-}
-
-interface ToolExecuteAfterOutput {
-  title: string;
-  output: string;
-  metadata: Record<string, unknown>;
-}
+type ToolExecuteAfterHook = NonNullable<Hooks["tool.execute.after"]>;
+type ToolExecuteAfterInput = Parameters<ToolExecuteAfterHook>[0];
+type ToolExecuteAfterOutput = Parameters<ToolExecuteAfterHook>[1];
 
 /**
  * Determine outcome suffix from tool result metadata.
- * OpenCode's tool_response may expose `interrupted`, `is_error`, or
- * `exit_code`/`error`/`code` for Bash. Match shell version's outcome() def.
+ * OpenCode's tool output may expose `interrupted`, `is_error`, or
+ * `exit_code`/`error`/`code` for bash. Match shell version's outcome() def.
  */
 function outcome(tool: string, output: ToolExecuteAfterOutput): string {
   const meta = output?.metadata ?? {};
@@ -51,8 +54,8 @@ function outcome(tool: string, output: ToolExecuteAfterOutput): string {
   if (resp.interrupted === true) return " `[interrupted]`";
   if (resp.is_error === true) return " `[failed]`";
 
-  // Bash-specific: check exit code
-  if (tool === "Bash") {
+  // bash-specific: check exit code
+  if (tool === "bash") {
     const exitCode = resp.exit_code ?? resp.code ?? resp.returncode ?? 0;
     if (resp.error || String(exitCode) !== "0") return " `[failed]`";
   }
@@ -81,19 +84,18 @@ export async function toolExecuteAfter(
   let line = "";
 
   switch (tool) {
-    case "Bash": {
-      const desc = (args?.description as string) ?? "";
+    case "bash": {
+      // OpenCode's bash tool takes command/timeout/workdir — no
+      // description field (unlike Claude Code's Bash tool).
       const cmd = (args?.command as string) ?? "";
       if (!cmd) return;
-      line = `**bash** ${clean(redact(desc))}${suffix} - \`${clamp(clean(redact(cmd)), 200, "…[truncated]")}\``;
+      line = `**bash**${suffix} \`${clamp(clean(redact(cmd)), 200, "…[truncated]")}\``;
       break;
     }
 
-    case "Edit":
-    case "Write":
-    case "NotebookEdit": {
-      const filePath =
-        (args?.file_path as string) ?? (args?.notebook_path as string) ?? "";
+    case "edit":
+    case "write": {
+      const filePath = (args?.filePath as string) ?? "";
       if (!filePath) return;
       // Show path relative to project root
       const relPath = filePath.startsWith(root + "/")
@@ -103,7 +105,7 @@ export async function toolExecuteAfter(
       break;
     }
 
-    case "Grep": {
+    case "grep": {
       const pattern = (args?.pattern as string) ?? "";
       if (!pattern) return;
       // Grep pattern is not prose — use command-path redaction
@@ -111,14 +113,14 @@ export async function toolExecuteAfter(
       break;
     }
 
-    case "WebFetch": {
+    case "webfetch": {
       const url = (args?.url as string) ?? "";
       if (!url) return;
       line = `**webfetch** ${clamp(clean(redact(url)), 200, "…")}${suffix}`;
       break;
     }
 
-    case "WebSearch": {
+    case "websearch": {
       const query = (args?.query as string) ?? "";
       if (!query) return;
       // Natural-language query — prose-safe redaction
@@ -126,8 +128,7 @@ export async function toolExecuteAfter(
       break;
     }
 
-    case "Task":
-    case "Agent": {
+    case "task": {
       const subagentType = (args?.subagent_type as string) ?? "";
       // description // prompt: prefer description, fall back to prompt
       const desc =
@@ -157,7 +158,7 @@ export async function toolExecuteAfter(
   try {
     mkdirSync(bufDir, { recursive: true });
   } catch (err) {
-    tlErr(`mkdir failed for buffer dir: ${err}`);
+    tlErr(state.dataDir, `mkdir failed for buffer dir: ${err}`);
     return;
   }
 

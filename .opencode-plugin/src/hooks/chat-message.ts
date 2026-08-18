@@ -7,41 +7,35 @@
  */
 
 import { join } from "node:path";
+import { mkdirSync } from "node:fs";
+import type { Hooks } from "@opencode-ai/plugin";
 import {
   type ThroughlineContext,
   tlActive,
   tlSafeSid,
   tlAppendLine,
+  tlErr,
 } from "../lib.js";
 import { redactPrompt, clean, clamp } from "../utils/redaction.js";
 
-interface ChatMessageInput {
-  sessionID: string;
-  agent?: string;
-  model?: { providerID: string; modelID: string };
-  messageID?: string;
-  variant?: string;
-}
-
-interface ChatMessageOutput {
-  message: {
-    role: string;
-    parts: Array<{ type: string; text?: string }>;
-  };
-  parts: Array<{ type: string; text?: string }>;
-}
+type ChatMessageHook = NonNullable<Hooks["chat.message"]>;
+type ChatMessageInput = Parameters<ChatMessageHook>[0];
+type ChatMessageOutput = Parameters<ChatMessageHook>[1];
 
 /**
  * Extract user prompt text from message parts.
+ *
+ * UserMessage itself carries no `parts` — the text lives in the sibling
+ * `output.parts` array (see @opencode-ai/sdk UserMessage / Hooks["chat.message"]).
  */
 function extractPromptText(output: ChatMessageOutput): string {
   // Only capture user messages
   if (output.message.role !== "user") return "";
 
   // Concatenate all text parts
-  const textParts = output.message.parts
+  const textParts = output.parts
     .filter((part) => part.type === "text" && part.text)
-    .map((part) => part.text || "");
+    .map((part) => (part as { text: string }).text);
 
   return textParts.join(" ");
 }
@@ -78,6 +72,19 @@ export async function chatMessage(
 
   const bufDir = join(state.dataDir, "buffer");
   const line = `**prompt** ${finalText}`;
+
+  // A chat message is normally the FIRST capture event of a session — the
+  // buffer dir does not exist yet at this point (tlActive() only bootstraps
+  // dataDir, not dataDir/buffer). Without this, appendFileSync in
+  // tlAppendLine throws ENOENT, is swallowed, and the session's opening
+  // prompt is silently dropped. See tool-execute-after.ts, which needs the
+  // same mkdir for the same reason.
+  try {
+    mkdirSync(bufDir, { recursive: true });
+  } catch (err) {
+    tlErr(state.dataDir, `mkdir failed for buffer dir: ${err}`);
+    return;
+  }
 
   tlAppendLine(bufDir, sid, line);
 }

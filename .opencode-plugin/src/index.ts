@@ -5,80 +5,22 @@
  * - session-created, session-idle, session-compacted → via event handler
  * - chat-message → via chat.message hook
  * - tool-execute-after → via tool.execute.after hook
+ * - HANDOFF.md context injection → via experimental.chat.system.transform,
+ *   since OpenCode's session.created event has no text-injection channel of
+ *   its own (unlike Claude Code's SessionStart). This rides an
+ *   `experimental.*` hook and may need to move if OpenCode's API changes.
  *
- * OpenCode plugins are local TypeScript/JavaScript files with structural typing.
- * The plugin function receives a context object and returns an object with hook
- * handlers. OpenCode calls these hooks at the appropriate lifecycle points.
- *
- * Plugin context shape (from OpenCode docs):
- *   { project, client, $, directory, worktree }
- *
- * Available hooks (from OpenCode docs):
- *   Session: session.created, session.compacted, session.idle, session.deleted, ...
- *   Tool: tool.execute.before, tool.execute.after
- *   Chat: chat.message, chat.params, chat.headers
- *   Events: event handler for session/file/tool/todo/lifecycle events
+ * Types are imported from @opencode-ai/plugin rather than hand-rolled, so a
+ * payload-shape mismatch is a compile error instead of a silent no-op.
  */
+
+import type { Plugin, Hooks } from "@opencode-ai/plugin";
 
 import { sessionCreated } from "./hooks/session-created.js";
 import { chatMessage } from "./hooks/chat-message.js";
 import { toolExecuteAfter } from "./hooks/tool-execute-after.js";
 import { sessionCompacted } from "./hooks/session-compacted.js";
 import { sessionIdle } from "./hooks/session-idle.js";
-
-// --- OpenCode plugin types (structural, no npm package) ---
-
-interface PluginContext {
-  directory: string;
-  worktree?: string;
-  project?: string;
-  client?: unknown;
-  $?: unknown;
-}
-
-interface Event {
-  type: string;
-  sessionID?: string;
-  [key: string]: unknown;
-}
-
-interface ChatMessageInput {
-  sessionID: string;
-  agent?: string;
-  model?: { providerID: string; modelID: string };
-  messageID?: string;
-  variant?: string;
-}
-
-interface ChatMessageOutput {
-  message: {
-    role: string;
-    parts: Array<{ type: string; text?: string }>;
-  };
-  parts: Array<{ type: string; text?: string }>;
-}
-
-interface ToolExecuteAfterInput {
-  tool: string;
-  sessionID: string;
-  callID: string;
-  args: Record<string, unknown>;
-}
-
-interface ToolExecuteAfterOutput {
-  title: string;
-  output: string;
-  metadata: Record<string, unknown>;
-}
-
-interface PluginHooks {
-  "chat.message"?: (input: ChatMessageInput, output: ChatMessageOutput) => Promise<void>;
-  "tool.execute.after"?: (input: ToolExecuteAfterInput, output: ToolExecuteAfterOutput) => Promise<void>;
-  event?: (ctx: { event: Event }) => Promise<void>;
-  config?: (cfg: Record<string, unknown>) => void;
-}
-
-type PluginFunction = (ctx: PluginContext) => Promise<PluginHooks>;
 
 // --- Plugin implementation ---
 
@@ -88,16 +30,18 @@ type PluginFunction = (ctx: PluginContext) => Promise<PluginHooks>;
  * Continuous, state-aware session memory. Captures what you did and what is,
  * hands it off with judgment when the session wraps.
  */
-export const ThroughlinePlugin: PluginFunction = async (ctx) => {
-  const { directory, worktree } = ctx;
-
-  // Build the throughline context object that hooks expect
+export const ThroughlinePlugin: Plugin = async ({ directory, worktree }) => {
   const tlCtx = {
     directory,
     worktree: worktree ?? directory,
   };
 
-  return {
+  // Context block built at session.created, consumed once by the next
+  // system-prompt transform for that session. `null` means "computed, but
+  // nothing to inject" (still consumed, so we don't recompute every turn).
+  const pendingContext = new Map<string, string | null>();
+
+  const hooks: Hooks = {
     // Direct hooks
     "chat.message": async (input, output) => {
       await chatMessage(tlCtx, input, output);
@@ -107,29 +51,35 @@ export const ThroughlinePlugin: PluginFunction = async (ctx) => {
       await toolExecuteAfter(tlCtx, input, output);
     },
 
+    "experimental.chat.system.transform": async (input, output) => {
+      if (!input.sessionID || !pendingContext.has(input.sessionID)) return;
+      const block = pendingContext.get(input.sessionID);
+      pendingContext.delete(input.sessionID);
+      if (block) output.system.push(block);
+    },
+
     // Event-based hooks
     event: async ({ event }) => {
       switch (event.type) {
-        case "session.created":
-          if (event.sessionID) {
-            await sessionCreated(tlCtx, { sessionID: event.sessionID });
-          }
+        case "session.created": {
+          const sessionID = event.properties.info.id;
+          const block = await sessionCreated(tlCtx, { sessionID });
+          pendingContext.set(sessionID, block);
           break;
+        }
 
         case "session.compacted":
-          if (event.sessionID) {
-            await sessionCompacted(tlCtx, { sessionID: event.sessionID });
-          }
+          await sessionCompacted(tlCtx, { sessionID: event.properties.sessionID });
           break;
 
         case "session.idle":
-          if (event.sessionID) {
-            await sessionIdle(tlCtx, { sessionID: event.sessionID });
-          }
+          await sessionIdle(tlCtx, { sessionID: event.properties.sessionID });
           break;
       }
     },
   };
+
+  return hooks;
 };
 
 // Default export for OpenCode plugin loader

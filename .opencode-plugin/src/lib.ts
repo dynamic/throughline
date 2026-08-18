@@ -12,7 +12,7 @@
 
 import { execSync } from "node:child_process";
 import { existsSync, mkdirSync, appendFileSync } from "node:fs";
-import { join, resolve, isAbsolute } from "node:path";
+import { dirname, join, isAbsolute } from "node:path";
 
 // --- Types ---
 
@@ -50,14 +50,20 @@ export function tlRoot(ctx: ThroughlineContext): string {
 
 /**
  * Resolve the data root (main working tree for worktree sharing).
- * Memoized via module-level cache.
+ * Memoized via a module-level cache keyed by ctx.directory — a single
+ * plugin instance can field hooks for more than one directory (e.g. a
+ * subagent/task run against a different worktree), so an unkeyed cache
+ * would leak the first directory's data root onto every other one.
  */
-let _dataRootCache: string | null = null;
+const _dataRootCache = new Map<string, string>();
 
 export function tlDataRoot(ctx: ThroughlineContext): string {
-  if (_dataRootCache !== null) return _dataRootCache;
-  _dataRootCache = computeDataRoot(ctx);
-  return _dataRootCache;
+  const key = tlRoot(ctx);
+  const cached = _dataRootCache.get(key);
+  if (cached !== undefined) return cached;
+  const computed = computeDataRoot(ctx);
+  _dataRootCache.set(key, computed);
+  return computed;
 }
 
 function computeDataRoot(ctx: ThroughlineContext): string {
@@ -201,6 +207,11 @@ export function tlNow(): string {
 
 /**
  * Append one timestamped record line to a session buffer.
+ *
+ * `bufDir` is the resolved `<dataDir>/buffer` directory; the error
+ * breadcrumb on a write failure goes to `<dataDir>/.capture-errors`
+ * (dataDir's root, not under buffer/ — see tlErr), so it's derived here
+ * rather than threading a separate dataDir param through every caller.
  */
 export function tlAppendLine(bufDir: string, sid: string, content: string): void {
   const ts = tlNow();
@@ -210,23 +221,19 @@ export function tlAppendLine(bufDir: string, sid: string, content: string): void
   try {
     appendFileSync(bufPath, line, "utf-8");
   } catch (err) {
-    tlErr(`write failed for session-${sid}: ${err}`);
+    tlErr(dirname(bufDir), `write failed for session-${sid}: ${err}`);
   }
 }
 
 /**
- * Breadcrumb for swallowed failures.
+ * Breadcrumb for swallowed failures. Takes the resolved data dir explicitly
+ * — every caller already has it from tlActive()/tlDataDir(), and guessing
+ * it from process.cwd() (as this used to) writes the breadcrumb into
+ * whatever directory the OpenCode process happened to start in rather than
+ * the project's actual data dir, where session-created.ts looks for it.
  */
-export function tlErr(message: string): void {
-  // This needs context to resolve data dir, but we're keeping it simple
-  // In practice, callers should pass the data dir
+export function tlErr(dataDir: string, message: string): void {
   try {
-    const dataDir = process.env.THROUGHLINE_DATA_DIR
-      ? isAbsolute(process.env.THROUGHLINE_DATA_DIR)
-        ? process.env.THROUGHLINE_DATA_DIR
-        : join(process.cwd(), process.env.THROUGHLINE_DATA_DIR)
-      : join(process.cwd(), ".claude", "throughline");
-
     const errPath = join(dataDir, ".capture-errors");
     appendFileSync(errPath, `${tlNow()} ${message}\n`, "utf-8");
   } catch {
