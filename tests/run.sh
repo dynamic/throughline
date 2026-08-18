@@ -17,6 +17,27 @@
 # shellcheck disable=SC2016
 
 set -u
+
+# Fixtures below run `git commit` (and `git worktree add`, which needs a
+# real commit to branch from) against throwaway repos under $WORK. Git
+# refuses to commit without an author identity, and a bare CI runner has no
+# global user.email/user.name configured (actions/checkout doesn't set one
+# for the runner's global config, only for its own internal auth) — so on
+# such a runner every fixture below silently failed the commit, which
+# silently skipped worktree add (all of it chained with `&&` and swallowed
+# by `2>/dev/null`), which left every downstream worktree-detection
+# assertion resolving against a directory that was never created. That
+# looked exactly like a bug in hooks/_lib.sh's worktree logic and wasn't —
+# see dynamic/throughline#42. Setting these env vars (not global git config)
+# makes every git commit in this script self-contained regardless of the
+# ambient environment's identity config, matching how the rest of this
+# script already avoids depending on ambient state.
+GIT_AUTHOR_NAME="throughline-tests"
+GIT_AUTHOR_EMAIL="throughline-tests@localhost"
+GIT_COMMITTER_NAME="throughline-tests"
+GIT_COMMITTER_EMAIL="throughline-tests@localhost"
+export GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL
+
 ROOT=$(unset CDPATH; cd -- "$(dirname -- "$0")/.." && pwd)
 H="$ROOT/hooks"
 PASS=0
