@@ -1,0 +1,17 @@
+{
+  "name": "throughline-opencode",
+  "version": "1.0.0",
+  "description": "OpenCode plugin for throughline session memory",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run build && node --test dist/utils/redaction.test.js dist/integration.test.js"
+  },
+  "devDependencies": {
+    "@opencode-ai/plugin": "^1.14.48",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.4.0"
+  }
+}

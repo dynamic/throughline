@@ -1,6 +1,6 @@
 # throughline
 
-**Continuous, state-aware session memory for Claude Code.** Captures what you *did*
+**Continuous, state-aware session memory for Claude Code and OpenCode.** Captures what you *did*
 and what *is* - commands, file changes, decisions, live git/PR state - then hands it
 off with judgment when the session wraps. Your artifacts stay readable, editable, and
 yours.
@@ -99,6 +99,66 @@ Then reload (`/reload-plugins`) or restart the session.
 **Requirements:** `git` and `jq` on your `PATH`. `jq` parses the hook payloads; if it
 is missing, capture cannot run and the SessionStart block says so rather than failing
 silently.
+
+## OpenCode Plugin
+
+throughline is also available as an OpenCode plugin, providing the same session capture functionality
+within the OpenCode ecosystem.
+
+### Installation
+
+OpenCode's plugin config key is `plugin` (singular) in `opencode.json`, and each
+entry is either a local path or an npm package name - there is no separate
+`plugins/` directory to copy into.
+
+1. Clone this repo (or a checkout you already have) somewhere stable, e.g.
+   `~/AI/skills/throughline`.
+2. Add the plugin's local path to your `opencode.json`:
+
+```json
+{
+  "plugin": [
+    "/absolute/path/to/throughline/.opencode-plugin"
+  ]
+}
+```
+
+3. Restart OpenCode. Check `~/.local/share/opencode/log/opencode.log` for a load
+   error against that path if session capture doesn't appear to be running.
+
+Once throughline is published to npm, this will collapse to a package name
+(`"throughline-opencode"`) like any other plugin - no local path or clone required.
+
+### Requirements
+
+- Node.js 18+ (no `jq` required - TypeScript uses native JSON parsing)
+- OpenCode loads the plugin's TypeScript entry point directly (via Bun) - no
+  build step required to install it.
+
+### Features
+
+The OpenCode plugin provides the same session capture capabilities as the Claude Code plugin:
+
+- Continuous capture of user prompts and tool executions
+- HANDOFF.md pointer and live git state injected into the system prompt at
+  session start, via OpenCode's `experimental.chat.system.transform` hook -
+  OpenCode has no direct equivalent of Claude Code's SessionStart context
+  injection today, so this rides an `experimental.*` API that may change
+  upstream.
+- Action capture with redaction of sensitive information
+- Compaction boundary markers to preserve context across session compaction
+- A "last known idle point" marker in the buffer, refreshed each time the
+  session goes idle. OpenCode's `session.idle` fires after every turn, not
+  once at process exit like Claude Code's SessionEnd, so this is not a
+  one-shot end-of-session stamp - it tells `onboard` whether the buffer has
+  seen activity since the agent last went idle.
+- All 5 hooks are implemented: session-created, chat-message, tool-execute-after, session-compacted, session-idle
+
+### Data Directory Compatibility
+
+By default, the OpenCode plugin uses the same `.claude/throughline/` data directory as the Claude Code plugin,
+making it compatible with existing session data. This allows seamless transition between Claude Code and OpenCode
+sessions while maintaining continuity of session logs and handoffs.
 
 **Updating.** Installed plugins are snapshots - they do not track this repo. An old
 copy keeps running (without newer redaction and activation fixes) until you update it
@@ -289,6 +349,24 @@ throughline/
 ├─ .claude-plugin/
 │  ├─ plugin.json
 │  └─ marketplace.json
+├─ .opencode-plugin/
+│  ├─ package.json          # Node dependencies + plugin entry point (main)
+│  ├─ tsconfig.json         # TypeScript config
+│  ├─ .gitignore            # Excludes node_modules/ and dist/
+│  └─ src/
+│     ├─ index.ts           # Plugin entry point
+│     ├─ lib.ts             # Core library (data dir, session ID, buffer)
+│     ├─ hooks/             # All 5 hook implementations
+│     │  ├─ session-created.ts
+│     │  ├─ chat-message.ts
+│     │  ├─ tool-execute-after.ts
+│     │  ├─ session-compacted.ts
+│     │  └─ session-idle.ts
+│     ├─ utils/
+│     │  └─ redaction.ts   # Redaction logic ported from jq to TypeScript
+│     ├─ integration.test.ts
+│     └─ utils/
+│        └─ redaction.test.ts
 ├─ hooks/
 │  ├─ hooks.json
 │  ├─ _lib.sh                # data-dir resolution + activation gate + jq/sid/redaction helpers

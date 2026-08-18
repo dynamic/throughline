@@ -21,3 +21,20 @@ jobs:
           jq -e '.plugins' .claude-plugin/marketplace.json >/dev/null
       - name: Run hook tests
         run: sh tests/run.sh
+
+  opencode-plugin:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .opencode-plugin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install dependencies
+        run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Run tests
+        run: npm test

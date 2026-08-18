@@ -17,3 +17,6 @@
 # effect) can still recreate it. Same local-only policy applies regardless of
 # which convention wrote it.
 .agent/
+
+# Deepwork progress files (local-only, not shared)
+.slim/deepwork/
