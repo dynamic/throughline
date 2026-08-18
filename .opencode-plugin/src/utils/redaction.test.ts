@@ -349,5 +349,12 @@ MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQC7AwHKqnhQV2Kh
       assert.ok(result.includes('user:***@example.com'));
       assert.ok(result.includes('?token=***'));
     });
+
+    it('should never leak TLREDACTSENTINEL sentinel in output', () => {
+      const urlWithAuth = 'https://user:password@example.com/path';
+      const result = redact(urlWithAuth);
+      assert.ok(!result.includes('TLREDACTSENTINEL'));
+      assert.ok(result.includes('user:***@example.com'));
+    });
   });
 });
