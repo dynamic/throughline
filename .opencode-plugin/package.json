@@ -6,7 +6,7 @@
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
-    "test": "node --test src/**/*.test.ts"
+    "test": "node --test dist/utils/redaction.test.js dist/integration.test.js"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
