@@ -1,6 +1,6 @@
 # throughline
 
-**Continuous, state-aware session memory for Claude Code.** Captures what you *did*
+**Continuous, state-aware session memory for Claude Code and OpenCode.** Captures what you *did*
 and what *is* - commands, file changes, decisions, live git/PR state - then hands it
 off with judgment when the session wraps. Your artifacts stay readable, editable, and
 yours.
@@ -99,6 +99,45 @@ Then reload (`/reload-plugins`) or restart the session.
 **Requirements:** `git` and `jq` on your `PATH`. `jq` parses the hook payloads; if it
 is missing, capture cannot run and the SessionStart block says so rather than failing
 silently.
+
+## OpenCode Plugin
+
+throughline is also available as an OpenCode plugin, providing the same session capture functionality
+within the OpenCode ecosystem.
+
+### Installation
+
+1. Copy the `.opencode-plugin/` directory to your OpenCode configuration directory (typically `~/.config/opencode/plugins/`)
+2. Add the plugin to your `opencode.json` plugins array:
+
+```json
+{
+  "plugins": [
+    "throughline-opencode"
+  ]
+}
+```
+
+### Requirements
+
+- Node.js 18+ (no `jq` required - TypeScript uses native JSON parsing)
+
+### Features
+
+The OpenCode plugin provides the same session capture capabilities as the Claude Code plugin:
+
+- Continuous capture of user prompts and tool executions
+- Automatic creation of HANDOFF.md pointers and live git state
+- Action capture with redaction of sensitive information
+- Compaction boundary markers to preserve context across session compaction
+- Session end stamps for proper bookkeeping
+- All 5 hooks are implemented: session-created, chat-message, tool-execute-after, session-compacted, session-idle
+
+### Data Directory Compatibility
+
+By default, the OpenCode plugin uses the same `.claude/throughline/` data directory as the Claude Code plugin,
+making it compatible with existing session data. This allows seamless transition between Claude Code and OpenCode
+sessions while maintaining continuity of session logs and handoffs.
 
 **Updating.** Installed plugins are snapshots - they do not track this repo. An old
 copy keeps running (without newer redaction and activation fixes) until you update it
@@ -289,6 +328,25 @@ throughline/
 ├─ .claude-plugin/
 │  ├─ plugin.json
 │  └─ marketplace.json
+├─ .opencode-plugin/
+│  ├─ plugin.json           # OpenCode plugin manifest
+│  ├─ package.json          # Node dependencies
+│  ├─ tsconfig.json         # TypeScript config
+│  ├─ .gitignore            # Excludes node_modules/ and dist/
+│  └─ src/
+│     ├─ index.ts           # Plugin entry point
+│     ├─ lib.ts             # Core library (data dir, session ID, buffer)
+│     ├─ hooks/             # All 5 hook implementations
+│     │  ├─ session-created.ts
+│     │  ├─ chat-message.ts
+│     │  ├─ tool-execute-after.ts
+│     │  ├─ session-compacted.ts
+│     │  └─ session-idle.ts
+│     ├─ utils/
+│     │  └─ redaction.ts   # Redaction logic ported from jq to TypeScript
+│     ├─ integration.test.ts
+│     └─ utils/
+│        └─ redaction.test.ts
 ├─ hooks/
 │  ├─ hooks.json
 │  ├─ _lib.sh                # data-dir resolution + activation gate + jq/sid/redaction helpers

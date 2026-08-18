@@ -3,6 +3,20 @@
 All notable changes to throughline are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); this project uses semantic versioning.
 
+## [Unreleased]
+
+### Added
+- **OpenCode plugin** as 3rd delivery format (alongside Claude Code plugin and NPX skills).
+  TypeScript port of all 5 hooks: `session-created`, `chat-message`, `tool-execute-after`,
+  `session-compacted`, `session-idle`. Provides the same session capture functionality
+  within the OpenCode ecosystem.
+- Redaction logic ported from jq to TypeScript — no `jq` dependency for OpenCode users
+  (TypeScript uses native JSON parsing).
+- Worktree-aware data directory resolution — shares main tree data across worktrees,
+  matching the Claude Code plugin behavior.
+- Comprehensive test suite: 72 tests passing (51 unit + 21 integration) covering
+  redaction logic, hook implementations, and plugin entry point.
+
 ## [0.12.0]
 
 Fixes `HANDOFF.md` outgrowing its own budget on Claude 5 (issue #34). The prior
