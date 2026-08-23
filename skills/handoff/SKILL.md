@@ -1,6 +1,7 @@
 ---
 name: handoff
 description: Distill the current session into the durable HANDOFF.md plus a timestamped session log, using the throughline capture buffer as source. Run when the user asks to "handoff", "wrap up", "save the session", "checkpoint", or when the session is clearly winding down (work complete, user signals done/thanks/that's all). Proactively offer or run this at detected wrap-up — do not wait to be asked.
+license: MIT
 ---
 
 # throughline — Handoff (distillation)

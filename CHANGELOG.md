@@ -19,6 +19,23 @@ All notable changes to throughline are documented here. Format loosely follows
   real `@opencode-ai/sdk` payload shapes (event envelopes, `UserMessage`/`parts`,
   lowercase tool ids), not hand-shaped fixtures that could drift from the actual
   wire format.
+- **Codex CLI plugin** as a 4th delivery format. Repo-root `.codex-plugin/plugin.json`
+  and `.agents/plugins/marketplace.json` install the same shell-hook capture pipeline
+  Claude Code uses (`codex plugin marketplace add dynamic/throughline` →
+  `codex plugin add throughline@throughline`) - no TypeScript port needed here, since
+  Codex's plugin-root `hooks.json` uses the identical schema Claude Code does. All 5
+  hooks (`session-onboard`, `session-prompt`, `session-capture`, `session-precompact`,
+  `session-flush`) verified end-to-end against a real installed plugin cache with
+  `CLAUDE_PLUGIN_ROOT` unset - each correctly falls back to resolving its own script
+  directory and writes/reads the buffer identically to the Claude Code path.
+- `license` frontmatter added to all 4 SKILL.md files (`gh skill publish --dry-run`
+  now passes clean).
+
+### Fixed
+- `hooks/session-precompact.sh` was missing its executable bit (unlike its four
+  sibling scripts) - a real, pre-existing bug that broke this hook on both Claude
+  Code and the new Codex delivery, since executing a non-executable file's path
+  fails at the OS level before the script's own logic ever runs.
 
 ## [0.12.0]
 
