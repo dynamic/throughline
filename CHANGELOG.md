@@ -19,15 +19,23 @@ All notable changes to throughline are documented here. Format loosely follows
   real `@opencode-ai/sdk` payload shapes (event envelopes, `UserMessage`/`parts`,
   lowercase tool ids), not hand-shaped fixtures that could drift from the actual
   wire format.
-- **Codex CLI plugin** as a 4th delivery format. Repo-root `.codex-plugin/plugin.json`
-  and `.agents/plugins/marketplace.json` install the same shell-hook capture pipeline
-  Claude Code uses (`codex plugin marketplace add dynamic/throughline` →
-  `codex plugin add throughline@throughline`) - no TypeScript port needed here, since
-  Codex's plugin-root `hooks.json` uses the identical schema Claude Code does. All 5
-  hooks (`session-onboard`, `session-prompt`, `session-capture`, `session-precompact`,
-  `session-flush`) verified end-to-end against a real installed plugin cache with
-  `CLAUDE_PLUGIN_ROOT` unset - each correctly falls back to resolving its own script
-  directory and writes/reads the buffer identically to the Claude Code path.
+- **Codex CLI plugin** as a 4th delivery format, **skills only** (not yet automatic
+  capture - see below). Repo-root `.codex-plugin/plugin.json` and
+  `.agents/plugins/marketplace.json` make the 4 skills (`handoff`, `onboard`,
+  `consolidate`, `consolidate-memory`) installable via `codex plugin marketplace add
+  dynamic/throughline` → `codex plugin add throughline@throughline`, verified
+  end-to-end: install, marketplace listing, and skill loading all confirmed against
+  a real Codex CLI install.
+  - **Automatic capture (the 5 hooks) is intentionally NOT wired yet.** Running each
+    hook script directly (piped synthetic Claude-Code-shaped JSON, `CLAUDE_PLUGIN_ROOT`
+    unset) confirmed the scripts' own logic - sourcing, redaction, buffer writes - works
+    outside `CLAUDE_PLUGIN_ROOT`, but that does not prove Codex actually invokes these
+    hooks at all, with what cwd, or with what env set; independent testing under real
+    `codex exec` could not get a hook to fire either way. There's also a plausible
+    double-registration risk (Codex's hook discovery warns when both a `hooks.json` file
+    and a `hooks/` directory exist at the same plugin-root layer, which this repo's
+    layout does for Claude Code's own convention) that `session-capture.sh` has no
+    idempotency guard against. See #47.
 - `license` frontmatter added to all 4 SKILL.md files (`gh skill publish --dry-run`
   now passes clean).
 
