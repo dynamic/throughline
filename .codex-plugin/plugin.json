@@ -1,0 +1,40 @@
+{
+  "name": "throughline",
+  "version": "0.12.0",
+  "description": "Continuous, state-aware session memory for Codex. Captures what you did and what is (commands, file changes, decisions, and live git/PR state), then hands it off with judgment at session wrap-up. Readable, local-first artifacts (commit them if you choose).",
+  "author": {
+    "name": "Dynamic Agency",
+    "email": "support@dynamicagency.com"
+  },
+  "homepage": "https://github.com/dynamic/throughline",
+  "repository": "https://github.com/dynamic/throughline",
+  "license": "MIT",
+  "keywords": [
+    "memory",
+    "handoff",
+    "session",
+    "context",
+    "continuity",
+    "compaction",
+    "git-state",
+    "cross-harness",
+    "resume",
+    "onboarding"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "throughline",
+    "shortDescription": "Continuous, state-aware session memory.",
+    "longDescription": "Continuous, state-aware session memory for Codex. Captures what you did and what is (commands, file changes, decisions, and live git/PR state), then hands it off with judgment at session wrap-up. Readable, local-first artifacts (commit them if you choose).",
+    "developerName": "Dynamic Agency",
+    "category": "Productivity",
+    "capabilities": [
+      "Interactive",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Catch me up on this project.",
+      "Wrap up and hand off this session."
+    ]
+  }
+}

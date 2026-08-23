@@ -19,6 +19,31 @@ All notable changes to throughline are documented here. Format loosely follows
   real `@opencode-ai/sdk` payload shapes (event envelopes, `UserMessage`/`parts`,
   lowercase tool ids), not hand-shaped fixtures that could drift from the actual
   wire format.
+- **Codex CLI plugin** as a 4th delivery format, **skills only** (not yet automatic
+  capture - see below). Repo-root `.codex-plugin/plugin.json` and
+  `.agents/plugins/marketplace.json` make the 4 skills (`handoff`, `onboard`,
+  `consolidate`, `consolidate-memory`) installable via `codex plugin marketplace add
+  dynamic/throughline` → `codex plugin add throughline@throughline`, verified
+  end-to-end: install, marketplace listing, and skill loading all confirmed against
+  a real Codex CLI install.
+  - **Automatic capture (the 5 hooks) is intentionally NOT wired yet.** Running each
+    hook script directly (piped synthetic Claude-Code-shaped JSON, `CLAUDE_PLUGIN_ROOT`
+    unset) confirmed the scripts' own logic - sourcing, redaction, buffer writes - works
+    outside `CLAUDE_PLUGIN_ROOT`, but that does not prove Codex actually invokes these
+    hooks at all, with what cwd, or with what env set; independent testing under real
+    `codex exec` could not get a hook to fire either way. There's also a plausible
+    double-registration risk (Codex's hook discovery warns when both a `hooks.json` file
+    and a `hooks/` directory exist at the same plugin-root layer, which this repo's
+    layout does for Claude Code's own convention) that `session-capture.sh` has no
+    idempotency guard against. See #47.
+- `license` frontmatter added to all 4 SKILL.md files (`gh skill publish --dry-run`
+  now passes clean).
+
+### Fixed
+- `hooks/session-precompact.sh` was missing its executable bit (unlike its four
+  sibling scripts) - a real, pre-existing bug that broke this hook on both Claude
+  Code and the new Codex delivery, since executing a non-executable file's path
+  fails at the OS level before the script's own logic ever runs.
 
 ## [0.12.0]
 

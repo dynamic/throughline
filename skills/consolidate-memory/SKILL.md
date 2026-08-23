@@ -1,6 +1,7 @@
 ---
 name: consolidate-memory
 description: Memory file hygiene and consolidation for project memories - detects duplicates, stale entries, unindexed orphans, and index orphans in ~/.claude/projects/<project-slug>/memory/
+license: MIT
 ---
 
 # Consolidate Memory Files

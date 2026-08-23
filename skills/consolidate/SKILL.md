@@ -1,6 +1,7 @@
 ---
 name: consolidate
 description: Periodic consolidation pass that mines the timestamped handoff session logs for lessons recurring across sessions and proposes promoting them into durable homes, with a human gate on every promotion. Run when the user says "consolidate handoffs", "mine the handoff logs", "consolidation pass", or "promote lessons" - or roughly monthly, or when HANDOFF.md has grown stale or bloated and the same lessons keep being re-learned session after session.
+license: MIT
 ---
 
 # throughline - Consolidate (promotion)

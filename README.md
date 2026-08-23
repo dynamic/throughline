@@ -1,9 +1,10 @@
 # throughline
 
-**Continuous, state-aware session memory for Claude Code and OpenCode.** Captures what you *did*
-and what *is* - commands, file changes, decisions, live git/PR state - then hands it
-off with judgment when the session wraps. Your artifacts stay readable, editable, and
-yours.
+**Continuous, state-aware session memory for Claude Code, OpenCode, and Codex CLI.**
+Captures what you *did* and what *is* - commands, file changes, decisions, live git/PR
+state - then hands it off with judgment when the session wraps. Your artifacts stay
+readable, editable, and yours. (Codex support is skills-only for now - see "Codex CLI
+Plugin" below.)
 
 ---
 
@@ -165,6 +166,32 @@ copy keeps running (without newer redaction and activation fixes) until you upda
 from the `/plugin` manager (or uninstall and reinstall), then `/reload-plugins`. The
 SessionStart block prints the running version (`## throughline vX.Y.Z`) - if it lags
 this repo's releases, your install is stale.
+
+## Codex CLI Plugin
+
+throughline is also installable as a Codex CLI plugin - **skills only for now**, not
+automatic capture (see below for why).
+
+### Installation
+
+```sh
+codex plugin marketplace add dynamic/throughline
+codex plugin add throughline@throughline
+```
+
+### What you get
+
+The 4 skills (`handoff`, `onboard`, `consolidate`, `consolidate-memory`) are
+installed and invocable on demand, reading and writing the same
+`.claude/throughline/` data format Claude Code and OpenCode use - so a project's
+history is readable and continuable from any of the three.
+
+**Automatic capture (the 5 hooks) isn't wired on Codex yet.** Whether and how
+Codex actually invokes plugin hooks hasn't been verified, and there's a plausible
+double-registration risk in how Codex's hook discovery treats this repo's existing
+`hooks/` directory. See [#47](https://github.com/dynamic/throughline/issues/47) for
+the open questions. Until that's resolved, run `handoff` manually at the end of a
+Codex session rather than relying on it to capture automatically along the way.
 
 ## Configuration
 
@@ -349,6 +376,10 @@ throughline/
 ├─ .claude-plugin/
 │  ├─ plugin.json
 │  └─ marketplace.json
+├─ .codex-plugin/
+│  └─ plugin.json           # skills only - see "Codex CLI Plugin" above
+├─ .agents/plugins/
+│  └─ marketplace.json      # Codex marketplace entry, mirrors .claude-plugin's
 ├─ .opencode-plugin/
 │  ├─ package.json          # Node dependencies + plugin entry point (main)
 │  ├─ tsconfig.json         # TypeScript config
@@ -376,9 +407,10 @@ throughline/
 │  ├─ session-precompact.sh  # PreCompact: stamp the compaction-boundary marker
 │  └─ session-flush.sh       # SessionEnd: safety-net stamp
 ├─ skills/
-│  ├─ onboard/SKILL.md     # full orientation
-│  ├─ handoff/SKILL.md     # judged distillation + memory binding
-│  └─ consolidate/SKILL.md # periodic promotion of recurring lessons
+│  ├─ onboard/SKILL.md            # full orientation
+│  ├─ handoff/SKILL.md            # judged distillation + memory binding
+│  ├─ consolidate/SKILL.md        # periodic promotion of recurring lessons
+│  └─ consolidate-memory/SKILL.md # native-memory file hygiene
 ├─ tests/run.sh              # fixture-driven hook tests (shellcheck + CI)
 ├─ docs/                     # promo site + review report
 └─ CHANGELOG.md
