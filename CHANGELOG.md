@@ -3,7 +3,11 @@
 All notable changes to throughline are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); this project uses semantic versioning.
 
-## [Unreleased]
+## [0.13.0]
+
+Two delivery formats, a fourth skill, and a documentation pass: OpenCode plugin,
+Codex CLI plugin (skills only), `consolidate-memory`, and a redesigned promo site
+with per-harness install instructions across all four formats.
 
 ### Added
 - **OpenCode plugin** as 3rd delivery format (alongside Claude Code plugin and NPX skills).
@@ -19,31 +23,52 @@ All notable changes to throughline are documented here. Format loosely follows
   real `@opencode-ai/sdk` payload shapes (event envelopes, `UserMessage`/`parts`,
   lowercase tool ids), not hand-shaped fixtures that could drift from the actual
   wire format.
-- **Codex CLI plugin** as a 4th delivery format, **skills only** (not yet automatic
-  capture - see below). Repo-root `.codex-plugin/plugin.json` and
-  `.agents/plugins/marketplace.json` make the 4 skills (`handoff`, `onboard`,
-  `consolidate`, `consolidate-memory`) installable via `codex plugin marketplace add
-  dynamic/throughline` → `codex plugin add throughline@throughline`, verified
-  end-to-end: install, marketplace listing, and skill loading all confirmed against
-  a real Codex CLI install.
-  - **Automatic capture (the 5 hooks) is intentionally NOT wired yet.** Running each
-    hook script directly (piped synthetic Claude-Code-shaped JSON, `CLAUDE_PLUGIN_ROOT`
-    unset) confirmed the scripts' own logic - sourcing, redaction, buffer writes - works
-    outside `CLAUDE_PLUGIN_ROOT`, but that does not prove Codex actually invokes these
-    hooks at all, with what cwd, or with what env set; independent testing under real
-    `codex exec` could not get a hook to fire either way. There's also a plausible
-    double-registration risk (Codex's hook discovery warns when both a `hooks.json` file
-    and a `hooks/` directory exist at the same plugin-root layer, which this repo's
-    layout does for Claude Code's own convention) that `session-capture.sh` has no
-    idempotency guard against. See #47.
+- **Codex CLI plugin** as a 4th delivery format, **skills only, not automatic capture**.
+  Repo-root `.codex-plugin/plugin.json` and `.agents/plugins/marketplace.json` make the
+  4 skills (`handoff`, `onboard`, `consolidate`, `consolidate-memory`) installable via
+  `codex plugin marketplace add dynamic/throughline` → `codex plugin add
+  throughline@throughline`, verified end-to-end: install, marketplace listing, and
+  skill loading all confirmed against a real Codex CLI install.
+- **`consolidate-memory` skill** (issue #36) — native-memory file hygiene: detects
+  duplicate, stale, unindexed, and orphaned entries in a project's memory store.
+  `consolidate/SKILL.md` had referenced it since introduction; it didn't exist yet.
 - `license` frontmatter added to all 4 SKILL.md files (`gh skill publish --dry-run`
   now passes clean).
+- CI and `local-ci` now validate `.codex-plugin/plugin.json` and
+  `.agents/plugins/marketplace.json` (previously unvalidated since the Codex plugin
+  shipped), plus a check that `.claude-plugin/plugin.json` and
+  `.codex-plugin/plugin.json` agree on version — the two are independently
+  hand-maintained with nothing else keeping them in sync.
+- `docs/index.html` fully redesigned: a per-harness install section (Claude Code /
+  Codex CLI / OpenCode / npx skills) with real copy-paste commands and an honest
+  per-harness capability matrix, replacing the prior Claude-Code-only page. `README.md`
+  restructured around the same comparison, adding the previously-missing npx skills
+  install instructions. `.github/FUNDING.yml` added.
+
+### Investigated
+- **Codex automatic-capture hooks (issue #47), closed without wiring.** A live probe
+  hook under real `codex exec` confirmed hooks *can* fire (SessionStart, PostToolUse,
+  UserPromptSubmit, SessionEnd all verified, no double-registration for an explicit
+  single-file declaration) and that `CLAUDE_PLUGIN_ROOT`/`PLUGIN_ROOT` are set correctly
+  for hook processes. The blocker: hooks require a persisted trust grant with no
+  verified non-interactive path — a headless `codex exec` session silently no-ops
+  without `--dangerously-bypass-hook-trust`, a flag scoped by Codex's own docs to
+  "automation that already vets hook sources." Wiring hooks today would look automatic
+  while silently not firing for most real usage, so the skills-only framing stands.
+  Full findings on the issue.
 
 ### Fixed
 - `hooks/session-precompact.sh` was missing its executable bit (unlike its four
   sibling scripts) - a real, pre-existing bug that broke this hook on both Claude
   Code and the new Codex delivery, since executing a non-executable file's path
   fails at the OS level before the script's own logic ever runs.
+- Path canonicalization on macOS (issue #33) — git returns canonical paths
+  (`/private/tmp/...`) while `$PWD` uses symlinked paths (`/tmp/...`), which caused
+  worktree resolution to disagree with itself depending on which path form a given
+  code path used.
+- Shell hook test suite failed with no ambient git identity or on a symlinked path
+  (issue #42, PR #43) — two independent bugs in the test fixtures themselves, not the
+  hooks under test.
 
 ## [0.12.0]
 
