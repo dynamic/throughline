@@ -6,7 +6,7 @@
     },
     {
       "label": "plugin version agreement",
-      "run": "c=$(jq -r .version .claude-plugin/plugin.json); x=$(jq -r .version .codex-plugin/plugin.json); [ \"$c\" = \"$x\" ] || { echo \"version drift: .claude-plugin/plugin.json=$c .codex-plugin/plugin.json=$x\" >&2; exit 1; }"
+      "run": "set -e; c=$(jq -r .version .claude-plugin/plugin.json); x=$(jq -r .version .codex-plugin/plugin.json); [ \"$c\" = \"$x\" ] || { echo \"version drift: .claude-plugin/plugin.json=$c .codex-plugin/plugin.json=$x\" >&2; exit 1; }"
     },
     {
       "label": "hook tests",
