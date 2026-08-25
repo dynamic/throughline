@@ -95,7 +95,7 @@ project's history stays readable and continuable no matter which one you install
 Capabilities differ - see the table below for the honest comparison, then jump to the
 section for your harness.
 
-| | Claude Code | Codex CLI | OpenCode | npx skills |
+| | [Claude Code](#claude-code) | [Codex CLI](#codex-cli-plugin) | [OpenCode](#opencode-plugin) | [npx skills](#npx-skills) |
 |---|---|---|---|---|
 | Skills (`handoff`, `onboard`, `consolidate`, `consolidate-memory`) | yes | yes | separate install | yes |
 | Automatic capture | yes - 5 hooks | no - trust-gated, see below | yes - 5 hooks | no |

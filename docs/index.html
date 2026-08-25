@@ -8,6 +8,8 @@
 <meta property="og:title" content="throughline" />
 <meta property="og:description" content="Continuous capture, judged handoff, automatic orientation. Memory that survives compaction because it lives on disk, not in the transcript." />
 <meta property="og:type" content="website" />
+<meta property="og:url" content="https://dynamic.github.io/throughline/" />
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230b0e14'/%3E%3Crect x='7' y='14' width='18' height='4' rx='2' fill='%23e0a84a'/%3E%3C/svg%3E" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,420;9..144,500;9..144,600;9..144,680&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
@@ -19,11 +21,11 @@
     --border: #dde1e8;
     --text: #1a1f2b;
     --muted: #5b6478;
-    --faint: #838da3;
-    --thread: #b5791a;
+    --faint: #626c82;
+    --thread: #8a5a0f;
     --thread-soft: #dba854;
     --thread-wash: #b5791a1a;
-    --signal: #1f9c86;
+    --signal: #157567;
     --code-bg: #101521;
     --code-text: #d7dbe6;
     --code-border: #232a3a;
@@ -42,7 +44,7 @@
       --border: #262e40;
       --text: #e9ecf3;
       --muted: #9aa3b8;
-      --faint: #6c7690;
+      --faint: #7d879f;
       --thread: #e0a84a;
       --thread-soft: #c98f34;
       --thread-wash: #e0a84a26;
@@ -262,7 +264,7 @@
   <section class="hero">
     <div class="wrap">
       <span class="eyebrow"><span class="thread-mark"></span>for claude code, codex cli &amp; opencode</span>
-      <h1>The <em>thread</em> that survives<br />every compaction.</h1>
+      <h1>The <em>thread</em> that survives every compaction.</h1>
       <p class="lead">
         throughline captures what you <em>did</em> and what <em>is</em> - commands, file changes,
         decisions, live git and PR state - continuously, on disk, independent of the context window.
@@ -286,7 +288,7 @@
     <div class="wrap">
       <div class="section-head">
         <span class="kicker">Why throughline</span>
-        <h2>Most memory tools replay the conversation.<br />This one remembers the work.</h2>
+        <h2>Most memory tools replay the conversation. This one remembers the work.</h2>
         <p>Chat transcripts are lossy the moment they're summarized. throughline separates cheap,
           continuous capture from deliberate, judged handoff - and stays out of your way until you need it.</p>
       </div>
@@ -314,7 +316,7 @@
     <div class="wrap">
       <div class="section-head">
         <span class="kicker">How it works</span>
-        <h2>Three layers, each doing<br />what it's actually capable of.</h2>
+        <h2>Three layers, each doing what it's actually capable of.</h2>
       </div>
 
       <div class="spine-item">
@@ -429,7 +431,7 @@ npx skills add dynamic/throughline</pre>
             <tr><th>Capability</th><th>Claude Code</th><th>Codex CLI</th><th>OpenCode</th><th>npx skills</th></tr>
           </thead>
           <tbody>
-            <tr><td class="feature">Skills (handoff, onboard, consolidate)</td><td class="yes">yes</td><td class="yes">yes</td><td class="partial">separate install</td><td class="yes">yes</td></tr>
+            <tr><td class="feature">Skills (handoff, onboard, consolidate, consolidate-memory)</td><td class="yes">yes</td><td class="yes">yes</td><td class="partial">separate install</td><td class="yes">yes</td></tr>
             <tr><td class="feature">Automatic capture</td><td class="yes">yes - 5 hooks</td><td class="no">no - trust-gated</td><td class="yes">yes - 5 hooks</td><td class="no">no</td></tr>
             <tr><td class="feature">Compaction survival</td><td class="yes">yes</td><td class="no">no</td><td class="yes">yes</td><td class="no">no</td></tr>
             <tr><td class="feature">Requires jq</td><td class="partial">yes</td><td class="no">n/a - skills only</td><td class="no">no</td><td class="no">n/a - skills only</td></tr>
@@ -456,7 +458,7 @@ npx skills add dynamic/throughline</pre>
         </div>
         <pre><span class="c"># default layout, per project</span>
 .claude/throughline/
-├── HANDOFF.md    <span class="c"># durable record</span>
+├── HANDOFF.md     <span class="c"># durable record</span>
 ├── logs/          <span class="c"># session logs</span>
 └── buffer/        <span class="c"># raw capture</span>
 
