@@ -2,7 +2,11 @@
   "checks": [
     {
       "label": "manifest validation",
-      "run": "jq -e '.hooks | keys' hooks/hooks.json >/dev/null && jq -e '.name and .version' .claude-plugin/plugin.json >/dev/null && jq -e '.plugins' .claude-plugin/marketplace.json >/dev/null"
+      "run": "jq -e '.hooks | keys' hooks/hooks.json >/dev/null && jq -e '.name and .version' .claude-plugin/plugin.json >/dev/null && jq -e '.plugins' .claude-plugin/marketplace.json >/dev/null && jq -e '.name and .version' .codex-plugin/plugin.json >/dev/null && jq -e '.plugins' .agents/plugins/marketplace.json >/dev/null"
+    },
+    {
+      "label": "plugin version agreement",
+      "run": "set -e; c=$(jq -r .version .claude-plugin/plugin.json); x=$(jq -r .version .codex-plugin/plugin.json); [ \"$c\" = \"$x\" ] || { echo \"version drift: .claude-plugin/plugin.json=$c .codex-plugin/plugin.json=$x\" >&2; exit 1; }"
     },
     {
       "label": "hook tests",

@@ -19,6 +19,16 @@ jobs:
           jq -e '.hooks | keys' hooks/hooks.json >/dev/null
           jq -e '.name and .version' .claude-plugin/plugin.json >/dev/null
           jq -e '.plugins' .claude-plugin/marketplace.json >/dev/null
+          jq -e '.name and .version' .codex-plugin/plugin.json >/dev/null
+          jq -e '.plugins' .agents/plugins/marketplace.json >/dev/null
+      - name: Check plugin version agreement
+        run: |
+          c=$(jq -r .version .claude-plugin/plugin.json)
+          x=$(jq -r .version .codex-plugin/plugin.json)
+          if [ "$c" != "$x" ]; then
+            echo "version drift: .claude-plugin/plugin.json=$c .codex-plugin/plugin.json=$x" >&2
+            exit 1
+          fi
       - name: Run hook tests
         run: sh tests/run.sh
 
