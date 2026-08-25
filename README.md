@@ -3,8 +3,8 @@
 **Continuous, state-aware session memory for Claude Code, OpenCode, and Codex CLI.**
 Captures what you *did* and what *is* - commands, file changes, decisions, live git/PR
 state - then hands it off with judgment when the session wraps. Your artifacts stay
-readable, editable, and yours. (Codex support is skills-only for now - see "Codex CLI
-Plugin" below.)
+readable, editable, and yours. (Codex support is skills-only - see "Codex CLI Plugin"
+below.)
 
 ---
 
@@ -88,7 +88,21 @@ Honest scope: the **what** (commands run, files changed) is compaction-proof; th
 discards. Run a handoff before a long session compacts to preserve the reasoning,
 and the boundary marker flags where recall stops being trustworthy.
 
-## Install
+## Choose your harness
+
+Every harness reads and writes the same `.claude/throughline/` data format, so a
+project's history stays readable and continuable no matter which one you install into.
+Capabilities differ - see the table below for the honest comparison, then jump to the
+section for your harness.
+
+| | Claude Code | Codex CLI | OpenCode | npx skills |
+|---|---|---|---|---|
+| Skills (`handoff`, `onboard`, `consolidate`, `consolidate-memory`) | yes | yes | separate install | yes |
+| Automatic capture | yes - 5 hooks | no - trust-gated, see below | yes - 5 hooks | no |
+| Compaction survival | yes | no | yes | no |
+| Requires `jq` | yes | n/a - skills only | no | n/a - skills only |
+
+### Claude Code
 
 ```
 /plugin marketplace add dynamic/throughline   # register this repo as a marketplace
@@ -100,6 +114,17 @@ Then reload (`/reload-plugins`) or restart the session.
 **Requirements:** `git` and `jq` on your `PATH`. `jq` parses the hook payloads; if it
 is missing, capture cannot run and the SessionStart block says so rather than failing
 silently.
+
+### npx skills
+
+```sh
+npx skills add dynamic/throughline
+```
+
+Installs the 4 skills directly - no plugin system, no marketplace registration. This is
+the fallback for any harness that reads `SKILL.md` files from disk but has no plugin
+system of its own. No automatic capture (there's no hook mechanism in this delivery
+form at all); run `handoff` manually at the end of a session.
 
 ## OpenCode Plugin
 
@@ -136,6 +161,11 @@ Once throughline is published to npm, this will collapse to a package name
 - OpenCode loads the plugin's TypeScript entry point directly (via Bun) - no
   build step required to install it.
 
+This plugin ships **hooks only, no skills** - OpenCode reads skills from its own
+`~/.config/opencode/skills/` directory, not from a plugin's own files. Run
+`npx skills add dynamic/throughline` separately for `handoff`/`onboard`/`consolidate`
+on OpenCode.
+
 ### Features
 
 The OpenCode plugin provides the same session capture capabilities as the Claude Code plugin:
@@ -169,8 +199,8 @@ this repo's releases, your install is stale.
 
 ## Codex CLI Plugin
 
-throughline is also installable as a Codex CLI plugin - **skills only for now**, not
-automatic capture (see below for why).
+throughline is also installable as a Codex CLI plugin - **skills only**, not automatic
+capture (see below for why).
 
 ### Installation
 
@@ -186,12 +216,16 @@ installed and invocable on demand, reading and writing the same
 `.claude/throughline/` data format Claude Code and OpenCode use - so a project's
 history is readable and continuable from any of the three.
 
-**Automatic capture (the 5 hooks) isn't wired on Codex yet.** Whether and how
-Codex actually invokes plugin hooks hasn't been verified, and there's a plausible
-double-registration risk in how Codex's hook discovery treats this repo's existing
-`hooks/` directory. See [#47](https://github.com/dynamic/throughline/issues/47) for
-the open questions. Until that's resolved, run `handoff` manually at the end of a
-Codex session rather than relying on it to capture automatically along the way.
+**Automatic capture (the 5 hooks) is not wired, deliberately.** Confirmed empirically:
+Codex hooks work (SessionStart, UserPromptSubmit, PostToolUse, and SessionEnd all fire
+correctly with no double-registration), but only under an interactive trust grant Codex
+provides no verified non-interactive way to satisfy - a headless `codex exec` session
+silently no-ops without `--dangerously-bypass-hook-trust`, a flag Codex's own docs scope
+to "automation that already vets hook sources," not something to build a shipped
+plugin's default behavior on. Wiring it today would look automatic while silently not
+firing for most real usage. See
+[#47](https://github.com/dynamic/throughline/issues/47) for the full investigation.
+Run `handoff` manually at the end of a Codex session instead.
 
 ## Configuration
 
@@ -415,6 +449,12 @@ throughline/
 ├─ docs/                     # promo site + review report
 └─ CHANGELOG.md
 ```
+
+## Support
+
+throughline is free, MIT-licensed, and has no telemetry or infrastructure to fund. If
+it saves you a session's worth of context, consider
+[sponsoring the work](https://github.com/sponsors/dynamic).
 
 ## License
 
