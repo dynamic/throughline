@@ -67,7 +67,7 @@ with per-harness install instructions across all four formats.
   worktree resolution to disagree with itself depending on which path form a given
   code path used.
 - Shell hook test suite failed with no ambient git identity or on a symlinked path
-  (issues #42/#43) — two independent bugs in the test fixtures themselves, not the
+  (issue #42, PR #43) — two independent bugs in the test fixtures themselves, not the
   hooks under test.
 
 ## [0.12.0]
