@@ -232,12 +232,13 @@ the advanced setup below.
 Codex's own hook-trust mechanism is under active development
 ([openai/codex#21615](https://github.com/openai/codex/issues/21615),
 [openai/codex#37362](https://github.com/openai/codex/issues/37362)) with no official
-CLI command or config key to grant trust non-interactively yet. Also unresolved: the
-shipped `.codex-plugin/plugin.json` declares no `hooks` key at all, yet trust review
-still finds `hooks/hooks.json` to grant trust to - apparently discovered by
-convention from the plugin's installed root, though the exact rule isn't isolated
-(see [#52](https://github.com/dynamic/throughline/issues/52)). What's confirmed
-working today:
+CLI command or config key to grant trust non-interactively yet. Discovery is now
+confirmed rather than inferred: the shipped `.codex-plugin/plugin.json` declares no
+`hooks` key at all, but the in-TUI `/hooks` command (see below) shows Codex resolving
+each hook's command straight from the installed plugin's cache path (e.g.
+`~/.codex/plugins/cache/throughline/throughline/<version>/hooks/session-capture.sh`)
+- convention-based discovery from the plugin root, no manifest declaration needed.
+What's confirmed working today:
 
 1. **Grant trust once, interactively, using a named profile.** Run
    `codex -p <profile>` inside a project with throughline installed, and answer
@@ -249,10 +250,18 @@ working today:
    **A bare `codex` invocation with no profile is unverified** - it may not grant
    hook trust into the base `~/.codex/config.toml` the same way (see #52's open
    question on this); if step 1 produces no `[hooks.state]` table, use a named
-   profile instead. Untested here, worth trying first since it may be a cleaner
-   sanctioned path: the in-TUI **`/hooks`** command, per the workaround documented
-   in openai/codex#37362.
-2. **To also cover Codex Desktop** (which has no `--profile` mechanism and only ever
+   profile instead.
+2. **Verify with the in-TUI `/hooks` command** - a real, sanctioned status view
+   (not something you have to infer from grepping config files). It lists every
+   Codex hook event with an Installed/Active count; press Enter on a row with a
+   nonzero count to see each hook's `Source`, `Command`, `Mode`, `Timeout`, and
+   `Trust` status, and toggle it on/off (saved automatically). A trusted throughline
+   hook shows `Source: Plugin - throughline@throughline` and `Trust: Trusted`.
+   Confirmed this reflects genuinely-trusted hooks correctly; **untested whether
+   toggling an *untrusted* hook here can grant trust** (would need a never-trusted
+   profile to check) - if you find out, update
+   [#52](https://github.com/dynamic/throughline/issues/52).
+3. **To also cover Codex Desktop** (which has no `--profile` mechanism and only ever
    reads the base `~/.codex/config.toml`): copy the `[hooks.state]` table granted in
    step 1 into that base config file if it isn't already there, and set
    `plugin_hooks = true` under `[features]` in the same file (unconfirmed whether this
