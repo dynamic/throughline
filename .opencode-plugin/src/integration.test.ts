@@ -10,7 +10,7 @@ import { ThroughlinePlugin as pluginFn } from './index.js';
 import { sessionCreated } from './hooks/session-created.js';
 import { chatMessage } from './hooks/chat-message.js';
 import { toolExecuteAfter } from './hooks/tool-execute-after.js';
-import { sessionCompacted } from './hooks/session-compacted.js';
+import { sessionCompacted, sessionCompactionRecovery } from './hooks/session-compacted.js';
 import { sessionIdle } from './hooks/session-idle.js';
 import { tlDataDir, tlSafeSid } from './lib.js';
 
@@ -122,7 +122,17 @@ describe('Throughline Plugin Integration Tests', () => {
       assert.ok(existsSync(tlDataDir(ctx)), 'data dir should exist after session.created');
     });
 
-    it('experimental.chat.system.transform injects the queued context block exactly once', async () => {
+    it('experimental.chat.system.transform injects the queued context block on every call until session.idle (issue #56, P0a)', async () => {
+      // Regression guard: OpenCode calls this hook MORE THAN ONCE per turn —
+      // once for its own small-model title-generation pass, once for the
+      // real primary-agent call, both with the identical sessionID and no
+      // other field to tell them apart. A delete-on-first-read design let
+      // the title call (which fires first) consume and destroy the block
+      // before the real, user-facing call ever saw it — confirmed live, this
+      // was the actual production bug, not a hypothetical. The fix pushes on
+      // every call while an entry is pending and clears only at
+      // session.idle, which fires once per turn after both transform calls
+      // have already happened.
       const hooks = await pluginFn(ctx);
       const sessionID = 'e2e-transform';
 
@@ -133,7 +143,7 @@ describe('Throughline Plugin Integration Tests', () => {
         { sessionID, model: {} as any },
         output1,
       );
-      assert.equal(output1.system.length, 1, 'first transform call should inject the block');
+      assert.equal(output1.system.length, 1, 'first transform call (e.g. the title-generation pass) should inject the block');
       assert.ok(output1.system[0].includes('throughline'));
 
       const output2 = { system: [] as string[] };
@@ -141,7 +151,17 @@ describe('Throughline Plugin Integration Tests', () => {
         { sessionID, model: {} as any },
         output2,
       );
-      assert.equal(output2.system.length, 0, 'second call for the same session should inject nothing');
+      assert.equal(output2.system.length, 1, 'second transform call for the SAME turn (the real primary-agent call) must also get the block');
+      assert.ok(output2.system[0].includes('throughline'));
+
+      await hooks.event!({ event: sessionIdleEvent(sessionID) as any });
+
+      const output3 = { system: [] as string[] };
+      await hooks['experimental.chat.system.transform']!(
+        { sessionID, model: {} as any },
+        output3,
+      );
+      assert.equal(output3.system.length, 0, 'after session.idle (turn over), a later transform call should inject nothing');
     });
 
     it('chat.message captures a real UserMessage/parts payload to the buffer', async () => {
@@ -184,18 +204,27 @@ describe('Throughline Plugin Integration Tests', () => {
       assert.ok(content.includes('echo hi'));
     });
 
-    it('tool.execute.after does NOT capture Claude Code-style PascalCase tool names', async () => {
+    it('tool.execute.after captures an unrecognized tool id generically, by name only (issue #56, P0b)', async () => {
+      // OpenCode never actually sends "Bash" (only "bash") — this uses it as
+      // a stand-in for "any tool id this switch doesn't have a specific case
+      // for". That used to mean silent drop, gated on the id containing
+      // "mcp__"/"__". Confirmed live that OpenCode's real MCP tool ids use a
+      // single underscore (e.g. `perplexity-ask_perplexity_ask`), matching
+      // neither check, so every MCP call was silently dropped — the "require
+      // a specific unmatched-name shape" premise was the bug. The fix
+      // captures any unmatched tool by its bare name (except the explicitly
+      // noisy read/glob, covered by the test above), zero assumptions about
+      // its argument shape.
       const hooks = await pluginFn(ctx);
-      const sessionID = 'e2e-tool-pascal';
+      const sessionID = 'e2e-tool-unmatched';
 
-      // Regression guard: OpenCode never sends "Bash" — only "bash". If this
-      // starts writing a line again, the tool-id casing regressed.
       await hooks['tool.execute.after']!(
         { tool: 'Bash', sessionID, callID: 'c1', args: { command: 'echo hi' } } as any,
         toolOutput() as any,
       );
 
-      assert.ok(!existsSync(bufferPath(sessionID)), 'PascalCase tool id should not be captured');
+      const content = readBuffer(sessionID);
+      assert.ok(content.includes('**Bash**'), 'unmatched tool id should be captured by name only');
     });
 
     it('session.idle and session.compacted resolve sessionID from event.properties', async () => {
@@ -213,6 +242,27 @@ describe('Throughline Plugin Integration Tests', () => {
       const content = readBuffer(sessionID);
       assert.ok(content.includes('compaction-boundary'));
       assert.ok(content.includes('session-ended'));
+    });
+
+    it('session.compacted queues a recovery block that the NEXT transform call injects (issue #56, P3, full wiring)', async () => {
+      const hooks = await pluginFn(ctx);
+      const sessionID = 'e2e-compact-recovery';
+
+      // A captured action before the compaction, so there is something for
+      // the recovery block to inline.
+      await hooks['tool.execute.after']!(
+        { tool: 'bash', sessionID, callID: 'c1', args: { command: 'echo before-compaction' } } as any,
+        toolOutput() as any,
+      );
+
+      await hooks.event!({ event: sessionCompactedEvent(sessionID) as any });
+
+      const output = { system: [] as string[] };
+      await hooks['experimental.chat.system.transform']!({ sessionID, model: {} as any }, output);
+
+      assert.equal(output.system.length, 1, 'transform call after compaction should inject the recovery block');
+      assert.ok(output.system[0].includes('Context was just compacted'));
+      assert.ok(output.system[0].includes('echo before-compaction'));
     });
   });
 
@@ -238,6 +288,96 @@ describe('Throughline Plugin Integration Tests', () => {
       const dangerousId = 'test<session>/123|dangerous';
       await assert.doesNotReject(() => sessionCreated(ctx, { sessionID: dangerousId }));
       assert.ok(existsSync(tlDataDir(ctx)));
+    });
+
+    it('does NOT claim worktree-sharing for a plain, non-worktree project (issue #56, P5)', async () => {
+      // Regression guard for the exact bug this PR claims to fix, and the
+      // regression that fix's first attempt introduced: tempDir sits under
+      // node:os's tmpdir(), which resolves through a symlink on macOS
+      // (/var -> /private/var). An early version of the P5 fix canonicalized
+      // only ONE side of the dataRoot/root comparison and, as a result,
+      // wrongly claimed worktree-sharing on every single plain project on
+      // macOS — confirmed live before this test was added. tempDir here is
+      // deliberately NOT a git worktree of anything; this must stay silent.
+      const result = await sessionCreated(ctx, { sessionID: 'test-session-no-worktree' });
+      assert.ok(result, 'expected a context block');
+      assert.ok(
+        !result!.includes('shared with the main working tree'),
+        `plain project must not claim worktree-sharing, got: ${result}`,
+      );
+    });
+
+    it('DOES claim worktree-sharing for a genuine linked git worktree (issue #56, P5)', async () => {
+      // The positive case for the same fix: a REAL `git worktree add`, not a
+      // synthetic ctx.worktree mismatch — tlDataRoot() resolves sharing via
+      // git itself (see lib.ts computeDataRoot), so only a real linked
+      // worktree exercises this path at all.
+      execSync('git worktree add ../wt-linked -b wt-linked-branch', { cwd: tempDir, stdio: 'pipe' });
+      const linkedDir = join(tempDir, '..', 'wt-linked');
+      const linkedCtx = { directory: linkedDir, worktree: linkedDir };
+
+      try {
+        const result = await sessionCreated(linkedCtx, { sessionID: 'test-session-linked-worktree' });
+        assert.ok(result, 'expected a context block');
+        assert.ok(
+          result!.includes('shared with the main working tree'),
+          `linked worktree must claim sharing, got: ${result}`,
+        );
+      } finally {
+        rmSync(linkedDir, { recursive: true, force: true });
+        try {
+          execSync('git worktree prune', { cwd: tempDir, stdio: 'pipe' });
+        } catch {
+          // best-effort cleanup
+        }
+      }
+    });
+
+    it('includes the running plugin version in the header (issue #56, P1)', async () => {
+      // Matches session-onboard.sh's `## throughline vX.Y.Z` header, so a
+      // stale installed copy is visible the same way on OpenCode.
+      const result = await sessionCreated(ctx, { sessionID: 'test-session-version' });
+      assert.ok(result, 'expected a context block');
+      assert.match(result!, /^## throughline v\d+\.\d+\.\d+ - project session context/);
+    });
+
+    it('warns when buffer/ is not gitignored (issue #56, P4)', async () => {
+      // tempDir's beforeEach git-inits it with no .gitignore at all — buffer/
+      // is genuinely untracked-and-unignored here.
+      const result = await sessionCreated(ctx, { sessionID: 'test-session-not-ignored' });
+      assert.ok(result, 'expected a context block');
+      assert.ok(result!.includes('not gitignored yet'), `expected the gitignore nudge, got: ${result}`);
+    });
+
+    it('stays silent when buffer/ IS gitignored (issue #56, P4)', async () => {
+      writeFileSync(join(tempDir, '.gitignore'), '.claude/throughline/buffer/\n');
+      const result = await sessionCreated(ctx, { sessionID: 'test-session-ignored' });
+      assert.ok(result, 'expected a context block');
+      assert.ok(!result!.includes('not gitignored yet'), `expected no gitignore nudge, got: ${result}`);
+    });
+
+    it('warns about unconsumed session buffers from OTHER sessions, excluding a prompt-only buffer (issue #56, P2)', async () => {
+      const dataDir = tlDataDir(ctx);
+      const bufDir = join(dataDir, 'buffer');
+      mkdirSync(bufDir, { recursive: true });
+
+      // An ended session with a real captured action: should count.
+      writeFileSync(
+        join(bufDir, 'session-other-ended.md'),
+        '- `2026-01-01 00:00:00` **bash** `echo hi`\n\n<!-- session-ended 2026-01-01 00:00:01 (idle) -->\n',
+      );
+      // A prompt-only buffer: nothing to distill, should NOT count.
+      writeFileSync(bufDir + '/session-other-promptonly.md', '- `2026-01-01 00:00:00` **prompt** "hi"\n');
+      // The CURRENT session's own buffer: must be excluded from the sweep.
+      writeFileSync(
+        join(bufDir, 'session-test-session-current.md'),
+        '- `2026-01-01 00:00:00` **bash** `echo current`\n',
+      );
+
+      const result = await sessionCreated(ctx, { sessionID: 'test-session-current' });
+      assert.ok(result, 'expected a context block');
+      assert.ok(result!.includes('1 unconsumed session buffer'), `expected exactly 1 unconsumed buffer, got: ${result}`);
+      assert.ok(!result!.includes('promptonly'));
     });
   });
 
@@ -407,6 +547,25 @@ describe('Throughline Plugin Integration Tests', () => {
       assert.ok(content.includes('**mcp__github__create_issue**'));
     });
 
+    it("captures MCP tools using OpenCode's real single-underscore id convention (issue #56, P0b)", async () => {
+      // The `mcp__server__tool` double-underscore form above is Claude
+      // Code's convention. OpenCode's own MCP tool ids use a SINGLE
+      // underscore between server and tool name — confirmed live as
+      // `perplexity-ask_perplexity_ask` when a real websearch call was
+      // routed through the perplexity-ask MCP server. This id matched
+      // neither the old "mcp__"-prefix nor "__"-substring check, so it was
+      // silently dropped in production before this fix.
+      const sessionID = 'test-session-mcp-single-underscore';
+      await toolExecuteAfter(
+        ctx,
+        { tool: 'perplexity-ask_perplexity_ask', sessionID, callID: 'c1', args: { messages: [] } } as any,
+        toolOutput() as any,
+      );
+
+      const content = readBuffer(sessionID);
+      assert.ok(content.includes('**perplexity-ask_perplexity_ask**'));
+    });
+
     it('redacts sensitive info in tool args', async () => {
       const sessionID = 'test-session-sensitive';
       await toolExecuteAfter(
@@ -468,6 +627,30 @@ describe('Throughline Plugin Integration Tests', () => {
       const content = readFileSync(path, 'utf-8');
       const boundaryCount = (content.match(/compaction-boundary/g) || []).length;
       assert.strictEqual(boundaryCount, 1);
+    });
+
+    it('sessionCompactionRecovery inlines the buffer tail (issue #56, P3)', async () => {
+      // Port of session-onboard.sh's source=compact branch. OpenCode's
+      // session.created does not re-fire after a compaction, so this is the
+      // only channel to re-inject anything post-compaction.
+      const sessionID = 'test-session-compact-recovery';
+      const bufferDir = join(tlDataDir(ctx), 'buffer');
+      mkdirSync(bufferDir, { recursive: true });
+      writeFileSync(
+        join(bufferDir, `session-${tlSafeSid(sessionID)}.md`),
+        '- `2026-01-01 00:00:00` **bash** `echo one`\n- `2026-01-01 00:00:01` **bash** `echo two`\n',
+      );
+
+      const recovery = await sessionCompactionRecovery(ctx, { sessionID });
+      assert.ok(recovery, 'expected a recovery block');
+      assert.ok(recovery!.includes('Context was just compacted'));
+      assert.ok(recovery!.includes('echo one'));
+      assert.ok(recovery!.includes('echo two'));
+    });
+
+    it('sessionCompactionRecovery returns null when there is no buffer yet', async () => {
+      const recovery = await sessionCompactionRecovery(ctx, { sessionID: 'test-session-no-buffer-yet' });
+      assert.strictEqual(recovery, null);
     });
   });
 

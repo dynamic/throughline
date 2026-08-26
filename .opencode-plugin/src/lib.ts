@@ -11,7 +11,7 @@
  */
 
 import { execSync } from "node:child_process";
-import { existsSync, mkdirSync, appendFileSync } from "node:fs";
+import { existsSync, mkdirSync, appendFileSync, realpathSync } from "node:fs";
 import { dirname, join, isAbsolute } from "node:path";
 
 // --- Types ---
@@ -49,6 +49,19 @@ export function tlRoot(ctx: ThroughlineContext): string {
 }
 
 /**
+ * Canonicalize a path (resolve symlinks), falling back to the raw path if
+ * resolution fails (path doesn't exist yet, permissions, etc.) — mirrors
+ * _tl_canonicalize_path in _lib.sh.
+ */
+export function tlCanonicalize(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
+}
+
+/**
  * Resolve the data root (main working tree for worktree sharing).
  * Memoized via a module-level cache keyed by ctx.directory — a single
  * plugin instance can field hooks for more than one directory (e.g. a
@@ -67,7 +80,17 @@ export function tlDataRoot(ctx: ThroughlineContext): string {
 }
 
 function computeDataRoot(ctx: ThroughlineContext): string {
-  const wt = tlRoot(ctx);
+  // Canonicalized up front, like _tl_compute_data_root in _lib.sh, and used
+  // for every return path below — not just the linked-worktree one. A
+  // caller (session-created.ts's worktree-sharing note) compares this
+  // return value against a separately-canonicalized tl_root(); if this
+  // function only canonicalized SOME return paths (originally: just the
+  // linked-worktree one), the common "this IS the main worktree" case would
+  // return the raw, un-resolved directory, and a project sitting behind any
+  // symlink (macOS's /var -> /private/var, which os.tmpdir() itself resolves
+  // through, confirmed live) would wrongly compare as "different location"
+  // and falsely claim worktree-sharing on every single session.
+  const wt = tlCanonicalize(tlRoot(ctx));
   const worktreeShared = process.env.THROUGHLINE_WORKTREE_SHARED ?? "1";
 
   if (worktreeShared === "0" || worktreeShared === "false" || worktreeShared === "no" || worktreeShared === "off") {
@@ -97,7 +120,7 @@ function computeDataRoot(ctx: ThroughlineContext): string {
     const match = wtList.match(/^worktree (.+)$/m);
     if (!match) return wt;
 
-    const mainWt = match[1];
+    const mainWt = tlCanonicalize(match[1]);
     if (!existsSync(mainWt)) return wt;
 
     // Migration safety: don't strand pre-existing data

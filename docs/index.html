@@ -324,7 +324,7 @@
         <div class="spine-body">
           <span class="kicker">01 · every action</span>
           <h3>Continuous capture</h3>
-          <div class="tag">UserPromptSubmit + PostToolUse hooks</div>
+          <div class="tag">every harness's own capture hooks</div>
           <p>Appends a structured one-liner per prompt and per captured action to a per-session buffer -
             the intent, then the command, file, or delegated task - with obvious secrets masked before
             anything is written. Mechanical and cheap. You never see it; it just protects you.</p>
@@ -338,8 +338,8 @@
           <h3>Judged handoff</h3>
           <div class="tag">handoff skill</div>
           <p>The agent distills the buffer and context into a durable HANDOFF.md and a timestamped session
-            log, and promotes genuinely durable facts into native memory. This is the judgment layer, so
-            it's a skill, not a hook - it runs proactively and shows you the diff.</p>
+            log, and promotes genuinely durable facts into native memory where the harness has one. This is
+            the judgment layer, so it's a skill, not a hook - it runs proactively and shows you the diff.</p>
         </div>
       </div>
 
@@ -350,11 +350,11 @@
           <h3>The thread survives the break</h3>
           <p>When a long conversation compacts, the transcript is summarized and detail is lost. The raw
             action buffer doesn't care - it lives on disk, appended after every action, independent of the
-            context window. A <strong>PreCompact</strong> hook stamps a boundary marker at the seam, and
-            <strong>SessionStart re-fires on compact</strong>, pointing the agent back at the surviving
-            buffer. Honest scope: the <em>what</em> survives on disk; the <em>why</em> lives in the
-            conversation, and is what compaction discards - run a handoff before a long session compacts
-            to keep the reasoning too.</p>
+            context window. A boundary marker gets stamped at the seam, and the buffer's tail is
+            re-injected into context right after, so the session doesn't lose its own recent history to
+            the compaction it just went through. Honest scope: the <em>what</em> survives on disk; the
+            <em>why</em> lives in the conversation, and is what compaction discards - run a handoff before
+            a long session compacts to keep the reasoning too.</p>
         </div>
       </div>
 
@@ -363,10 +363,11 @@
         <div class="spine-body">
           <span class="kicker">03 · on exit</span>
           <h3>Safety-net flush</h3>
-          <div class="tag">SessionEnd hook</div>
+          <div class="tag">session-end capture point</div>
           <p>Stamps the buffer on exit, so a session that ended without a handoff is surfaced next time for
             retroactive distillation. Nothing is ever silently lost - and orientation is automated too: a
-            SessionStart hook injects a HANDOFF.md pointer and live git state at the top of every session.</p>
+            session-start capture point injects a HANDOFF.md pointer and live git state at the top of every
+            session.</p>
         </div>
       </div>
     </div>
@@ -410,8 +411,10 @@ codex plugin add throughline@throughline</pre>
           <pre><span class="c"># opencode.json</span>
 { "plugin": ["/path/to/throughline/.opencode-plugin"] }</pre>
           <p class="note">All 5 hooks, ported to TypeScript - full automatic capture and compaction
-            survival, <strong>no jq required</strong>. Skills install separately (OpenCode reads them from
-            its own skills directory, not from this plugin).</p>
+            survival, <strong>no jq required</strong>. Skills install separately - OpenCode's plugin API has
+            no supported way to ship a skill directory alongside a plugin, but OpenCode discovers
+            <code>SKILL.md</code> from the same locations Claude Code and Codex use, so a skill installed for
+            another harness is often already visible here too.</p>
           <span class="status full"><span class="dot"></span>automatic capture</span>
         </div>
         <div class="h-card">
@@ -434,6 +437,7 @@ npx skills add dynamic/throughline</pre>
             <tr><td class="feature">Skills (handoff, onboard, consolidate, consolidate-memory)</td><td class="yes">yes</td><td class="yes">yes</td><td class="partial">separate install</td><td class="yes">yes</td></tr>
             <tr><td class="feature">Automatic capture</td><td class="yes">yes - 5 hooks</td><td class="yes">yes - 5 hooks, one-time trust</td><td class="yes">yes - 5 hooks</td><td class="no">no</td></tr>
             <tr><td class="feature">Compaction survival</td><td class="yes">yes</td><td class="yes">yes</td><td class="yes">yes</td><td class="no">no</td></tr>
+            <tr><td class="feature">Native memory binding</td><td class="yes">yes</td><td class="no">no</td><td class="no">no</td><td class="no">no</td></tr>
             <tr><td class="feature">Requires jq</td><td class="partial">yes</td><td class="partial">yes</td><td class="no">no</td><td class="no">n/a - skills only</td></tr>
           </tbody>
         </table>
