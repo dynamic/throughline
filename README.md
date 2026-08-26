@@ -184,33 +184,21 @@ CLI.
 throughline is also available as an OpenCode plugin, providing the same session
 capture functionality within the OpenCode ecosystem.
 
-**Installation.** OpenCode's plugin config key is `plugin` (singular) in
-`opencode.json`, and each entry is either a local path or an npm package name -
-there is no separate `plugins/` directory to copy into.
-
-1. Clone this repo (or a checkout you already have) somewhere stable, e.g.
-   `~/AI/skills/throughline`.
-2. Add the plugin's local path to your `opencode.json`:
-
 ```json
 {
-  "plugin": [
-    "/absolute/path/to/throughline/.opencode-plugin"
-  ]
+  "plugin": ["@dynamicagency/throughline-opencode"]
 }
 ```
 
-3. Restart OpenCode. Check `~/.local/share/opencode/log/opencode.log` for a load
-   error against that path if session capture doesn't appear to be running.
-
-There is currently no published npm package for this plugin, so a local path is the
-only install method - unlike Claude Code and Codex, an OpenCode install stays a
-live checkout rather than a snapshot: `git pull` this repo to update it, no
-separate reinstall step.
+OpenCode's plugin config key is `plugin` (singular) in `opencode.json`, and each
+entry is either an npm package name or a local path - there is no separate
+`plugins/` directory to copy into. Add the line above and restart OpenCode; it
+installs the package automatically via Bun at startup. Check
+`~/.local/share/opencode/log/opencode.log` for a load error if session capture
+doesn't appear to be running.
 
 **Requirements:** Node.js 18+ (no `jq` required - TypeScript uses native JSON
-parsing). OpenCode loads the plugin's TypeScript entry point directly (via Bun) - no
-build step required to install it.
+parsing).
 
 **What you get:** all 5 hooks, ported to TypeScript against OpenCode's own plugin
 API - continuous prompt/action capture with redaction, session-start context
@@ -233,10 +221,26 @@ machine are frequently already visible to OpenCode with no extra step.
 By default the OpenCode plugin uses the same `.claude/throughline/` data directory
 as Claude Code and Codex, so a project's history stays continuous across harnesses.
 
-**Updating.** Since the install is a live checkout, `git pull` this repo. The
-running version is printed in the injected session-start block (`## throughline
-vX.Y.Z`) the same way it is on Claude Code and Codex - if it lags this repo's
-releases, pull again.
+**Updating.** An installed plugin is a versioned snapshot, same as Claude Code and
+Codex - bumping the version in `opencode.json` (or letting Bun resolve a new
+range) is what picks up a release, not a `git pull`. The running version is
+printed in the injected session-start block (`## throughline vX.Y.Z`) the same way
+it is on Claude Code and Codex - if it lags this repo's releases, your install is
+stale.
+
+**Local-path install (testing unreleased changes).** Point `opencode.json` at a
+checkout of this repo instead of the package name:
+
+```json
+{
+  "plugin": ["/absolute/path/to/throughline/.opencode-plugin"]
+}
+```
+
+The package's `main` field points at compiled `dist/`, which is gitignored, so a
+local-path install needs a build first: `cd .opencode-plugin && npm ci && npm run
+build`. Unlike the npm install, this stays a live checkout - `git pull` and
+rebuild to update it.
 
 ### npx skills
 

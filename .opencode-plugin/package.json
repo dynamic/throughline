@@ -1,11 +1,45 @@
 {
-  "name": "throughline-opencode",
-  "version": "0.13.0",
+  "name": "@dynamicagency/throughline-opencode",
+  "version": "0.14.0",
   "description": "OpenCode plugin for throughline session memory",
   "type": "module",
-  "main": "src/index.ts",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "!dist/**/*.test.*"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "author": {
+    "name": "Dynamic Agency",
+    "email": "support@dynamicagency.com"
+  },
+  "homepage": "https://github.com/dynamic/throughline",
+  "repository": "https://github.com/dynamic/throughline",
+  "bugs": "https://github.com/dynamic/throughline/issues",
+  "license": "MIT",
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "memory",
+    "handoff",
+    "session",
+    "context",
+    "continuity",
+    "compaction",
+    "git-state",
+    "cross-harness",
+    "resume",
+    "onboarding"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsc",
+    "prepublishOnly": "npm run build",
     "typecheck": "tsc --noEmit",
     "test": "npm run build && node --test dist/utils/redaction.test.js dist/integration.test.js"
   },
