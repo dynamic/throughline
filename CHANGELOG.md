@@ -5,6 +5,20 @@ All notable changes to throughline are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [0.14.0]
+
+### Added
+- **OpenCode plugin published to npm as `@dynamicagency/throughline-opencode`**
+  (issue #59). `opencode.json`'s `plugin` array now takes the package name
+  directly - `{ "plugin": ["@dynamicagency/throughline-opencode"] }` - matching the
+  one-line install Claude Code and Codex already have. The published tarball
+  ships compiled `dist/`, not TypeScript source, so an OpenCode install is now
+  a versioned snapshot like Claude Code's rather than a live checkout; the
+  local-path install (pointing at a `.opencode-plugin` checkout) remains
+  documented as a fallback for testing unreleased changes, and now needs
+  `npm ci && npm run build` first since `main` points at gitignored build
+  output instead of `src/index.ts`.
+
 ### Fixed
 - **Corrects v0.13.0's Codex framing below.** Codex automatic capture works out of
   the box on both Codex CLI and Codex Desktop, gated only by a one-time hook-trust
