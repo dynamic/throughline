@@ -199,8 +199,8 @@ this repo's releases, your install is stale.
 
 ## Codex CLI Plugin
 
-throughline is also installable as a Codex CLI plugin - **skills only**, not automatic
-capture (see below for why).
+throughline is also installable as a Codex CLI plugin - **skills only by default**,
+not automatic capture (see below for why, and for an unsupported way to enable it).
 
 ### Installation
 
@@ -231,20 +231,27 @@ the advanced setup below.
 
 Codex's own hook-trust mechanism is under active development
 ([openai/codex#21615](https://github.com/openai/codex/issues/21615),
-[#37362](https://github.com/openai/codex/issues/37362)) with no official CLI command
-or config key to grant trust non-interactively yet. What's confirmed working today:
+[openai/codex#37362](https://github.com/openai/codex/issues/37362)) with no official
+CLI command or config key to grant trust non-interactively yet. Also unresolved: the
+shipped `.codex-plugin/plugin.json` declares no `hooks` key at all, yet trust review
+still finds `hooks/hooks.json` to grant trust to - apparently discovered by
+convention from the plugin's installed root, though the exact rule isn't isolated
+(see [#52](https://github.com/dynamic/throughline/issues/52)). What's confirmed
+working today:
 
-1. **Grant trust once, interactively.** Run Codex interactively (`codex`, or
-   `codex -p <profile>` if you use named profiles) inside a project with throughline
-   installed, and answer "yes" to the ordinary "do you trust this directory?" prompt.
-   This persists a `trusted_hash` (a content hash of `hooks/hooks.json`, not a live
-   signature) under a new `[hooks.state]` table in whichever config layer that
-   session used - `~/.codex/<profile>.config.toml` for a named profile, or the base
-   `~/.codex/config.toml` for a bare `codex` invocation. Confirmed: headless
-   `codex exec` under that same profile then fires hooks with no special flags.
-   Untested here, worth trying first since it may be a cleaner sanctioned path: the
-   in-TUI **`/hooks`** command, per the workaround documented in
-   [openai/codex#37362](https://github.com/openai/codex/issues/37362).
+1. **Grant trust once, interactively, using a named profile.** Run
+   `codex -p <profile>` inside a project with throughline installed, and answer
+   "yes" to the ordinary "do you trust this directory?" prompt. This persists a
+   `trusted_hash` (believed to be a content hash of `hooks/hooks.json`, not a live
+   signature) under a new `[hooks.state]` table in that profile's
+   `~/.codex/<profile>.config.toml`. Confirmed: headless
+   `codex --profile <profile> exec` then fires hooks with no special flags.
+   **A bare `codex` invocation with no profile is unverified** - it may not grant
+   hook trust into the base `~/.codex/config.toml` the same way (see #52's open
+   question on this); if step 1 produces no `[hooks.state]` table, use a named
+   profile instead. Untested here, worth trying first since it may be a cleaner
+   sanctioned path: the in-TUI **`/hooks`** command, per the workaround documented
+   in openai/codex#37362.
 2. **To also cover Codex Desktop** (which has no `--profile` mechanism and only ever
    reads the base `~/.codex/config.toml`): copy the `[hooks.state]` table granted in
    step 1 into that base config file if it isn't already there, and set
@@ -255,10 +262,10 @@ or config key to grant trust non-interactively yet. What's confirmed working tod
    correctly afterward.
 
 **This is explicitly unsupported and may break on a future Codex release** - hook
-discovery and trust changed between v0.118.0 and v0.149.0 already, per that version's
-own changelog. Trust is a content hash, so it should survive a throughline update as
-long as `hooks/hooks.json`'s content doesn't change; a throughline release that edits
-that file would require re-granting trust. Track
+discovery and trust changed between v0.118.0 and v0.149.0 already, per v0.149.0's own
+changelog. Trust is believed to be a content hash, so it should survive a throughline
+update as long as `hooks/hooks.json`'s content doesn't change; a throughline release
+that edits that file would likely require re-granting trust. Track
 [#52](https://github.com/dynamic/throughline/issues/52) for whether this becomes a
 documented default setup step or stays here as an advanced/unsupported one.
 
