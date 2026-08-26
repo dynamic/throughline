@@ -216,16 +216,51 @@ installed and invocable on demand, reading and writing the same
 `.claude/throughline/` data format Claude Code and OpenCode use - so a project's
 history is readable and continuable from any of the three.
 
-**Automatic capture (the 5 hooks) is not wired, deliberately.** Confirmed empirically:
-Codex hooks work (SessionStart, UserPromptSubmit, PostToolUse, and SessionEnd all fire
-correctly with no double-registration), but only under an interactive trust grant Codex
-provides no verified non-interactive way to satisfy - a headless `codex exec` session
-silently no-ops without `--dangerously-bypass-hook-trust`, a flag Codex's own docs scope
-to "automation that already vets hook sources," not something to build a shipped
-plugin's default behavior on. Wiring it today would look automatic while silently not
-firing for most real usage. See
-[#47](https://github.com/dynamic/throughline/issues/47) for the full investigation.
-Run `handoff` manually at the end of a Codex session instead.
+**Automatic capture (the 5 hooks) is not wired in the shipped plugin manifest.**
+Confirmed empirically: Codex hooks work (SessionStart, UserPromptSubmit, PostToolUse,
+and SessionEnd all fire correctly with no double-registration), but only under an
+interactive trust grant - a headless `codex exec` session silently no-ops without
+`--dangerously-bypass-hook-trust`, a flag Codex's own docs scope to "automation that
+already vets hook sources," not something to build a shipped plugin's default behavior
+on. See [#47](https://github.com/dynamic/throughline/issues/47) for the full
+investigation and [#52](https://github.com/dynamic/throughline/issues/52) for what
+follows below. Run `handoff` manually at the end of a Codex session unless you've done
+the advanced setup below.
+
+### Advanced: enabling automatic capture (unsupported, verified against v0.149.0)
+
+Codex's own hook-trust mechanism is under active development
+([openai/codex#21615](https://github.com/openai/codex/issues/21615),
+[#37362](https://github.com/openai/codex/issues/37362)) with no official CLI command
+or config key to grant trust non-interactively yet. What's confirmed working today:
+
+1. **Grant trust once, interactively.** Run Codex interactively (`codex`, or
+   `codex -p <profile>` if you use named profiles) inside a project with throughline
+   installed, and answer "yes" to the ordinary "do you trust this directory?" prompt.
+   This persists a `trusted_hash` (a content hash of `hooks/hooks.json`, not a live
+   signature) under a new `[hooks.state]` table in whichever config layer that
+   session used - `~/.codex/<profile>.config.toml` for a named profile, or the base
+   `~/.codex/config.toml` for a bare `codex` invocation. Confirmed: headless
+   `codex exec` under that same profile then fires hooks with no special flags.
+   Untested here, worth trying first since it may be a cleaner sanctioned path: the
+   in-TUI **`/hooks`** command, per the workaround documented in
+   [openai/codex#37362](https://github.com/openai/codex/issues/37362).
+2. **To also cover Codex Desktop** (which has no `--profile` mechanism and only ever
+   reads the base `~/.codex/config.toml`): copy the `[hooks.state]` table granted in
+   step 1 into that base config file if it isn't already there, and set
+   `plugin_hooks = true` under `[features]` in the same file (unconfirmed whether this
+   second step is strictly necessary or redundant with the first - not isolated).
+   Restart Codex Desktop for a config change to take effect. Confirmed live in two
+   real projects: PostToolUse/UserPromptSubmit capture and redaction both worked
+   correctly afterward.
+
+**This is explicitly unsupported and may break on a future Codex release** - hook
+discovery and trust changed between v0.118.0 and v0.149.0 already, per that version's
+own changelog. Trust is a content hash, so it should survive a throughline update as
+long as `hooks/hooks.json`'s content doesn't change; a throughline release that edits
+that file would require re-granting trust. Track
+[#52](https://github.com/dynamic/throughline/issues/52) for whether this becomes a
+documented default setup step or stays here as an advanced/unsupported one.
 
 ## Configuration
 
