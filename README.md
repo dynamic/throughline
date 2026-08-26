@@ -233,12 +233,12 @@ Codex's own hook-trust mechanism is under active development
 ([openai/codex#21615](https://github.com/openai/codex/issues/21615),
 [openai/codex#37362](https://github.com/openai/codex/issues/37362)) with no official
 CLI command or config key to grant trust non-interactively yet. Discovery is now
-confirmed rather than inferred: the shipped `.codex-plugin/plugin.json` declares no
+observed rather than assumed: the shipped `.codex-plugin/plugin.json` declares no
 `hooks` key at all, but the in-TUI `/hooks` command (see below) shows Codex resolving
 each hook's command straight from the installed plugin's cache path (e.g.
-`~/.codex/plugins/cache/throughline/throughline/<version>/hooks/session-capture.sh`)
-- convention-based discovery from the plugin root, no manifest declaration needed.
-What's confirmed working today:
+`~/.codex/plugins/cache/throughline/throughline/<version>/hooks/session-capture.sh`),
+convention-based discovery from the plugin root with no manifest declaration needed -
+though the exact matching rule still isn't isolated. What's confirmed working today:
 
 1. **Grant trust once, interactively, using a named profile.** Run
    `codex -p <profile>` inside a project with throughline installed, and answer
