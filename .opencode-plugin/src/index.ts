@@ -8,7 +8,14 @@
  * - HANDOFF.md context injection → via experimental.chat.system.transform,
  *   since OpenCode's session.created event has no text-injection channel of
  *   its own (unlike Claude Code's SessionStart). This rides an
- *   `experimental.*` hook and may need to move if OpenCode's API changes.
+ *   `experimental.*` hook and may need to move if OpenCode's API changes —
+ *   it is currently the ONLY way a plugin hook can inject an AI-visible
+ *   message at all; upstream anomalyco/opencode#17412 tracks the missing
+ *   stable primitive (a community PR implementing it, #19519, was closed
+ *   unmerged). See dynamic/throughline#58 for the broader tracking issue:
+ *   revisit this whole file as a thin shell-script bridge (matching Codex,
+ *   which reuses hooks/*.sh as-is) if/when anomalyco/opencode#12472 (native
+ *   Claude Code hook compat) ships.
  *
  * Types are imported from @opencode-ai/plugin rather than hand-rolled, so a
  * payload-shape mismatch is a compile error instead of a silent no-op.
@@ -49,9 +56,11 @@ export const ThroughlinePlugin: Plugin = async ({ directory, worktree }) => {
     worktree: worktree ?? directory,
   };
 
-  // Context block built at session.created, consumed once by the next
-  // system-prompt transform for that session. `null` means "computed, but
-  // nothing to inject" (still consumed, so we don't recompute every turn).
+  // Context block built at session.created (or session.compacted), injected
+  // into every experimental.chat.system.transform call for that session
+  // until session.idle clears it — see that hook's own comment below for
+  // why "consume on first read" was wrong. `null` means "computed, but
+  // nothing to inject" (still tracked, so we don't recompute every call).
   const pendingContext = new Map<string, string | null>();
 
   const hooks: Hooks = {

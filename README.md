@@ -42,7 +42,7 @@ all five to its own hook/event API - the mechanism differs, the behavior doesn't
 
 | Capture point | What it does |
 |---|---|
-| **Session start** | Injects a HANDOFF.md pointer + live git state into context, complementing Claude Code's native `MEMORY.md` load. Mechanical and cheap. |
+| **Session start** | Injects a HANDOFF.md pointer + live git state into context. Mechanical and cheap. |
 | **User intent** | Appends a redacted, truncated one-liner per prompt to the per-session buffer - the "why" behind the work that otherwise lives only in the (compactable) conversation. |
 | **Action** | Appends a structured one-liner per captured action: the command, file, search, fetch, or delegated task, flagged if it was interrupted, with obvious secrets masked before anything is written. Mutating actions (bash/edit/write) plus high-signal read-side actions (grep/fetch/search/delegated tasks) and MCP tool calls are captured; the noisiest (plain file reads/globs) are deliberately skipped so the buffer stays skimmable. |
 | **Compaction boundary** | Stamps a marker into the buffer at the moment of compaction, so a later handoff knows to distill the actions above it from the buffer text rather than from summarized conversation recall - and re-injects the buffer's tail into context right after, so the current session doesn't lose its own recent history to the compaction. |
@@ -128,8 +128,11 @@ is missing, capture cannot run and the SessionStart block says so rather than fa
 silently.
 
 **What you get:** the 4 skills (`handoff`, `onboard`, `consolidate`,
-`consolidate-memory`) plus all 5 hooks, and the only harness that binds promoted
-facts into Claude's own native `/memory`.
+`consolidate-memory`) plus all 5 hooks. The only harness with a native durable
+memory system of its own (`/memory`, backed by `MEMORY.md`) - the session-start
+injection above complements that auto-load with project-level state, and the
+`handoff`/`consolidate-memory` skills promote genuinely durable facts into it.
+Codex and OpenCode have no equivalent system to bind into today.
 
 **Updating.** Installed plugins are snapshots - they do not track this repo. An old
 copy keeps running (without newer redaction and activation fixes) until you update it
@@ -212,7 +215,12 @@ build step required to install it.
 **What you get:** all 5 hooks, ported to TypeScript against OpenCode's own plugin
 API - continuous prompt/action capture with redaction, session-start context
 injection (HANDOFF.md pointer + live git state), and compaction survival (a boundary
-marker plus buffer-tail re-injection right after). This plugin ships **hooks only,
+marker plus buffer-tail re-injection right after). One behavioral difference worth
+knowing: OpenCode's `session.idle` event fires after every turn, not once at process
+exit the way Claude Code's `SessionEnd` does, so the buffer's end-marker is a "last
+known idle point" that gets re-stamped each time the session goes idle, rather than
+a one-shot end-of-session stamp - `onboard` reads it the same way either way (has
+this buffer seen activity since the marker). This plugin ships **hooks only,
 no skills** - OpenCode's own plugin API has no supported way to ship a skill
 directory alongside a plugin today. Run `npx skills add dynamic/throughline`
 separately for `handoff`/`onboard`/`consolidate`/`consolidate-memory`. In practice

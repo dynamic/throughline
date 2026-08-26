@@ -290,12 +290,70 @@ describe('Throughline Plugin Integration Tests', () => {
       assert.ok(existsSync(tlDataDir(ctx)));
     });
 
+    it('does NOT claim worktree-sharing for a plain, non-worktree project (issue #56, P5)', async () => {
+      // Regression guard for the exact bug this PR claims to fix, and the
+      // regression that fix's first attempt introduced: tempDir sits under
+      // node:os's tmpdir(), which resolves through a symlink on macOS
+      // (/var -> /private/var). An early version of the P5 fix canonicalized
+      // only ONE side of the dataRoot/root comparison and, as a result,
+      // wrongly claimed worktree-sharing on every single plain project on
+      // macOS — confirmed live before this test was added. tempDir here is
+      // deliberately NOT a git worktree of anything; this must stay silent.
+      const result = await sessionCreated(ctx, { sessionID: 'test-session-no-worktree' });
+      assert.ok(result, 'expected a context block');
+      assert.ok(
+        !result!.includes('shared with the main working tree'),
+        `plain project must not claim worktree-sharing, got: ${result}`,
+      );
+    });
+
+    it('DOES claim worktree-sharing for a genuine linked git worktree (issue #56, P5)', async () => {
+      // The positive case for the same fix: a REAL `git worktree add`, not a
+      // synthetic ctx.worktree mismatch — tlDataRoot() resolves sharing via
+      // git itself (see lib.ts computeDataRoot), so only a real linked
+      // worktree exercises this path at all.
+      execSync('git worktree add ../wt-linked -b wt-linked-branch', { cwd: tempDir, stdio: 'pipe' });
+      const linkedDir = join(tempDir, '..', 'wt-linked');
+      const linkedCtx = { directory: linkedDir, worktree: linkedDir };
+
+      try {
+        const result = await sessionCreated(linkedCtx, { sessionID: 'test-session-linked-worktree' });
+        assert.ok(result, 'expected a context block');
+        assert.ok(
+          result!.includes('shared with the main working tree'),
+          `linked worktree must claim sharing, got: ${result}`,
+        );
+      } finally {
+        rmSync(linkedDir, { recursive: true, force: true });
+        try {
+          execSync('git worktree prune', { cwd: tempDir, stdio: 'pipe' });
+        } catch {
+          // best-effort cleanup
+        }
+      }
+    });
+
     it('includes the running plugin version in the header (issue #56, P1)', async () => {
       // Matches session-onboard.sh's `## throughline vX.Y.Z` header, so a
       // stale installed copy is visible the same way on OpenCode.
       const result = await sessionCreated(ctx, { sessionID: 'test-session-version' });
       assert.ok(result, 'expected a context block');
       assert.match(result!, /^## throughline v\d+\.\d+\.\d+ - project session context/);
+    });
+
+    it('warns when buffer/ is not gitignored (issue #56, P4)', async () => {
+      // tempDir's beforeEach git-inits it with no .gitignore at all — buffer/
+      // is genuinely untracked-and-unignored here.
+      const result = await sessionCreated(ctx, { sessionID: 'test-session-not-ignored' });
+      assert.ok(result, 'expected a context block');
+      assert.ok(result!.includes('not gitignored yet'), `expected the gitignore nudge, got: ${result}`);
+    });
+
+    it('stays silent when buffer/ IS gitignored (issue #56, P4)', async () => {
+      writeFileSync(join(tempDir, '.gitignore'), '.claude/throughline/buffer/\n');
+      const result = await sessionCreated(ctx, { sessionID: 'test-session-ignored' });
+      assert.ok(result, 'expected a context block');
+      assert.ok(!result!.includes('not gitignored yet'), `expected no gitignore nudge, got: ${result}`);
     });
 
     it('warns about unconsumed session buffers from OTHER sessions, excluding a prompt-only buffer (issue #56, P2)', async () => {

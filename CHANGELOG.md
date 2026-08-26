@@ -29,12 +29,22 @@ All notable changes to throughline are documented here. Format loosely follows
   as `perplexity-ask_perplexity_ask`), matching neither the `mcp__` prefix nor the
   `__` substring check, so every MCP tool call was invisible to the buffer. Fixed:
   any tool id not otherwise matched is now captured by name (except the
-  deliberately-excluded noisy `read`/`glob`), with zero assumptions about its
-  argument shape either way.
+  deliberately-excluded noisy `read`/`glob`/`list`/`todowrite`), with zero
+  assumptions about its argument shape either way.
 - **OpenCode: `.opencode-plugin/package.json` was at `1.0.0`** while the Claude Code
   and Codex plugin manifests were both `0.13.0` - the CI/`local-ci`
   version-agreement check only ever compared the latter two. Set to `0.13.0`;
   the check now compares all three.
+- **OpenCode: post-compaction recovery pointed at a broken path.** The recovery
+  block's "full history is at" pointer was relative to the data *directory*
+  (`buffer/session-x.md`) instead of the data *root* like every other injected
+  path in the plugin (`.claude/throughline/buffer/session-x.md`) - fixed to match.
+- **OpenCode: several new failure paths (a corrupt `package.json`, an unreadable
+  buffer file, a failed compaction-recovery read) swallowed their errors instead
+  of breadcrumbing them** to `.capture-errors`, the plugin's one existing
+  diagnostic surface for exactly this class of degraded-but-not-crashed state.
+  All now report through it, matching the convention every other hook already
+  follows.
 
 ### Added
 - **OpenCode: post-compaction recovery.** `session.created` doesn't re-fire after a

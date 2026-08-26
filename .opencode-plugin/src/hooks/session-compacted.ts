@@ -7,14 +7,16 @@
  */
 
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import {
   type ThroughlineContext,
   tlDisabled,
   tlDataDir,
+  tlDataRoot,
   tlSafeSid,
   tlNow,
   tlCleanCtrl,
+  tlErr,
 } from "../lib.js";
 
 interface SessionCompactedInput {
@@ -89,8 +91,14 @@ export async function sessionCompacted(
  * `pendingContext`, which rides the same push-per-transform-call /
  * clear-on-idle delivery as the session-start block.
  *
- * Returns null when there is nothing to recover (no buffer yet, or the read
- * failed) rather than throwing — this must never break the session.
+ * Returns null when there is genuinely nothing to recover (no buffer yet,
+ * or an empty one) rather than throwing — this must never break the
+ * session. A READ failure is different from "nothing to recover" (there
+ * likely IS unrecovered history, it just couldn't be read) and is
+ * breadcrumbed via tlErr plus an explicit degraded block, rather than
+ * silently returning null the same as the no-buffer case — this fires
+ * exactly when conversation memory was just wiped by the compaction, the
+ * one moment a silent "nothing to see here" is least affordable.
  */
 export async function sessionCompactionRecovery(
   ctx: ThroughlineContext,
@@ -99,6 +107,7 @@ export async function sessionCompactionRecovery(
   if (tlDisabled()) return null;
 
   const dataDir = tlDataDir(ctx);
+  const dataRoot = tlDataRoot(ctx);
   const bufDir = join(dataDir, "buffer");
   const sid = resolveSid(input.sessionID);
   if (!sid) return null;
@@ -106,11 +115,14 @@ export async function sessionCompactionRecovery(
   const bufPath = join(bufDir, `session-${sid}.md`);
   if (!existsSync(bufPath)) return null;
 
+  const relBuf = relative(dataRoot, bufPath);
+
   let content: string;
   try {
     content = readFileSync(bufPath, "utf-8");
-  } catch {
-    return null;
+  } catch (err) {
+    tlErr(dataDir, `sessionCompactionRecovery: read failed for ${relBuf}: ${err}`);
+    return `⚠️ Context was just compacted, but this session's action buffer (\`${relBuf}\`) could not be read - recent action history before this point may be lost. Check disk space / permissions.`;
   }
 
   const allLines = content.split("\n").filter((l) => l.trim() !== "");
@@ -121,8 +133,6 @@ export async function sessionCompactionRecovery(
       ? `${l.slice(0, RECOVERY_TAIL_LINE_CHARS)} …[line truncated]`
       : l,
   );
-
-  const relBuf = `${bufPath.startsWith(dataDir) ? bufPath.slice(dataDir.length + 1) : bufPath}`;
 
   const lines: string[] = [
     `🧷 Context was just compacted. The last ${RECOVERY_TAIL_LINES} line(s) of this session's action buffer are inlined below to recover what you did before the compaction, without an extra read - the raw actions persist even though the conversation summary dropped detail. Full history (if the session ran longer than this tail) is at \`${relBuf}\`.`,

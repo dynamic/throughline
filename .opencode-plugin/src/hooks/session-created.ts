@@ -11,8 +11,8 @@
  * dir exists and log a message.
  */
 
-import { existsSync, readFileSync, readdirSync, realpathSync } from "node:fs";
-import { join, relative, dirname } from "node:path";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { join, relative, dirname, sep } from "node:path";
 import { execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import {
@@ -23,6 +23,8 @@ import {
   tlActive,
   tlDataExists,
   tlSafeSid,
+  tlCanonicalize,
+  tlErr,
 } from "../lib.js";
 
 // Note: Unlike the shell version, this TypeScript port does NOT require jq.
@@ -63,31 +65,17 @@ function getGitState(root: string): { branch: string; status: string } | null {
 }
 
 /**
- * Canonicalize a path (resolve symlinks), falling back to the raw path if
- * resolution fails (path doesn't exist yet, permissions, etc.) — mirrors
- * _tl_canonicalize_path in _lib.sh, used ONLY for the worktree-sharing
- * comparison below, never for $root itself elsewhere (issue #56, P5: a raw
- * string compare here false-positives on macOS, where /tmp is a symlink to
- * /private/tmp — every session run from an unresolved /tmp path would
- * wrongly claim worktree-sharing even when dataRoot and root are the same
- * real location).
- */
-function canonicalize(path: string): string {
-  try {
-    return realpathSync(path);
-  } catch {
-    return path;
-  }
-}
-
-/**
  * Whether `targetPath` is covered by a .gitignore rule, as seen from `root`.
- * Mirrors the shell hook's use of `git check-ignore -q`: exit 0 = ignored,
- * exit 1 = genuinely not ignored (warn), anything else (e.g. a
- * THROUGHLINE_DATA_DIR pointed outside root's own repo — check-ignore exits
- * fatally rather than "not ignored" for a path outside the tree it's asked
- * about) is unanswerable and must NOT be treated the same as "not ignored",
- * or every session on that config prints an unsatisfiable warning forever.
+ * `git check-ignore -q` itself: exit 0 = ignored, exit 1 = genuinely not
+ * ignored, anything else (e.g. a THROUGHLINE_DATA_DIR pointed outside
+ * root's own repo — check-ignore exits fatally rather than "not ignored"
+ * for a path outside the tree it's asked about) is unanswerable. The shell
+ * hook avoids ever hitting that fatal case via an outer path-prefix guard
+ * (only calling check-ignore when $data is under $droot) rather than
+ * branching on the exit code itself; this port makes the same case
+ * explicit here instead, so "unanswerable" is never conflated with "not
+ * ignored" — the caller must NOT treat "unknown" as "not ignored," or every
+ * session on that config prints an unsatisfiable warning forever.
  */
 function isGitIgnored(root: string, targetPath: string): "ignored" | "not-ignored" | "unknown" {
   try {
@@ -108,13 +96,14 @@ function isGitIgnored(root: string, targetPath: string): "ignored" | "not-ignore
  * this compiled file (dist/hooks/session-created.js -> ../../package.json),
  * mirroring the source layout (src/hooks/session-created.ts -> ../../package.json).
  */
-function readPluginVersion(): string {
+function readPluginVersion(dataDir: string): string {
   try {
     const here = dirname(fileURLToPath(import.meta.url));
     const pkgPath = join(here, "..", "..", "package.json");
     const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as { version?: string };
     return pkg.version ?? "";
-  } catch {
+  } catch (err) {
+    tlErr(dataDir, `readPluginVersion: could not read/parse package.json: ${err}`);
     return "";
   }
 }
@@ -133,7 +122,7 @@ const ENDED_MARKER = /^<!-- session-ended /;
  * of session-onboard.sh's awk pass). Returns the warning lines to append, or
  * an empty array when there is nothing to report.
  */
-function sweepUnconsumedBuffers(bufDir: string, dataRoot: string, currentSid: string): string[] {
+function sweepUnconsumedBuffers(bufDir: string, dataRoot: string, dataDir: string, currentSid: string): string[] {
   let files: string[];
   try {
     files = readdirSync(bufDir).filter((f) => f.startsWith("session-") && f.endsWith(".md"));
@@ -150,8 +139,15 @@ function sweepUnconsumedBuffers(bufDir: string, dataRoot: string, currentSid: st
     let content: string;
     try {
       content = readFileSync(join(bufDir, f), "utf-8");
-    } catch {
-      continue; // unreadable: fails closed, same as the shell's empty-count fallback
+    } catch (err) {
+      // Unreadable: matches the shell's own fallback (session-onboard.sh's
+      // awk pass leaves all three counts at 0 on a read failure, which
+      // falls through to the "unsure" bucket, not "nothing to report") —
+      // an unreadable buffer might well hold real unconsumed work, so it
+      // must not silently vanish from the count the way "prompt-only" does.
+      tlErr(dataDir, `sweepUnconsumedBuffers: read failed for buffer/${f}: ${err}`);
+      unsure++;
+      continue;
     }
 
     const lines = content.split("\n");
@@ -219,19 +215,22 @@ export async function sessionCreated(
   // Header. Includes the running plugin's version (issue #56, P1) so a stale
   // installed copy is visible the same way session-onboard.sh's own
   // `## throughline vX.Y.Z` header is.
-  const version = readPluginVersion();
+  const version = readPluginVersion(dataDir);
   lines.push(version ? `## throughline v${version} - project session context` : "## throughline - project session context");
   lines.push("");
 
-  // Worktree sharing note. Compares CANONICALIZED root against dataRoot
-  // (issue #56, P5) — a raw string compare here false-positives on macOS,
-  // where /tmp resolves to /private/tmp: every session run from an
-  // unresolved /tmp path would wrongly claim worktree-sharing even when
-  // dataRoot and root are the same real location. dataRoot itself is left
-  // un-canonicalized (matches _lib.sh's own contract: it anchors every other
-  // relative()/path use in this function and must match tool input paths
-  // exactly) — canonicalization is scoped to this one comparison only.
-  const canonicalRoot = canonicalize(root);
+  // Worktree sharing note. dataRoot (tlDataRoot()) is ALWAYS canonicalized
+  // by lib.ts's computeDataRoot() — matching _lib.sh's tl_data_root(), which
+  // canonicalizes on every return path, not just the linked-worktree one.
+  // root must be canonicalized here too before comparing: a raw compare
+  // against dataRoot false-positives on macOS, where /tmp (and os.tmpdir()'s
+  // own /var/folders) resolves through /private/... — confirmed live, an
+  // earlier version of this comparison canonicalized only ONE side and
+  // wrongly claimed worktree-sharing on every single plain, non-worktree
+  // session. root itself stays un-canonicalized everywhere else in this
+  // function (it anchors relative()/path use and must match tool input
+  // paths exactly) — canonicalization here is scoped to this one comparison.
+  const canonicalRoot = tlCanonicalize(root);
   if (dataRoot !== canonicalRoot) {
     lines.push(
       `🔗 throughline data is shared with the main working tree at \`${dataRoot}\` (this is a linked worktree).`,
@@ -296,7 +295,10 @@ export async function sessionCreated(
       return false;
     }
   })();
-  if (dataDir.startsWith(dataRoot) && rootInGitTree) {
+  // A plain startsWith would treat e.g. "/foo/project-backup" as "inside"
+  // "/foo/project" — require the path separator (or exact equality) so only
+  // a genuine subdirectory counts.
+  if ((dataDir === dataRoot || dataDir.startsWith(dataRoot + sep)) && rootInGitTree) {
     if (isGitIgnored(dataRoot, `${bufDir}/`) === "not-ignored") {
       lines.push("");
       lines.push(
@@ -307,7 +309,7 @@ export async function sessionCreated(
 
   // Unconsumed-buffer sweep (issue #56, P2)
   if (existsSync(bufDir)) {
-    lines.push(...sweepUnconsumedBuffers(bufDir, dataRoot, tlSafeSid(input.sessionID)));
+    lines.push(...sweepUnconsumedBuffers(bufDir, dataRoot, dataDir, tlSafeSid(input.sessionID)));
   }
 
   // Git state (if in worktree)

@@ -8,9 +8,14 @@
  *
  * Which tools land here is decided by the switch below: the mutating
  * tools (bash/edit/write) plus the high-signal read-side tools
- * (grep/webfetch/websearch/task) and MCP tools (mcp__*). read and glob are
- * deliberately skipped — they are the noisiest tools by far, and a buffer
- * that logs every file read stops being skimmable.
+ * (grep/webfetch/websearch/task) get their own dedicated case, each with a
+ * type-specific redaction/formatting rule. Everything else NOT in
+ * NOISY_TOOLS (below) falls through to a generic name-only capture (issue
+ * #56, P0b) — this deliberately has no naming-convention gate: an earlier
+ * version required "mcp__"/"__" in the tool id, copying Claude Code's
+ * `mcp__server__tool` convention, and that was itself the bug — OpenCode's
+ * real MCP tool ids use a single underscore (confirmed live as
+ * `perplexity-ask_perplexity_ask`), so every MCP call was silently dropped.
  *
  * OpenCode's built-in tool ids are lowercase (`bash`, `edit`, `write`,
  * `grep`, `webfetch`, `websearch`, `task`, ...) — confirmed against
@@ -28,14 +33,6 @@
 
 import { join } from "node:path";
 import { mkdirSync } from "node:fs";
-
-// Deliberately excluded from the generic default-case capture below: the
-// noisiest built-in tools, matching Claude Code's PostToolUse matcher (which
-// never sends Read/Glob to the hook at all). Unlike Claude Code's
-// hooks.json-level matcher, OpenCode's tool.execute.after fires for EVERY
-// tool with no equivalent filter, so this hook has to do that filtering
-// itself — this set is that filter.
-const NOISY_TOOLS = new Set(["read", "glob"]);
 import type { Hooks } from "@opencode-ai/plugin";
 import {
   type ThroughlineContext,
@@ -49,6 +46,20 @@ import { redact, redactPrompt, clean, clamp } from "../utils/redaction.js";
 type ToolExecuteAfterHook = NonNullable<Hooks["tool.execute.after"]>;
 type ToolExecuteAfterInput = Parameters<ToolExecuteAfterHook>[0];
 type ToolExecuteAfterOutput = Parameters<ToolExecuteAfterHook>[1];
+
+// Deliberately excluded from the generic default-case capture below: the
+// noisiest built-in tools, matching Claude Code's PostToolUse matcher (which
+// never sends Read/Glob to the hook at all). Unlike Claude Code's
+// hooks.json-level matcher, OpenCode's tool.execute.after fires for EVERY
+// tool with no equivalent filter, so this hook has to do that filtering
+// itself — this set is that filter. Set confirmed against
+// PermissionConfig in @opencode-ai/sdk/dist/v2/gen/types.gen.d.ts: `list`
+// (the directory-listing tool, glob's direct analogue) and `todowrite`
+// (fires on every todo update) both need the same exclusion `read`/`glob`
+// already got, or the P0b fix above would newly start logging them on every
+// call — the noisiest-tools problem this set exists to solve in the first
+// place.
+const NOISY_TOOLS = new Set(["read", "glob", "list", "todowrite"]);
 
 /**
  * Determine outcome suffix from tool result metadata.
