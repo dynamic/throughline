@@ -70,10 +70,21 @@ reset_buf() { rm -f "$BUF"/session-*.md "$DATA"/.capture-errors; mkdir -p "$BUF"
 # the GIT_AUTHOR_* exports above). On failure, reports via bad() naming the
 # dir instead of leaving the caller silently skipped - the same debugging
 # trap #42/#43 closed for the worktree-specific chains, closed here for the
-# remaining plain git-repo fixtures (#44).
+# remaining plain git-repo fixtures (#44). The dir/empty-arg guard exists
+# because this helper's entire purpose is turning silent fixture failure
+# loud - `cd ""` is a POSIX sh no-op that would otherwise silently git-init
+# the caller's own cwd instead of failing.
 fixture_repo() {
+  [ -n "${1:-}" ] && [ -d "$1" ] || { bad "fixture setup failed: ${1:-<empty>} (no such dir)"; return; }
   ( cd "$1" && git init -q && git commit -q --allow-empty -m init ) 2>/dev/null \
     || bad "fixture setup failed: $1 (git init/commit)"
+}
+# fixture_repo_gitignore <dir> - same as fixture_repo, but for fixtures that
+# stage and commit a pre-written .gitignore instead of an empty commit.
+fixture_repo_gitignore() {
+  [ -n "${1:-}" ] && [ -d "$1" ] || { bad "fixture setup failed: ${1:-<empty>} (no such dir)"; return; }
+  ( cd "$1" && git init -q && git add .gitignore && git commit -q -m init ) 2>/dev/null \
+    || bad "fixture setup failed: $1 (git init/add .gitignore/commit)"
 }
 
 fixture_repo "$WORK/proj"
@@ -657,7 +668,7 @@ has "first activation nudges to gitignore the buffer when not covered" "$O9" 'no
 FRESH_G="$WORK/fresh-g"
 mkdir -p "$FRESH_G"
 printf '.claude/throughline/buffer/\n' > "$FRESH_G/.gitignore"
-( cd "$FRESH_G" && git init -q && git add .gitignore && git commit -q -m init ) 2>/dev/null
+fixture_repo_gitignore "$FRESH_G"
 O10=$(printf '%s' '{"source":"startup","session_id":"T"}' | CLAUDE_PROJECT_DIR="$FRESH_G" sh "$H/session-onboard.sh")
 hasnt "no gitignore nudge when the buffer is already covered" "$O10" 'not gitignored yet'
 
@@ -669,7 +680,7 @@ hasnt "no gitignore nudge when the buffer is already covered" "$O10" 'not gitign
 FRESH_G2="$WORK/fresh-g2"
 mkdir -p "$FRESH_G2"
 printf '.claude/throughline/\n' > "$FRESH_G2/.gitignore"
-( cd "$FRESH_G2" && git init -q && git add .gitignore && git commit -q -m init ) 2>/dev/null
+fixture_repo_gitignore "$FRESH_G2"
 O10B=$(printf '%s' '{"source":"startup","session_id":"T"}' | CLAUDE_PROJECT_DIR="$FRESH_G2" sh "$H/session-onboard.sh")
 hasnt "no gitignore nudge when the whole data dir (unwildcarded) covers the buffer too" "$O10B" 'not gitignored yet'
 
@@ -686,7 +697,7 @@ hasnt "no gitignore nudge when the whole data dir (unwildcarded) covers the buff
 FRESH_G3="$WORK/fresh-g3"
 mkdir -p "$FRESH_G3"
 printf '.claude/throughline/*\n!.claude/throughline/buffer/\n' > "$FRESH_G3/.gitignore"
-( cd "$FRESH_G3" && git init -q && git add .gitignore && git commit -q -m init ) 2>/dev/null
+fixture_repo_gitignore "$FRESH_G3"
 O10C=$(printf '%s' '{"source":"startup","session_id":"T"}' | CLAUDE_PROJECT_DIR="$FRESH_G3" sh "$H/session-onboard.sh")
 has "gitignore nudge still fires when a wildcard+negation pattern falsely un-ignores the buffer" "$O10C" 'not gitignored yet'
 
