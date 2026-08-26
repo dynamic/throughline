@@ -5,6 +5,12 @@ All notable changes to throughline are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Changed
+- Publishing `@dynamicagency/throughline-opencode` to npm is now automated from a
+  `v*` tag push via npm Trusted Publishing (OIDC) in
+  `.github/workflows/release.yml`, with provenance attestation and no
+  long-lived npm token (issue #61).
+
 ## [0.14.0]
 
 ### Added
