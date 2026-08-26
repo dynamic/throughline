@@ -75,14 +75,20 @@ reset_buf() { rm -f "$BUF"/session-*.md "$DATA"/.capture-errors; mkdir -p "$BUF"
 # loud - `cd ""` is a POSIX sh no-op that would otherwise silently git-init
 # the caller's own cwd instead of failing.
 fixture_repo() {
-  [ -n "${1:-}" ] && [ -d "$1" ] || { bad "fixture setup failed: ${1:-<empty>} (no such dir)"; return; }
+  if [ -z "${1:-}" ] || [ ! -d "$1" ]; then
+    bad "fixture setup failed: ${1:-<empty>} (no such dir)"
+    return
+  fi
   ( cd "$1" && git init -q && git commit -q --allow-empty -m init ) 2>/dev/null \
     || bad "fixture setup failed: $1 (git init/commit)"
 }
 # fixture_repo_gitignore <dir> - same as fixture_repo, but for fixtures that
 # stage and commit a pre-written .gitignore instead of an empty commit.
 fixture_repo_gitignore() {
-  [ -n "${1:-}" ] && [ -d "$1" ] || { bad "fixture setup failed: ${1:-<empty>} (no such dir)"; return; }
+  if [ -z "${1:-}" ] || [ ! -d "$1" ]; then
+    bad "fixture setup failed: ${1:-<empty>} (no such dir)"
+    return
+  fi
   ( cd "$1" && git init -q && git add .gitignore && git commit -q -m init ) 2>/dev/null \
     || bad "fixture setup failed: $1 (git init/add .gitignore/commit)"
 }
