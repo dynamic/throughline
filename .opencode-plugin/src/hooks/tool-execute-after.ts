@@ -28,6 +28,14 @@
 
 import { join } from "node:path";
 import { mkdirSync } from "node:fs";
+
+// Deliberately excluded from the generic default-case capture below: the
+// noisiest built-in tools, matching Claude Code's PostToolUse matcher (which
+// never sends Read/Glob to the hook at all). Unlike Claude Code's
+// hooks.json-level matcher, OpenCode's tool.execute.after fires for EVERY
+// tool with no equivalent filter, so this hook has to do that filtering
+// itself — this set is that filter.
+const NOISY_TOOLS = new Set(["read", "glob"]);
 import type { Hooks } from "@opencode-ai/plugin";
 import {
   type ThroughlineContext,
@@ -142,12 +150,24 @@ export async function toolExecuteAfter(
     }
 
     default: {
-      // MCP tools (mcp__server__tool) and any other matched tool: name only.
-      // Strip asterisks from tool name to avoid breaking markdown bold.
-      if (tool.startsWith("mcp__") || tool.includes("__")) {
-        const safeName = clean(tool).replace(/\*/g, "");
-        line = `**${safeName}**${suffix}`;
-      }
+      // MCP tools and any other unmatched tool: name only, zero assumptions
+      // about the input schema, so no field can leak a secret and no
+      // unverified shape can be misread. NOISY_TOOLS (read/glob) stays
+      // excluded even here — see its own comment.
+      //
+      // issue #56 (P0b): this used to require "mcp__"/"__" in the name,
+      // copying Claude Code's `mcp__server__tool` convention. Confirmed live
+      // that OpenCode's own MCP tool ids use a SINGLE underscore between
+      // server and tool name (e.g. `perplexity-ask_perplexity_ask`), which
+      // matched neither check — every MCP call was silently dropped. There is
+      // no prefix to gate on here: every other OpenCode built-in tool this
+      // plugin knows about is matched by name above
+      // (bash/edit/write/grep/webfetch/websearch/task), so anything reaching
+      // this default case is already known to be an MCP tool or something
+      // equally unanticipated, and capturing its bare name is safe either way.
+      if (NOISY_TOOLS.has(tool)) break;
+      const safeName = clean(tool).replace(/\*/g, "");
+      line = `**${safeName}**${suffix}`;
       break;
     }
   }

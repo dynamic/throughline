@@ -1,6 +1,6 @@
 # throughline
 
-**Continuous, state-aware session memory for Claude Code, OpenCode, and Codex CLI.**
+**Continuous, state-aware session memory for Claude Code, Codex CLI, and OpenCode.**
 Captures what you *did* and what *is* - commands, file changes, decisions, live git/PR
 state - then hands it off with judgment when the session wraps. Your artifacts stay
 readable, editable, and yours.
@@ -37,28 +37,39 @@ handoff, and binds into Claude Code's native memory system.
 
 ## How it works
 
-Three layers, each doing what it's actually capable of:
+Five capture points, each doing what it's actually capable of. Every harness wires
+all five to its own hook/event API - the mechanism differs, the behavior doesn't:
 
-1. **Continuous capture** (`UserPromptSubmit` + `PostToolUse` hooks) - appends a
-   structured one-liner per user prompt and per captured action to a per-session
-   buffer: the intent behind the work, then the command, file, search, fetch, or
-   delegated task, flagged if it was interrupted, with obvious secrets masked
-   before anything is written. Mutating tools (Bash/Edit/Write/NotebookEdit) plus
-   high-signal read-side tools (Grep/WebFetch/WebSearch/Task/agents) and MCP tools
-   are captured; the noisiest (Read/Glob) are deliberately skipped so the buffer
-   stays skimmable. Mechanical and cheap. You never see it; it just protects you.
-2. **Judged handoff** (`handoff` skill) - at wrap-up, the agent distills
-   the buffer + context into a durable `HANDOFF.md` and a timestamped session log,
-   and promotes any durable facts into native memory. This is the judgment layer, so
-   it's a skill, not a hook. It runs proactively at detected wrap-up and reports the
-   diff for your review.
-3. **Safety-net flush** (`SessionEnd` hook) - stamps the buffer on exit so a session
-   that ended without a handoff is surfaced next time for retroactive distillation.
-   Nothing is ever silently lost.
+| Capture point | What it does |
+|---|---|
+| **Session start** | Injects a HANDOFF.md pointer + live git state into context, complementing Claude Code's native `MEMORY.md` load. Mechanical and cheap. |
+| **User intent** | Appends a redacted, truncated one-liner per prompt to the per-session buffer - the "why" behind the work that otherwise lives only in the (compactable) conversation. |
+| **Action** | Appends a structured one-liner per captured action: the command, file, search, fetch, or delegated task, flagged if it was interrupted, with obvious secrets masked before anything is written. Mutating actions (bash/edit/write) plus high-signal read-side actions (grep/fetch/search/delegated tasks) and MCP tool calls are captured; the noisiest (plain file reads/globs) are deliberately skipped so the buffer stays skimmable. |
+| **Compaction boundary** | Stamps a marker into the buffer at the moment of compaction, so a later handoff knows to distill the actions above it from the buffer text rather than from summarized conversation recall - and re-injects the buffer's tail into context right after, so the current session doesn't lose its own recent history to the compaction. |
+| **Session end** | A safety-net stamp so a session that ended without a handoff is surfaced next time for retroactive distillation. Nothing is ever silently lost. |
 
-Orientation is automated too: a `SessionStart` hook injects a HANDOFF.md pointer +
-live git state, complementing Claude Code's native `MEMORY.md` load. The
-`onboard` skill does the full pass (open PRs/issues, deep read) on demand.
+You never see any of this directly; it just protects you. The judgment sits one
+layer up, in the **`handoff` skill**: at wrap-up, the agent distills the buffer +
+context into a durable `HANDOFF.md` and a timestamped session log, and promotes any
+durable facts into native memory (where the harness has one). It runs proactively
+at detected wrap-up and reports the diff for your review. The **`onboard` skill**
+does the full orientation pass (open PRs/issues, deep read) on demand.
+
+<details>
+<summary>Per-harness mechanism (click to expand)</summary>
+
+| Capture point | Claude Code / Codex CLI | OpenCode |
+|---|---|---|
+| Session start | `SessionStart` hook | `session.created` event + `experimental.chat.system.transform` |
+| User intent | `UserPromptSubmit` hook | `chat.message` hook |
+| Action | `PostToolUse` hook | `tool.execute.after` hook |
+| Compaction boundary | `PreCompact` hook, then `SessionStart` re-fires with `source=compact` | `session.compacted` event, which queues the recovery block for the next context injection |
+| Session end | `SessionEnd` hook | `session.idle` event (fires after every turn, not once at exit - see [OpenCode](#opencode)) |
+
+Claude Code and Codex CLI share the identical shell hook scripts; OpenCode's plugin
+is a TypeScript port of the same logic against OpenCode's own API.
+
+</details>
 
 And over months, the same lesson can appear in session log after session log without
 ever graduating. The `consolidate` skill is the periodic pass (monthly,
@@ -70,17 +81,16 @@ records; only the durable copy moves.
 
 ## Surviving compaction
 
-When Claude Code compacts a long conversation, the transcript is summarized and
-detail is lost. throughline is built around that fact:
+When a long conversation gets compacted, the transcript is summarized and detail is
+lost. throughline is built around that fact:
 
 - **The raw action buffer survives**, because it lives on disk, appended after
   every action, independent of the context window.
-- **A `PreCompact` hook stamps a boundary marker** into the buffer at the moment of
-  compaction, so a later handoff can see the seam and knows to distill the actions
-  above it from the buffer text rather than from summarized recall.
-- **`SessionStart` re-fires on `compact`** (an empty matcher matches every source),
-  so right after a compaction throughline points Claude back at the surviving
-  buffer for the current session.
+- **A boundary marker is stamped** into the buffer at the moment of compaction, so
+  a later handoff can see the seam and knows to distill the actions above it from
+  the buffer text rather than from summarized recall.
+- **The buffer's tail is re-injected into context right after**, so the session
+  doesn't lose its own recent history to the compaction it just went through.
 
 Honest scope: the **what** (commands run, files changed) is compaction-proof; the
 **why** (decisions, dead ends) lives in the conversation and is what compaction
@@ -91,14 +101,17 @@ and the boundary marker flags where recall stops being trustworthy.
 
 Every harness reads and writes the same `.claude/throughline/` data format, so a
 project's history stays readable and continuable no matter which one you install into.
-Capabilities differ - see the table below for the honest comparison, then jump to the
-section for your harness.
+Claude Code has the most native integration (it binds into Claude's own memory
+system); Codex CLI and OpenCode both get full automatic capture through their own
+hook/plugin APIs. Capabilities differ in the details below - see the table for the
+honest comparison, then jump to the section for your harness.
 
-| | [Claude Code](#claude-code) | [Codex CLI](#codex-cli-plugin) | [OpenCode](#opencode-plugin) | [npx skills](#npx-skills) |
+| | [Claude Code](#claude-code) | [Codex CLI](#codex-cli) | [OpenCode](#opencode) | [npx skills](#npx-skills) |
 |---|---|---|---|---|
-| Skills (`handoff`, `onboard`, `consolidate`, `consolidate-memory`) | yes | yes | separate install | yes |
+| Skills (`handoff`, `onboard`, `consolidate`, `consolidate-memory`) | yes | yes | separate install (see below - broadly auto-discovered) | yes |
 | Automatic capture | yes - 5 hooks | yes - 5 hooks, one-time trust step (see below) | yes - 5 hooks | no |
 | Compaction survival | yes | yes | yes | no |
+| Native memory binding | yes (Claude's `/memory`) | no | no | no |
 | Requires `jq` | yes | yes | no | n/a - skills only |
 
 ### Claude Code
@@ -114,27 +127,63 @@ Then reload (`/reload-plugins`) or restart the session.
 is missing, capture cannot run and the SessionStart block says so rather than failing
 silently.
 
-### npx skills
+**What you get:** the 4 skills (`handoff`, `onboard`, `consolidate`,
+`consolidate-memory`) plus all 5 hooks, and the only harness that binds promoted
+facts into Claude's own native `/memory`.
+
+**Updating.** Installed plugins are snapshots - they do not track this repo. An old
+copy keeps running (without newer redaction and activation fixes) until you update it
+from the `/plugin` manager (or uninstall and reinstall), then `/reload-plugins`. The
+SessionStart block prints the running version (`## throughline vX.Y.Z`) - if it lags
+this repo's releases, your install is stale.
+
+### Codex CLI
 
 ```sh
-npx skills add dynamic/throughline
+codex plugin marketplace add dynamic/throughline
+codex plugin add throughline@throughline
 ```
 
-Installs the 4 skills directly - no plugin system, no marketplace registration. This is
-the fallback for any harness that reads `SKILL.md` files from disk but has no plugin
-system of its own. No automatic capture (there's no hook mechanism in this delivery
-form at all); run `handoff` manually at the end of a session.
+**Requirements:** `git` and `jq` on your `PATH`, same as Claude Code - Codex runs
+the identical hook scripts. Without `jq`, capture cannot run. Works in Codex CLI and
+Codex Desktop.
 
-## OpenCode Plugin
+**What you get:** the 4 skills plus all 5 hooks, reading and writing the same
+`.claude/throughline/` data format Claude Code and OpenCode use - so a project's
+history is readable and continuable from any of the three.
 
-throughline is also available as an OpenCode plugin, providing the same session capture functionality
-within the OpenCode ecosystem.
+**The one-time trust step.** Codex gates hook execution behind a one-time trust
+decision per machine (Claude Code has no equivalent gate - a plugin's hooks just run
+once installed). What that looks like the first time you use a project with
+throughline installed:
 
-### Installation
+- **Codex CLI** shows a native **"Hooks need review"** dialog before your first
+  message: "5 hooks are new or changed. Hooks can run outside the sandbox after you
+  trust them." Choose **"Trust all and continue."** That's the whole step - trust is
+  granted by content hash, not by project path, so it covers every project at once.
+  A throughline update that changes the hook scripts triggers the dialog again.
+- **Codex Desktop** grants trust silently, with no dialog - capture just starts
+  working on your first message.
 
-OpenCode's plugin config key is `plugin` (singular) in `opencode.json`, and each
-entry is either a local path or an npm package name - there is no separate
-`plugins/` directory to copy into.
+Verify anytime with the in-TUI **`/hooks`** command: it lists every Codex hook event
+with an Installed/Active count, and pressing Enter on a row shows that hook's
+`Source`, `Command`, `Mode`, `Timeout`, and `Trust` status. A trusted throughline
+hook reads `Source: Plugin - throughline@throughline`, `Trust: Trusted`.
+
+**Updating.** Same story as Claude Code: an installed plugin is a snapshot, not a
+live checkout. Update from `codex plugin add throughline@throughline` again (or the
+Codex plugin manager) to pick up the latest release - a throughline update also
+changes the hook scripts' content hash, so the trust dialog reappears once on Codex
+CLI.
+
+### OpenCode
+
+throughline is also available as an OpenCode plugin, providing the same session
+capture functionality within the OpenCode ecosystem.
+
+**Installation.** OpenCode's plugin config key is `plugin` (singular) in
+`opencode.json`, and each entry is either a local path or an npm package name -
+there is no separate `plugins/` directory to copy into.
 
 1. Clone this repo (or a checkout you already have) somewhere stable, e.g.
    `~/AI/skills/throughline`.
@@ -151,91 +200,47 @@ entry is either a local path or an npm package name - there is no separate
 3. Restart OpenCode. Check `~/.local/share/opencode/log/opencode.log` for a load
    error against that path if session capture doesn't appear to be running.
 
-Once throughline is published to npm, this will collapse to a package name
-(`"throughline-opencode"`) like any other plugin - no local path or clone required.
+There is currently no published npm package for this plugin, so a local path is the
+only install method - unlike Claude Code and Codex, an OpenCode install stays a
+live checkout rather than a snapshot: `git pull` this repo to update it, no
+separate reinstall step.
 
-### Requirements
+**Requirements:** Node.js 18+ (no `jq` required - TypeScript uses native JSON
+parsing). OpenCode loads the plugin's TypeScript entry point directly (via Bun) - no
+build step required to install it.
 
-- Node.js 18+ (no `jq` required - TypeScript uses native JSON parsing)
-- OpenCode loads the plugin's TypeScript entry point directly (via Bun) - no
-  build step required to install it.
+**What you get:** all 5 hooks, ported to TypeScript against OpenCode's own plugin
+API - continuous prompt/action capture with redaction, session-start context
+injection (HANDOFF.md pointer + live git state), and compaction survival (a boundary
+marker plus buffer-tail re-injection right after). This plugin ships **hooks only,
+no skills** - OpenCode's own plugin API has no supported way to ship a skill
+directory alongside a plugin today. Run `npx skills add dynamic/throughline`
+separately for `handoff`/`onboard`/`consolidate`/`consolidate-memory`. In practice
+this is often a non-issue: OpenCode discovers `SKILL.md` files from several
+locations it shares with Claude Code and Codex (project-local and global
+`.claude/skills/`, `.agents/skills/`, and its own `.opencode/skills/` /
+`~/.config/opencode/skills/`), so skills installed for another harness on the same
+machine are frequently already visible to OpenCode with no extra step.
 
-This plugin ships **hooks only, no skills** - OpenCode reads skills from its own
-`~/.config/opencode/skills/` directory, not from a plugin's own files. Run
-`npx skills add dynamic/throughline` separately for `handoff`/`onboard`/`consolidate`
-on OpenCode.
+By default the OpenCode plugin uses the same `.claude/throughline/` data directory
+as Claude Code and Codex, so a project's history stays continuous across harnesses.
 
-### Features
+**Updating.** Since the install is a live checkout, `git pull` this repo. The
+running version is printed in the injected session-start block (`## throughline
+vX.Y.Z`) the same way it is on Claude Code and Codex - if it lags this repo's
+releases, pull again.
 
-The OpenCode plugin provides the same session capture capabilities as the Claude Code plugin:
-
-- Continuous capture of user prompts and tool executions
-- HANDOFF.md pointer and live git state injected into the system prompt at
-  session start, via OpenCode's `experimental.chat.system.transform` hook -
-  OpenCode has no direct equivalent of Claude Code's SessionStart context
-  injection today, so this rides an `experimental.*` API that may change
-  upstream.
-- Action capture with redaction of sensitive information
-- Compaction boundary markers to preserve context across session compaction
-- A "last known idle point" marker in the buffer, refreshed each time the
-  session goes idle. OpenCode's `session.idle` fires after every turn, not
-  once at process exit like Claude Code's SessionEnd, so this is not a
-  one-shot end-of-session stamp - it tells `onboard` whether the buffer has
-  seen activity since the agent last went idle.
-- All 5 hooks are implemented: session-created, chat-message, tool-execute-after, session-compacted, session-idle
-
-### Data Directory Compatibility
-
-By default, the OpenCode plugin uses the same `.claude/throughline/` data directory as the Claude Code plugin,
-making it compatible with existing session data. This allows seamless transition between Claude Code and OpenCode
-sessions while maintaining continuity of session logs and handoffs.
-
-**Updating.** Installed plugins are snapshots - they do not track this repo. An old
-copy keeps running (without newer redaction and activation fixes) until you update it
-from the `/plugin` manager (or uninstall and reinstall), then `/reload-plugins`. The
-SessionStart block prints the running version (`## throughline vX.Y.Z`) - if it lags
-this repo's releases, your install is stale.
-
-## Codex CLI Plugin
-
-throughline is installable as a Codex CLI plugin - skills and automatic capture
-both, the same as Claude Code. Works in Codex CLI and Codex Desktop.
-
-### Installation
+### npx skills
 
 ```sh
-codex plugin marketplace add dynamic/throughline
-codex plugin add throughline@throughline
+npx skills add dynamic/throughline
 ```
 
-**Requirements:** `git` and `jq` on your `PATH`, same as Claude Code - Codex runs
-the identical hook scripts. Without `jq`, capture cannot run.
-
-### What you get
-
-The 4 skills (`handoff`, `onboard`, `consolidate`, `consolidate-memory`) plus all 5
-hooks, reading and writing the same `.claude/throughline/` data format Claude Code
-and OpenCode use - so a project's history is readable and continuable from any of
-the three.
-
-### The one-time trust step
-
-Codex gates hook execution behind a one-time trust decision per machine (Claude Code
-has no equivalent gate - a plugin's hooks just run once installed). What that looks
-like the first time you use a project with throughline installed:
-
-- **Codex CLI** shows a native **"Hooks need review"** dialog before your first
-  message: "5 hooks are new or changed. Hooks can run outside the sandbox after you
-  trust them." Choose **"Trust all and continue."** That's the whole step - trust is
-  granted by content hash, not by project path, so it covers every project at once.
-  A throughline update that changes the hook scripts triggers the dialog again.
-- **Codex Desktop** grants trust silently, with no dialog - capture just starts
-  working on your first message.
-
-Verify anytime with the in-TUI **`/hooks`** command: it lists every Codex hook event
-with an Installed/Active count, and pressing Enter on a row shows that hook's
-`Source`, `Command`, `Mode`, `Timeout`, and `Trust` status. A trusted throughline
-hook reads `Source: Plugin - throughline@throughline`, `Trust: Trusted`.
+Installs the 4 skills directly - no plugin system, no marketplace registration. This
+is the fallback for any harness that reads `SKILL.md` files from disk but has no
+plugin system of its own. **What you get:** the 4 skills, nothing else - no
+automatic capture (there's no hook mechanism in this delivery form at all); run
+`handoff` manually at the end of a session.
 
 ## Configuration
 
@@ -260,9 +265,9 @@ In a **linked git worktree** (e.g. Claude Code's `claude/<branch>` auto-worktree
 workflow, under `<project>/.claude/worktrees/<name>/`), "the project root" above
 resolves to the **main working tree**, not the worktree itself - so every worktree
 of a repo, plus its main checkout, share one `HANDOFF.md`/`logs/`/`buffer/` instead
-of each worktree silently accumulating its own. `session-onboard.sh` prints a note
-when this redirect is active. Live git state (current branch, `git status`) and
-captured file paths still describe the worktree you're actually in.
+of each worktree silently accumulating its own. The session-start capture point
+prints a note when this redirect is active. Live git state (current branch,
+`git status`) and captured file paths still describe the worktree you're actually in.
 
 Set `THROUGHLINE_WORKTREE_SHARED=0` to opt back into isolated per-worktree data
 dirs. Requires git 2.31+; falls back to per-worktree behavior for bare repos,
@@ -438,10 +443,9 @@ throughline/
 │     │  ├─ session-compacted.ts
 │     │  └─ session-idle.ts
 │     ├─ utils/
-│     │  └─ redaction.ts   # Redaction logic ported from jq to TypeScript
-│     ├─ integration.test.ts
-│     └─ utils/
-│        └─ redaction.test.ts
+│     │  ├─ redaction.ts       # Redaction logic ported from jq to TypeScript
+│     │  └─ redaction.test.ts
+│     └─ integration.test.ts
 ├─ hooks/
 │  ├─ hooks.json
 │  ├─ _lib.sh                # data-dir resolution + activation gate + jq/sid/redaction helpers

@@ -6,11 +6,15 @@
     },
     {
       "label": "plugin version agreement",
-      "run": "set -e; c=$(jq -r .version .claude-plugin/plugin.json); x=$(jq -r .version .codex-plugin/plugin.json); [ \"$c\" = \"$x\" ] || { echo \"version drift: .claude-plugin/plugin.json=$c .codex-plugin/plugin.json=$x\" >&2; exit 1; }"
+      "run": "set -e; c=$(jq -r .version .claude-plugin/plugin.json); x=$(jq -r .version .codex-plugin/plugin.json); o=$(jq -r .version .opencode-plugin/package.json); [ \"$c\" = \"$x\" ] && [ \"$c\" = \"$o\" ] || { echo \"version drift: .claude-plugin/plugin.json=$c .codex-plugin/plugin.json=$x .opencode-plugin/package.json=$o\" >&2; exit 1; }"
     },
     {
       "label": "hook tests",
       "run": "sh tests/run.sh"
+    },
+    {
+      "label": "opencode plugin",
+      "run": "cd .opencode-plugin && npm ci && npm run typecheck && npm test"
     }
   ]
 }

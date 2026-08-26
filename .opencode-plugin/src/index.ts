@@ -12,6 +12,19 @@
  *
  * Types are imported from @opencode-ai/plugin rather than hand-rolled, so a
  * payload-shape mismatch is a compile error instead of a silent no-op.
+ *
+ * pendingContext delivery (issue #56, P0a): `experimental.chat.system.transform`
+ * fires MORE THAN ONCE per turn — confirmed live, OpenCode calls it once for its
+ * own small-model "title generation" pass (`agent=title, small=true`) and again
+ * for the real primary-agent call, both carrying the identical sessionID and no
+ * other field to tell them apart. An earlier delete-on-first-read design let the
+ * title call (which fires first) consume and destroy the entry before the real,
+ * user-facing call ever saw it — the injected block never reached a real
+ * conversation. Fixed by pushing on every transform call while an entry is
+ * pending (harmless on the throwaway title call, correct on the real one) and
+ * clearing it only at `session.idle` — which fires once, after both transform
+ * calls for a turn have already happened, at the true end of that turn — so
+ * later turns in the same session don't get it re-injected.
  */
 
 import type { Plugin, Hooks } from "@opencode-ai/plugin";
@@ -19,7 +32,7 @@ import type { Plugin, Hooks } from "@opencode-ai/plugin";
 import { sessionCreated } from "./hooks/session-created.js";
 import { chatMessage } from "./hooks/chat-message.js";
 import { toolExecuteAfter } from "./hooks/tool-execute-after.js";
-import { sessionCompacted } from "./hooks/session-compacted.js";
+import { sessionCompacted, sessionCompactionRecovery } from "./hooks/session-compacted.js";
 import { sessionIdle } from "./hooks/session-idle.js";
 
 // --- Plugin implementation ---
@@ -52,9 +65,12 @@ export const ThroughlinePlugin: Plugin = async ({ directory, worktree }) => {
     },
 
     "experimental.chat.system.transform": async (input, output) => {
+      // Push, don't consume: this call fires more than once per turn (see
+      // header comment), and every call for a session while an entry is
+      // pending should see it — the entry is cleared once, at session.idle,
+      // not here.
       if (!input.sessionID || !pendingContext.has(input.sessionID)) return;
       const block = pendingContext.get(input.sessionID);
-      pendingContext.delete(input.sessionID);
       if (block) output.system.push(block);
     },
 
@@ -68,13 +84,31 @@ export const ThroughlinePlugin: Plugin = async ({ directory, worktree }) => {
           break;
         }
 
-        case "session.compacted":
-          await sessionCompacted(tlCtx, { sessionID: event.properties.sessionID });
+        case "session.compacted": {
+          const sessionID = event.properties.sessionID;
+          await sessionCompacted(tlCtx, { sessionID });
+          // session.created does not re-fire after a compaction, so this is
+          // the only channel for post-compaction recovery: overwrite (not
+          // merge) any still-pending entry with a fresh recovery block, which
+          // rides the same push-per-transform-call / clear-on-idle delivery
+          // above. By the time compaction happens, the original session-start
+          // entry (if any) has already been cleared by an earlier idle, so
+          // there is nothing to lose by overwriting here.
+          const recovery = await sessionCompactionRecovery(tlCtx, { sessionID });
+          if (recovery) pendingContext.set(sessionID, recovery);
           break;
+        }
 
-        case "session.idle":
-          await sessionIdle(tlCtx, { sessionID: event.properties.sessionID });
+        case "session.idle": {
+          const sessionID = event.properties.sessionID;
+          await sessionIdle(tlCtx, { sessionID });
+          // Clear here, not in the transform hook: idle fires once, after
+          // every transform call for the turn has already happened, so this
+          // is the correct "turn is over" signal — later turns in the same
+          // session should not get the block re-injected.
+          pendingContext.delete(sessionID);
           break;
+        }
       }
     },
   };

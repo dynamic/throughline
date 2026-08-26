@@ -21,6 +21,12 @@ interface SessionCompactedInput {
   sessionID: string;
 }
 
+// Mirrors hooks/session-onboard.sh's TL_COMPACT_TAIL_LINES /
+// TL_COMPACT_TAIL_LINE_CHARS: bounded so the recovery block itself has a
+// predictable size regardless of how long any single captured line got.
+const RECOVERY_TAIL_LINES = 30;
+const RECOVERY_TAIL_LINE_CHARS = 300;
+
 /**
  * Resolve session ID from OpenCode's sessionID.
  */
@@ -70,4 +76,60 @@ export async function sessionCompacted(
   } catch {
     // Silently fail - this is a marker, not critical
   }
+}
+
+/**
+ * Post-compaction recovery block (issue #56, P3 — port of
+ * session-onboard.sh's `source == "compact"` branch).
+ *
+ * OpenCode's session.created does not re-fire after a compaction the way
+ * Claude Code's SessionStart does with source=compact, so there is no other
+ * channel to re-inject anything once a compaction has happened. This inlines
+ * the buffer's tail directly into a context block that index.ts hands to
+ * `pendingContext`, which rides the same push-per-transform-call /
+ * clear-on-idle delivery as the session-start block.
+ *
+ * Returns null when there is nothing to recover (no buffer yet, or the read
+ * failed) rather than throwing — this must never break the session.
+ */
+export async function sessionCompactionRecovery(
+  ctx: ThroughlineContext,
+  input: SessionCompactedInput,
+): Promise<string | null> {
+  if (tlDisabled()) return null;
+
+  const dataDir = tlDataDir(ctx);
+  const bufDir = join(dataDir, "buffer");
+  const sid = resolveSid(input.sessionID);
+  if (!sid) return null;
+
+  const bufPath = join(bufDir, `session-${sid}.md`);
+  if (!existsSync(bufPath)) return null;
+
+  let content: string;
+  try {
+    content = readFileSync(bufPath, "utf-8");
+  } catch {
+    return null;
+  }
+
+  const allLines = content.split("\n").filter((l) => l.trim() !== "");
+  if (allLines.length === 0) return null;
+
+  const tail = allLines.slice(-RECOVERY_TAIL_LINES).map((l) =>
+    l.length > RECOVERY_TAIL_LINE_CHARS
+      ? `${l.slice(0, RECOVERY_TAIL_LINE_CHARS)} …[line truncated]`
+      : l,
+  );
+
+  const relBuf = `${bufPath.startsWith(dataDir) ? bufPath.slice(dataDir.length + 1) : bufPath}`;
+
+  const lines: string[] = [
+    `🧷 Context was just compacted. The last ${RECOVERY_TAIL_LINES} line(s) of this session's action buffer are inlined below to recover what you did before the compaction, without an extra read - the raw actions persist even though the conversation summary dropped detail. Full history (if the session ran longer than this tail) is at \`${relBuf}\`.`,
+    "```",
+    ...tail,
+    "```",
+  ];
+
+  return lines.join("\n");
 }

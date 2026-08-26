@@ -11,7 +11,54 @@ All notable changes to throughline are documented here. Format loosely follows
   step Codex itself prompts for (CLI) or grants silently (Desktop) - not the
   unwired, skills-only state v0.13.0 shipped believing was true. No code changed;
   the shipped `.codex-plugin/plugin.json` already worked this way. See the README's
-  "Codex CLI Plugin" section for current behavior.
+  "Codex CLI" section for current behavior.
+- **OpenCode: session-start context injection never reached a real conversation
+  (issue #56).** Live-verified for the first time since the plugin shipped in
+  v0.13.0. OpenCode calls `experimental.chat.system.transform` more than once per
+  turn - once for its own small-model title-generation pass, once for the real
+  primary-agent call, both with the same session id and nothing else to tell them
+  apart. The plugin's delete-on-first-read design let the title call, which fires
+  first, consume and destroy the injected block before the real, user-facing call
+  ever saw it - so the HANDOFF.md pointer, live git state, and worktree-sharing
+  note were silently absent from every real session. Fixed by pushing the block on
+  every transform call while it's pending and clearing it only at `session.idle`
+  (the true end of the turn), instead of consuming it on first read.
+- **OpenCode: MCP tool calls were silently dropped from capture (issue #56).** The
+  capture switch only recognized Claude Code's `mcp__server__tool` naming
+  convention. OpenCode's real MCP tool ids use a single underscore (confirmed live
+  as `perplexity-ask_perplexity_ask`), matching neither the `mcp__` prefix nor the
+  `__` substring check, so every MCP tool call was invisible to the buffer. Fixed:
+  any tool id not otherwise matched is now captured by name (except the
+  deliberately-excluded noisy `read`/`glob`), with zero assumptions about its
+  argument shape either way.
+- **OpenCode: `.opencode-plugin/package.json` was at `1.0.0`** while the Claude Code
+  and Codex plugin manifests were both `0.13.0` - the CI/`local-ci`
+  version-agreement check only ever compared the latter two. Set to `0.13.0`;
+  the check now compares all three.
+
+### Added
+- **OpenCode: post-compaction recovery.** `session.created` doesn't re-fire after a
+  compaction the way Claude Code's `SessionStart` does with `source=compact`, so
+  there was no channel to recover anything post-compaction. `session.compacted` now
+  queues a recovery block (the buffer's tail, same bounds as Claude Code's) that
+  rides the same injection path, so a compacted OpenCode session gets its recent
+  history back in context, matching Claude Code and Codex.
+- **OpenCode: session-start now reports the running plugin version**
+  (`## throughline vX.Y.Z`), warns about unconsumed session buffers from other
+  sessions, and nudges toward gitignoring `buffer/` when it isn't - three
+  diagnostics ported from the shell hooks that OpenCode's TypeScript port had never
+  carried. Also fixed a symlink false-positive in the worktree-sharing note (macOS's
+  `/tmp` → `/private/tmp` used to make every session claim data-sharing even when it
+  wasn't one) and bounded the injected `git status` output to 20 lines.
+- `local-ci` now runs `.opencode-plugin`'s `npm ci`/typecheck/test as a fourth
+  custom check, closing the parity gap between `local-ci` and what CI already ran
+  (issue #49).
+- `README.md` restructured so Claude Code, Codex CLI, and OpenCode read as peer
+  harnesses (same Install/Requirements/What you get/Updating shape each) rather
+  than Codex and OpenCode being orphaned sections bolted onto a Claude-Code-first
+  doc; "How it works" and the compaction section rewritten in harness-neutral
+  language with a per-harness mechanism mapping. `docs/index.html` updated to
+  match.
 
 ## [0.13.0]
 
