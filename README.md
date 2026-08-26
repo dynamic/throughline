@@ -208,6 +208,9 @@ codex plugin marketplace add dynamic/throughline
 codex plugin add throughline@throughline
 ```
 
+**Requirements:** `git` and `jq` on your `PATH`, same as Claude Code - Codex runs
+the identical hook scripts. Without `jq`, capture cannot run.
+
 ### What you get
 
 The 4 skills (`handoff`, `onboard`, `consolidate`, `consolidate-memory`) plus all 5
@@ -224,8 +227,8 @@ like the first time you use a project with throughline installed:
 - **Codex CLI** shows a native **"Hooks need review"** dialog before your first
   message: "5 hooks are new or changed. Hooks can run outside the sandbox after you
   trust them." Choose **"Trust all and continue."** That's the whole step - trust is
-  granted by content hash, not by project path, so it isn't asked again for this
-  project or any other.
+  granted by content hash, not by project path, so it covers every project at once.
+  A throughline update that changes the hook scripts triggers the dialog again.
 - **Codex Desktop** grants trust silently, with no dialog - capture just starts
   working on your first message.
 
@@ -233,11 +236,6 @@ Verify anytime with the in-TUI **`/hooks`** command: it lists every Codex hook e
 with an Installed/Active count, and pressing Enter on a row shows that hook's
 `Source`, `Command`, `Mode`, `Timeout`, and `Trust` status. A trusted throughline
 hook reads `Source: Plugin - throughline@throughline`, `Trust: Trusted`.
-
-`PreCompact` shows as installed and active the same as the other four events, but
-its firing hasn't been directly observed on a real compaction. See
-[#47](https://github.com/dynamic/throughline/issues/47) and
-[#52](https://github.com/dynamic/throughline/issues/52) for background.
 
 ## Configuration
 
@@ -423,7 +421,7 @@ throughline/
 │  ├─ plugin.json
 │  └─ marketplace.json
 ├─ .codex-plugin/
-│  └─ plugin.json           # declares skills only; hooks work via convention discovery from hooks/, see "Codex CLI Plugin" above
+│  └─ plugin.json           # declares skills; hooks found via convention in hooks/
 ├─ .agents/plugins/
 │  └─ marketplace.json      # Codex marketplace entry, mirrors .claude-plugin's
 ├─ .opencode-plugin/

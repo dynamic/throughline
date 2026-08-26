@@ -3,6 +3,16 @@
 All notable changes to throughline are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); this project uses semantic versioning.
 
+## [Unreleased]
+
+### Fixed
+- **Corrects v0.13.0's Codex framing below.** Codex automatic capture works out of
+  the box on both Codex CLI and Codex Desktop, gated only by a one-time hook-trust
+  step Codex itself prompts for (CLI) or grants silently (Desktop) - not the
+  unwired, skills-only state v0.13.0 shipped believing was true. No code changed;
+  the shipped `.codex-plugin/plugin.json` already worked this way. See the README's
+  "Codex CLI Plugin" section for current behavior.
+
 ## [0.13.0]
 
 Two delivery formats, a fourth skill, and a documentation pass: OpenCode plugin,
@@ -23,12 +33,13 @@ with per-harness install instructions across all four formats.
   real `@opencode-ai/sdk` payload shapes (event envelopes, `UserMessage`/`parts`,
   lowercase tool ids), not hand-shaped fixtures that could drift from the actual
   wire format.
-- **Codex CLI plugin** as a 4th delivery format, **skills only, not automatic capture**.
-  Repo-root `.codex-plugin/plugin.json` and `.agents/plugins/marketplace.json` make the
-  4 skills (`handoff`, `onboard`, `consolidate`, `consolidate-memory`) installable via
-  `codex plugin marketplace add dynamic/throughline` → `codex plugin add
-  throughline@throughline`, verified end-to-end: install, marketplace listing, and
-  skill loading all confirmed against a real Codex CLI install.
+- **Codex CLI plugin** as a 4th delivery format. Repo-root `.codex-plugin/plugin.json`
+  and `.agents/plugins/marketplace.json` make the 4 skills (`handoff`, `onboard`,
+  `consolidate`, `consolidate-memory`) installable via `codex plugin marketplace add
+  dynamic/throughline` → `codex plugin add throughline@throughline`, verified
+  end-to-end: install, marketplace listing, and skill loading all confirmed against
+  a real Codex CLI install. *(Believed skills-only at the time - see
+  [Unreleased] above: automatic capture was working all along.)*
 - **`consolidate-memory` skill** (issue #36) — native-memory file hygiene: detects
   duplicate, stale, unindexed, and orphaned entries in a project's memory store.
   `consolidate/SKILL.md` had referenced it since introduction; it didn't exist yet.
@@ -50,12 +61,11 @@ with per-harness install instructions across all four formats.
   hook under real `codex exec` confirmed hooks *can* fire (SessionStart, PostToolUse,
   UserPromptSubmit, SessionEnd all verified, no double-registration for an explicit
   single-file declaration) and that `CLAUDE_PLUGIN_ROOT`/`PLUGIN_ROOT` are set correctly
-  for hook processes. The blocker: hooks require a persisted trust grant with no
-  verified non-interactive path — a headless `codex exec` session silently no-ops
-  without `--dangerously-bypass-hook-trust`, a flag scoped by Codex's own docs to
-  "automation that already vets hook sources." Wiring hooks today would look automatic
-  while silently not firing for most real usage, so the skills-only framing stands.
-  Full findings on the issue.
+  for hook processes. The blocker at the time: hooks appeared to require a persisted
+  trust grant with no non-interactive path — a headless `codex exec` session silently
+  no-ops without `--dangerously-bypass-hook-trust`. *(Superseded the same day - see
+  [Unreleased] above: Codex's own interactive trust flow, untested until issue #52,
+  turned out to cover this without any workaround.)*
 
 ### Fixed
 - `hooks/session-precompact.sh` was missing its executable bit (unlike its four
