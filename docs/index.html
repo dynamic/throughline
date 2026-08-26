@@ -398,11 +398,10 @@
           <pre><span class="c"># in a terminal</span>
 codex plugin marketplace add dynamic/throughline
 codex plugin add throughline@throughline</pre>
-          <p class="note">All 4 skills, invoked on demand. <strong>No automatic capture</strong> - Codex
-            gates plugin hooks behind an interactive trust grant with no verified non-interactive path, so
-            wiring it would look automatic while silently not firing. Run <code>handoff</code> manually at
-            session end.</p>
-          <span class="status partial"><span class="dot"></span>skills only</span>
+          <p class="note">All 4 skills plus all 5 hooks - full automatic capture, same as Claude Code.
+            Codex gates hooks behind a one-time trust step: CLI shows a "Hooks need review" dialog on
+            first use (choose "Trust all and continue"); Desktop grants trust silently, no dialog.</p>
+          <span class="status full"><span class="dot"></span>skills + automatic capture</span>
         </div>
         <div class="h-card">
           <span class="h-kicker">$ opencode</span>
@@ -432,9 +431,9 @@ npx skills add dynamic/throughline</pre>
           </thead>
           <tbody>
             <tr><td class="feature">Skills (handoff, onboard, consolidate, consolidate-memory)</td><td class="yes">yes</td><td class="yes">yes</td><td class="partial">separate install</td><td class="yes">yes</td></tr>
-            <tr><td class="feature">Automatic capture</td><td class="yes">yes - 5 hooks</td><td class="no">no - trust-gated</td><td class="yes">yes - 5 hooks</td><td class="no">no</td></tr>
-            <tr><td class="feature">Compaction survival</td><td class="yes">yes</td><td class="no">no</td><td class="yes">yes</td><td class="no">no</td></tr>
-            <tr><td class="feature">Requires jq</td><td class="partial">yes</td><td class="no">n/a - skills only</td><td class="no">no</td><td class="no">n/a - skills only</td></tr>
+            <tr><td class="feature">Automatic capture</td><td class="yes">yes - 5 hooks</td><td class="yes">yes - 5 hooks, one-time trust</td><td class="yes">yes - 5 hooks</td><td class="no">no</td></tr>
+            <tr><td class="feature">Compaction survival</td><td class="yes">yes</td><td class="yes">yes</td><td class="yes">yes</td><td class="no">no</td></tr>
+            <tr><td class="feature">Requires jq</td><td class="partial">yes</td><td class="partial">yes</td><td class="no">no</td><td class="no">n/a - skills only</td></tr>
           </tbody>
         </table>
       </div>

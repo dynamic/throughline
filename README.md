@@ -3,8 +3,7 @@
 **Continuous, state-aware session memory for Claude Code, OpenCode, and Codex CLI.**
 Captures what you *did* and what *is* - commands, file changes, decisions, live git/PR
 state - then hands it off with judgment when the session wraps. Your artifacts stay
-readable, editable, and yours. (Codex support is skills-only - see "Codex CLI Plugin"
-below.)
+readable, editable, and yours.
 
 ---
 
@@ -98,9 +97,9 @@ section for your harness.
 | | [Claude Code](#claude-code) | [Codex CLI](#codex-cli-plugin) | [OpenCode](#opencode-plugin) | [npx skills](#npx-skills) |
 |---|---|---|---|---|
 | Skills (`handoff`, `onboard`, `consolidate`, `consolidate-memory`) | yes | yes | separate install | yes |
-| Automatic capture | yes - 5 hooks | no - trust-gated, see below | yes - 5 hooks | no |
-| Compaction survival | yes | no | yes | no |
-| Requires `jq` | yes | n/a - skills only | no | n/a - skills only |
+| Automatic capture | yes - 5 hooks | yes - 5 hooks, one-time trust step (see below) | yes - 5 hooks | no |
+| Compaction survival | yes | yes | yes | no |
+| Requires `jq` | yes | yes | no | n/a - skills only |
 
 ### Claude Code
 
@@ -199,8 +198,8 @@ this repo's releases, your install is stale.
 
 ## Codex CLI Plugin
 
-throughline is also installable as a Codex CLI plugin - **skills only by default**,
-not automatic capture (see below for why, and for an unsupported way to enable it).
+throughline is installable as a Codex CLI plugin - skills and automatic capture
+both, the same as Claude Code. Works in Codex CLI and Codex Desktop.
 
 ### Installation
 
@@ -211,72 +210,34 @@ codex plugin add throughline@throughline
 
 ### What you get
 
-The 4 skills (`handoff`, `onboard`, `consolidate`, `consolidate-memory`) are
-installed and invocable on demand, reading and writing the same
-`.claude/throughline/` data format Claude Code and OpenCode use - so a project's
-history is readable and continuable from any of the three.
+The 4 skills (`handoff`, `onboard`, `consolidate`, `consolidate-memory`) plus all 5
+hooks, reading and writing the same `.claude/throughline/` data format Claude Code
+and OpenCode use - so a project's history is readable and continuable from any of
+the three.
 
-**Automatic capture (the 5 hooks) is not wired in the shipped plugin manifest.**
-Confirmed empirically: Codex hooks work (SessionStart, UserPromptSubmit, PostToolUse,
-and SessionEnd all fire correctly with no double-registration), but only under an
-interactive trust grant - a headless `codex exec` session silently no-ops without
-`--dangerously-bypass-hook-trust`, a flag Codex's own docs scope to "automation that
-already vets hook sources," not something to build a shipped plugin's default behavior
-on. See [#47](https://github.com/dynamic/throughline/issues/47) for the full
-investigation and [#52](https://github.com/dynamic/throughline/issues/52) for what
-follows below. Run `handoff` manually at the end of a Codex session unless you've done
-the advanced setup below.
+### The one-time trust step
 
-### Advanced: enabling automatic capture (unsupported, verified against v0.149.0)
+Codex gates hook execution behind a one-time trust decision per machine (Claude Code
+has no equivalent gate - a plugin's hooks just run once installed). What that looks
+like the first time you use a project with throughline installed:
 
-Codex's own hook-trust mechanism is under active development
-([openai/codex#21615](https://github.com/openai/codex/issues/21615),
-[openai/codex#37362](https://github.com/openai/codex/issues/37362)) with no official
-CLI command or config key to grant trust non-interactively yet. Discovery is now
-observed rather than assumed: the shipped `.codex-plugin/plugin.json` declares no
-`hooks` key at all, but the in-TUI `/hooks` command (see below) shows Codex resolving
-each hook's command straight from the installed plugin's cache path (e.g.
-`~/.codex/plugins/cache/throughline/throughline/<version>/hooks/session-capture.sh`),
-convention-based discovery from the plugin root with no manifest declaration needed -
-though the exact matching rule still isn't isolated. What's confirmed working today:
+- **Codex CLI** shows a native **"Hooks need review"** dialog before your first
+  message: "5 hooks are new or changed. Hooks can run outside the sandbox after you
+  trust them." Choose **"Trust all and continue."** That's the whole step - trust is
+  granted by content hash, not by project path, so it isn't asked again for this
+  project or any other.
+- **Codex Desktop** grants trust silently, with no dialog - capture just starts
+  working on your first message.
 
-1. **Grant trust once, interactively, using a named profile.** Run
-   `codex -p <profile>` inside a project with throughline installed, and answer
-   "yes" to the ordinary "do you trust this directory?" prompt. This persists a
-   `trusted_hash` (believed to be a content hash of `hooks/hooks.json`, not a live
-   signature) under a new `[hooks.state]` table in that profile's
-   `~/.codex/<profile>.config.toml`. Confirmed: headless
-   `codex --profile <profile> exec` then fires hooks with no special flags.
-   **A bare `codex` invocation with no profile is unverified** - it may not grant
-   hook trust into the base `~/.codex/config.toml` the same way (see #52's open
-   question on this); if step 1 produces no `[hooks.state]` table, use a named
-   profile instead.
-2. **Verify with the in-TUI `/hooks` command** - a real, sanctioned status view
-   (not something you have to infer from grepping config files). It lists every
-   Codex hook event with an Installed/Active count; press Enter on a row with a
-   nonzero count to see each hook's `Source`, `Command`, `Mode`, `Timeout`, and
-   `Trust` status, and toggle it on/off (saved automatically). A trusted throughline
-   hook shows `Source: Plugin - throughline@throughline` and `Trust: Trusted`.
-   Confirmed this reflects genuinely-trusted hooks correctly; **untested whether
-   toggling an *untrusted* hook here can grant trust** (would need a never-trusted
-   profile to check) - if you find out, update
-   [#52](https://github.com/dynamic/throughline/issues/52).
-3. **To also cover Codex Desktop** (which has no `--profile` mechanism and only ever
-   reads the base `~/.codex/config.toml`): copy the `[hooks.state]` table granted in
-   step 1 into that base config file if it isn't already there, and set
-   `plugin_hooks = true` under `[features]` in the same file (unconfirmed whether this
-   second step is strictly necessary or redundant with the first - not isolated).
-   Restart Codex Desktop for a config change to take effect. Confirmed live in two
-   real projects: PostToolUse/UserPromptSubmit capture and redaction both worked
-   correctly afterward.
+Verify anytime with the in-TUI **`/hooks`** command: it lists every Codex hook event
+with an Installed/Active count, and pressing Enter on a row shows that hook's
+`Source`, `Command`, `Mode`, `Timeout`, and `Trust` status. A trusted throughline
+hook reads `Source: Plugin - throughline@throughline`, `Trust: Trusted`.
 
-**This is explicitly unsupported and may break on a future Codex release** - hook
-discovery and trust changed between v0.118.0 and v0.149.0 already, per v0.149.0's own
-changelog. Trust is believed to be a content hash, so it should survive a throughline
-update as long as `hooks/hooks.json`'s content doesn't change; a throughline release
-that edits that file would likely require re-granting trust. Track
-[#52](https://github.com/dynamic/throughline/issues/52) for whether this becomes a
-documented default setup step or stays here as an advanced/unsupported one.
+`PreCompact` shows as installed and active the same as the other four events, but
+its firing hasn't been directly observed on a real compaction. See
+[#47](https://github.com/dynamic/throughline/issues/47) and
+[#52](https://github.com/dynamic/throughline/issues/52) for background.
 
 ## Configuration
 
@@ -462,7 +423,7 @@ throughline/
 │  ├─ plugin.json
 │  └─ marketplace.json
 ├─ .codex-plugin/
-│  └─ plugin.json           # skills only - see "Codex CLI Plugin" above
+│  └─ plugin.json           # declares skills only; hooks work via convention discovery from hooks/, see "Codex CLI Plugin" above
 ├─ .agents/plugins/
 │  └─ marketplace.json      # Codex marketplace entry, mirrors .claude-plugin's
 ├─ .opencode-plugin/
