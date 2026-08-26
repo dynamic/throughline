@@ -1,0 +1,34 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  npm-publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write        # required for OIDC; publish fails without it
+    defaults:
+      run:
+        working-directory: .opencode-plugin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      # Trusted publishing needs npm >= 11.5.1; setup-node's bundled npm on
+      # Node 22 is 10.x, so upgrade explicitly rather than relying on what
+      # happens to ship with the runner image.
+      - run: npm install -g npm@latest
+      - run: npm ci
+      - name: Check tag matches package version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg=$(node -p "require('./package.json').version")
+          if [ "$tag" != "$pkg" ]; then
+            echo "tag/version mismatch: tag=$tag package.json=$pkg" >&2
+            exit 1
+          fi
+      - run: npm publish

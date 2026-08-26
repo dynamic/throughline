@@ -17,7 +17,11 @@
     "email": "support@dynamicagency.com"
   },
   "homepage": "https://github.com/dynamic/throughline",
-  "repository": "https://github.com/dynamic/throughline",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dynamic/throughline.git",
+    "directory": ".opencode-plugin"
+  },
   "bugs": "https://github.com/dynamic/throughline/issues",
   "license": "MIT",
   "keywords": [
