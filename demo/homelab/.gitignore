@@ -1,0 +1,21 @@
+# Populated by ../setup.sh from the canonical copies at the repo root, so the
+# demo never drifts from the real hooks/skills. Not tracked here.
+.claude/hooks/
+.claude/skills/
+
+# The repo root's .gitignore ignores .claude/throughline/ everywhere (this
+# project dogfoods "local by default"). The demo is the one deliberate
+# exception: its throughline data IS the example, so re-include exactly the
+# artifacts a real install would produce and nothing else.
+!.claude/throughline/
+!.claude/throughline/HANDOFF.md
+!.claude/throughline/logs/
+!.claude/throughline/logs/*.md
+!.claude/throughline/buffer/
+!.claude/throughline/buffer/*.md
+.claude/throughline/buffer/archive/
+.claude/throughline/.capture-errors
+
+# The root .gitignore ignores *.log everywhere; this one sample log is part
+# of the fixture, not scratch output, so it's tracked deliberately.
+!logs/link-check.log
