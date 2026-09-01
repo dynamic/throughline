@@ -151,6 +151,29 @@ the offer entirely when the files aren't actually committable in your layout.
 > opens on purpose. Keep tracking to repos whose writers you'd trust to shape
 > agent behavior.
 
+### Troubleshooting
+
+throughline resolves its data location through three env vars, a
+`.throughlineignore` marker checked at two roots, sticky git-worktree
+migration logic, and a soft `jq` dependency that degrades capture silently
+when missing - reasoning through all of that by hand to answer "why isn't
+capture firing" gets old fast. `session-onboard.sh --doctor` prints the
+resolved state directly instead:
+
+```sh
+sh hooks/session-onboard.sh --doctor
+# or, once installed as a plugin:
+sh "$CLAUDE_PLUGIN_ROOT/hooks/session-onboard.sh" --doctor
+```
+
+It reports the resolved root and data root (and whether they differ, i.e.
+worktree-sharing applies), the activation state and why (`disabled` /
+`ignored` / `active` / `would-bootstrap`), whether `jq` is on `PATH`, live vs.
+archived buffer counts, and the three env vars' current values. It is
+read-only: unlike a real hook run, it never bootstraps a data directory as a
+side effect, so it's safe to run out of curiosity on a project that has never
+activated throughline.
+
 ## Housekeeping
 
 Everything throughline writes grows without automatic bound: there is no

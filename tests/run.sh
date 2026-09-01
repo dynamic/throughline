@@ -949,6 +949,31 @@ PLUGIN_VER=$(jq -r '.version' "$ROOT/.claude-plugin/plugin.json")
 O17=$(printf '%s' '{"source":"startup","session_id":"T"}' | sh "$H/session-onboard.sh")
 has "onboard header carries the plugin version" "$O17" "throughline v$PLUGIN_VER"
 
+# 12o. --doctor (issue #71): a read-only diagnostic report. Checked BEFORE the
+#      THROUGHLINE_DISABLE kill switch (the disabled state is exactly what
+#      someone runs --doctor to discover), reads no stdin, and must never
+#      bootstrap a data dir as a side effect - tl_active() does that, and
+#      --doctor must not call it.
+DOC1=$(THROUGHLINE_DISABLE=1 sh "$H/session-onboard.sh" --doctor)
+has "doctor reports under THROUGHLINE_DISABLE (not swallowed by the kill switch)" "$DOC1" "disabled"
+
+DOC2=$(CLAUDE_PROJECT_DIR="$WT_IGN_LINK" sh "$H/session-onboard.sh" --doctor)
+has "doctor reports ignored when .throughlineignore is present" "$DOC2" "ignored"
+
+DOC3=$(CLAUDE_PROJECT_DIR="$WT_LINK" sh "$H/session-onboard.sh" --doctor)
+has "doctor reports the shared data root from inside a linked worktree" "$DOC3" "$WT_MAIN"
+has "doctor labels a linked worktree as worktree-shared" "$DOC3" "linked worktree"
+
+DOC4=$(PATH="$STUB" sh "$H/session-onboard.sh" --doctor)
+has "doctor reports missing jq" "$DOC4" "MISSING"
+
+FRESH_DOC="$WORK/fresh-doctor"
+mkdir -p "$FRESH_DOC"
+fixture_repo "$FRESH_DOC"
+DOC5=$(CLAUDE_PROJECT_DIR="$FRESH_DOC" sh "$H/session-onboard.sh" --doctor)
+has "doctor reports would-bootstrap on a never-activated project" "$DOC5" "would-bootstrap"
+absent "doctor does not create a data dir as a side effect" "$FRESH_DOC/.claude"
+
 # 13. capture breadcrumbs a swallowed write failure and onboard surfaces it.
 #     Chmod the SESSION FILE itself read-only (not the directory): appending to
 #     an existing file is gated by the file's own write bit, independent of the
