@@ -1,6 +1,6 @@
 {
   "name": "throughline",
-  "version": "0.14.0",
+  "version": "0.15.0",
   "description": "Continuous, state-aware session memory for Codex. Captures what you did and what is (commands, file changes, decisions, and live git/PR state), then hands it off with judgment at session wrap-up. Readable, local-first artifacts (commit them if you choose).",
   "author": {
     "name": "Dynamic Agency",

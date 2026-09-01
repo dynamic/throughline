@@ -5,6 +5,8 @@ All notable changes to throughline are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [0.15.0]
+
 ### Added
 - CI now runs the shell test suite on `windows-latest` and `macos-latest` in
   addition to `ubuntu-latest` (issue #67) - previously an unmade platform
