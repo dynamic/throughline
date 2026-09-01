@@ -13,6 +13,10 @@
       "run": "sh tests/run.sh"
     },
     {
+      "label": "typography",
+      "run": "! git grep -I -n -P '[—–‘’“”]' -- README.md docs/*.md docs/index.html .claude-plugin/marketplace.json"
+    },
+    {
       "label": "opencode plugin",
       "run": "cd .opencode-plugin && npm ci && npm run typecheck && npm test"
     }

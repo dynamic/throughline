@@ -53,6 +53,22 @@ jobs:
             echo "version drift: .claude-plugin/plugin.json=$c .codex-plugin/plugin.json=$x .opencode-plugin/package.json=$o" >&2
             exit 1
           fi
+      - name: Typography (Linux)
+        if: runner.os == 'Linux'
+        # Mechanizes Jason's writing-style rule (no em/en-dashes or curly
+        # quotes in outward-facing content) so it can't regress silently -
+        # scoped to files a reader/user actually opens (README, promo site,
+        # per-harness docs, the plugin marketplace description), not the
+        # whole tree: internal docs (CHANGELOG, HANDOFF, this project's own
+        # memory files, code comments) are explicitly exempt per the style
+        # guide. The pattern is written as escape sequences on purpose - a
+        # literal em-dash pasted into this step would make it match itself.
+        run: |
+          if git grep -I -n -P '[\x{2013}\x{2014}\x{2018}\x{2019}\x{201C}\x{201D}]' -- \
+               README.md docs/*.md docs/index.html .claude-plugin/marketplace.json; then
+            echo "non-ASCII em/en-dash or curly quote in outward-facing files (see above) - use ASCII punctuation instead ( - , straight quotes)" >&2
+            exit 1
+          fi
       - name: Run hook tests
         run: sh tests/run.sh
 

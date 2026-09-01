@@ -8,7 +8,7 @@
     {
       "name": "throughline",
       "source": "./",
-      "description": "Continuous, state-aware session memory for Claude Code — capture what you did and what is, hand it off with judgment.",
+      "description": "Continuous, state-aware session memory for Claude Code - capture what you did and what is, hand it off with judgment.",
       "author": {
         "name": "Dynamic Agency",
         "email": "support@dynamicagency.com"
