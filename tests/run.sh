@@ -949,6 +949,77 @@ PLUGIN_VER=$(jq -r '.version' "$ROOT/.claude-plugin/plugin.json")
 O17=$(printf '%s' '{"source":"startup","session_id":"T"}' | sh "$H/session-onboard.sh")
 has "onboard header carries the plugin version" "$O17" "throughline v$PLUGIN_VER"
 
+# 12o. --doctor (issue #71): a read-only diagnostic report. Checked BEFORE the
+#      THROUGHLINE_DISABLE kill switch (the disabled state is exactly what
+#      someone runs --doctor to discover), reads no stdin, and must never
+#      bootstrap a data dir as a side effect - tl_active() does that, and
+#      --doctor must not call it.
+DOC1=$(THROUGHLINE_DISABLE=1 sh "$H/session-onboard.sh" --doctor)
+has "doctor reports under THROUGHLINE_DISABLE (not swallowed by the kill switch)" "$DOC1" "disabled"
+
+DOC2=$(CLAUDE_PROJECT_DIR="$WT_IGN_LINK" sh "$H/session-onboard.sh" --doctor)
+has "doctor reports ignored when .throughlineignore is present" "$DOC2" "ignored"
+
+DOC3=$(CLAUDE_PROJECT_DIR="$WT_LINK" sh "$H/session-onboard.sh" --doctor)
+# Match the WT_MAIN path as a SUFFIX, not the full absolute path: on Windows
+# CI, $WT_MAIN (derived from $WORK, in MSYS form, e.g. /tmp/...) and the
+# doctor's own "data root:" line (resolved via `git worktree list`, which
+# reports the native C:/... form) describe the identical directory but never
+# match as a full-string substring - every OTHER worktree assertion in this
+# file already sidesteps this by matching a path suffix (see lines 374/381/
+# 386); this one broke that convention and was red on windows-latest until
+# fixed to match it.
+has   "doctor reports the shared data root from inside a linked worktree" "$DOC3" "wt-main/.claude/throughline"
+has   "doctor labels a linked worktree as worktree-shared" "$DOC3" "linked worktree"
+# WT_MAIN already has a HANDOFF.md/data dir from earlier onboard calls (5e4/
+# 5e above) by this point in the suite, so DOC3 - which reports on the SHARED
+# main root's state, not the linked worktree's own - exercises the "active"
+# branch of the state machine. Pinned explicitly: it is the most common
+# real-world case and had zero dedicated assertions.
+has   "doctor reports active state when data already exists" "$DOC3" "activation:        active"
+
+DOC4=$(PATH="$STUB" sh "$H/session-onboard.sh" --doctor)
+has "doctor reports missing jq" "$DOC4" "MISSING"
+
+FRESH_DOC="$WORK/fresh-doctor"
+mkdir -p "$FRESH_DOC"
+fixture_repo "$FRESH_DOC"
+DOC5=$(CLAUDE_PROJECT_DIR="$FRESH_DOC" sh "$H/session-onboard.sh" --doctor)
+has "doctor reports would-bootstrap on a never-activated project" "$DOC5" "would-bootstrap"
+absent "doctor does not create a data dir as a side effect" "$FRESH_DOC/.claude"
+
+# 12o-2. buffer counts: seed a KNOWN number of live and archived buffer files
+#        and assert the exact reported count, not just that the words "live"/
+#        "archived" appear - the counting loop itself (a glob, not find | wc;
+#        see the comment in session-onboard.sh) had zero regression coverage
+#        beyond incidentally landing on 0/0 in every other doctor fixture.
+FRESH_DOC_BUF="$WORK/fresh-doctor-bufs"
+mkdir -p "$FRESH_DOC_BUF/.claude/throughline/buffer/archive"
+fixture_repo "$FRESH_DOC_BUF"
+: > "$FRESH_DOC_BUF/.claude/throughline/buffer/session-a.md"
+: > "$FRESH_DOC_BUF/.claude/throughline/buffer/session-b.md"
+: > "$FRESH_DOC_BUF/.claude/throughline/buffer/archive/session-c.md"
+DOC6=$(CLAUDE_PROJECT_DIR="$FRESH_DOC_BUF" sh "$H/session-onboard.sh" --doctor)
+has "doctor reports the exact seeded buffer counts" "$DOC6" "2 live, 1 archived"
+
+# 12o-3. would-bootstrap distinguishes the LIKELY TO FAIL case (project root
+#        not writable - what a real hook run treats as bootstrap-failed) from
+#        an ordinary not-yet-activated project. Same NTFS-chmod-emulation
+#        caveat as the other permission-based tests in this file (12e).
+if is_windows; then
+  skip_win "doctor reports would-bootstrap LIKELY TO FAIL on an unwritable root"
+elif [ "$(id -u)" != "0" ]; then
+  FRESH_DOC_RO="$WORK/fresh-doctor-ro"
+  mkdir -p "$FRESH_DOC_RO"
+  fixture_repo "$FRESH_DOC_RO"
+  chmod 555 "$FRESH_DOC_RO" 2>/dev/null
+  DOC7=$(CLAUDE_PROJECT_DIR="$FRESH_DOC_RO" sh "$H/session-onboard.sh" --doctor)
+  chmod 755 "$FRESH_DOC_RO" 2>/dev/null
+  has "doctor reports would-bootstrap LIKELY TO FAIL on an unwritable root" "$DOC7" "LIKELY TO FAIL"
+else
+  ok "doctor LIKELY TO FAIL test skipped (running as root)"
+fi
+
 # 13. capture breadcrumbs a swallowed write failure and onboard surfaces it.
 #     Chmod the SESSION FILE itself read-only (not the directory): appending to
 #     an existing file is gated by the file's own write bit, independent of the

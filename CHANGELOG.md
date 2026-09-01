@@ -5,6 +5,13 @@ All notable changes to throughline are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Added
+- `session-onboard.sh --doctor` (issue #71): a read-only diagnostic that
+  prints the resolved data root, activation state and reason, `jq`
+  availability, live/archived buffer counts, and the three env vars'
+  current values - so diagnosing "why isn't capture firing" no longer means
+  reading `_lib.sh` and reasoning through the precedence rules by hand.
+
 ## [0.15.0]
 
 ### Added

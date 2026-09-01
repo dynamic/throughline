@@ -14,6 +14,106 @@
 DIR=$(unset CDPATH; cd -- "$(dirname -- "$0")" && pwd)
 . "${CLAUDE_PLUGIN_ROOT:-$DIR/..}/hooks/_lib.sh" 2>/dev/null || . "$DIR/_lib.sh"
 
+# --doctor (issue #71): a read-only diagnostic report for "why isn't capture
+# firing" / "where does my data live", so answering that no longer requires
+# reading _lib.sh and reasoning through the precedence rules by hand. Checked
+# before the THROUGHLINE_DISABLE kill switch below (not after): the disable
+# being set is exactly the state someone runs --doctor to discover, so the
+# kill switch must not swallow this path the way it swallows normal
+# SessionStart output. Reads no stdin, writes nothing (in particular, never
+# calls tl_active() - that function's job is to bootstrap the data dir as a
+# side effect, which a diagnostic must not do), and exits before any of the
+# normal SessionStart flow below runs.
+if [ "${1:-}" = "--doctor" ]; then
+  root=$(tl_root)
+  tl_resolve_data_root
+  droot="$_tl_data_root"
+  data=$(tl_data_dir)
+
+  # Same canonicalize-then-compare the worktree-sharing notice below uses
+  # (issue #42) - $root is deliberately non-canonical (tl_root()'s doc
+  # comment), so comparing it to $droot raw would false-positive "shared" on
+  # every macOS project via the /tmp -> /private/tmp symlink alone.
+  if [ "$droot" = "$(_tl_canonicalize_path "$root")" ]; then
+    shared="no"
+  else
+    shared="yes (this is a linked worktree; data is shared with the main working tree)"
+  fi
+
+  if tl_disabled; then
+    state="disabled"
+    reason="THROUGHLINE_DISABLE=${THROUGHLINE_DISABLE}"
+  elif [ -f "$droot/.throughlineignore" ] || [ -f "$root/.throughlineignore" ]; then
+    state="ignored"
+    reason=".throughlineignore present"
+  elif tl_data_exists; then
+    state="active"
+    reason="data directory already exists"
+  else
+    state="would-bootstrap"
+    reason="no data directory yet - the next hook run will create one"
+    # Walk up to the nearest existing ancestor and probe its writability -
+    # without this, --doctor could not distinguish an ordinary not-yet-
+    # activated project from the one state a real hook run treats as
+    # bootstrap-failed (permissions, disk full; see the warning below at
+    # $_tl_active_reason = "bootstrap-failed"), in exactly the scenario
+    # ("why isn't capture firing") this diagnostic exists to explain. Pure
+    # parameter expansion, not dirname, for the same no-extra-deps reason as
+    # the buffer-count loop below - safe to loop unbounded since $data is
+    # always absolute (derived from tl_root(), which is always $PWD or
+    # $CLAUDE_PROJECT_DIR), so stripping one path segment at a time always
+    # terminates at "" (treated as "/") in a bounded number of steps.
+    _tl_p="$data"
+    while [ ! -d "$_tl_p" ] && [ -n "$_tl_p" ]; do
+      _tl_p="${_tl_p%/*}"
+    done
+    [ -z "$_tl_p" ] && _tl_p="/"
+    if [ ! -w "$_tl_p" ]; then
+      state="would-bootstrap (LIKELY TO FAIL)"
+      reason="\`$_tl_p\` is not writable - bootstrap will fail"
+    fi
+  fi
+
+  if tl_have_jq; then
+    jq_state="present"
+  else
+    jq_state="MISSING - capture cannot parse hook payloads and will not run"
+  fi
+
+  # Plain glob-and-count rather than find | wc: this is a diagnostic meant to
+  # work in exactly the degraded environments someone reaches for --doctor to
+  # investigate, and neither find nor wc is a POSIX-sh-guaranteed dependency
+  # the way plain globbing and arithmetic are.
+  live=0
+  if [ -d "$data/buffer" ]; then
+    for _tl_f in "$data/buffer"/session-*.md; do
+      [ -f "$_tl_f" ] && live=$((live + 1))
+    done
+  fi
+  archived=0
+  if [ -d "$data/buffer/archive" ]; then
+    for _tl_f in "$data/buffer/archive"/session-*.md; do
+      [ -f "$_tl_f" ] && archived=$((archived + 1))
+    done
+  fi
+
+  echo "throughline doctor"
+  echo "==================="
+  echo "root:              $root"
+  echo "data root:         $droot"
+  echo "worktree-shared:   $shared"
+  echo "data dir:          $data"
+  echo "activation:        $state ($reason)"
+  echo "jq:                $jq_state"
+  echo "buffers:           $live live, $archived archived"
+  echo
+  echo "env vars:"
+  echo "  THROUGHLINE_DATA_DIR=${THROUGHLINE_DATA_DIR:-<unset>}"
+  echo "  THROUGHLINE_WORKTREE_SHARED=${THROUGHLINE_WORKTREE_SHARED:-<unset>}"
+  echo "  THROUGHLINE_DISABLE=${THROUGHLINE_DISABLE:-<unset>}"
+  exit 0
+fi
+
 # Machine-wide kill switch: fully silent, even about existing data. The
 # per-project .throughlineignore keeps orienting toward existing content;
 # the global disable does not - "off" must mean off.
