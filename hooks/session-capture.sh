@@ -68,7 +68,27 @@ mkdir -p "$bufdir" 2>/dev/null || { tl_err "mkdir failed for buffer dir"; exit 0
 # the identical final sanitized id even in the currently-unreachable case of a
 # stranger one. A regression test locks in that capture and flush agree on the
 # filename for a tab-containing id.
-out=$(printf '%s' "$input" | jq -r --arg root "$root" "$(tl_jq_redact_defs)"'
+#
+# $root reaches jq embedded as a JSON string LITERAL inside the jq PROGRAM
+# TEXT ($root_json below), not as `--arg root "$root"` and not as an
+# environment variable either - both of those were tried and both failed
+# identically on a real Windows CI run (issue #67). On Windows Git Bash, jq
+# is a native, non-MSYS binary, and MSYS auto-converts a POSIX-looking value
+# to Windows-native form before a native executable sees it; `--arg root`
+# passes $root as its own, whole argv item - exactly what MSYS's "does this
+# whole argument look like a path" heuristic matches - and an environment
+# variable turned out to be converted the same way. The file_path being
+# compared against it arrives over stdin, which MSYS never touches, so the
+# two never matched and every path this hook wrote stayed unrelativized.
+# Embedding the value as a JSON string INSIDE the much larger jq filter
+# text - which starts with `def outcome($t): ...` and is nowhere close to
+# looking like a path as a whole argument - sidesteps the heuristic
+# entirely, whichever exact channel (argv vs. env) was actually converting
+# it. $root_json is built via a SEPARATE jq call fed over stdin (line below),
+# the one channel already confirmed immune to this, so the value it embeds
+# is the untouched original.
+root_json=$(printf '%s' "$root" | jq -Rs .)
+out=$(printf '%s' "$input" | jq -r "$(tl_jq_redact_defs)""(${root_json}) as \$proot | "'
   # Observable outcome from the tool result. The Claude Code Bash tool_response
   # exposes "interrupted" but NOT an exit code, so a plain non-zero exit is not
   # visible to a PostToolUse hook and is deliberately left unmarked rather than
@@ -94,7 +114,7 @@ out=$(printf '%s' "$input" | jq -r --arg root "$root" "$(tl_jq_redact_defs)"'
       ((.tool_input.command // "") | redact | clean | clamp(200; "…[truncated]")) + "`"
     elif ($t == "Edit" or $t == "Write" or $t == "NotebookEdit") then
       "**" + $t + "** " +
-      ((.tool_input.file_path // .tool_input.notebook_path // "?") | ltrimstr($root + "/") | redact | clean) +
+      ((.tool_input.file_path // .tool_input.notebook_path // "?") | ltrimstr($proot + "/") | redact | clean) +
       outcome($t)
     # High-signal read-side tools (issue #6): one redacted+cleaned argument
     # each, same outcome suffix. Each argument is clamped to a short prefix so

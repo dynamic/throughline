@@ -7,21 +7,44 @@ on:
 
 jobs:
   shell:
-    runs-on: ubuntu-latest
+    name: shell (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    defaults:
+      run:
+        # Claude Code executes a command hook under Git Bash on native
+        # Windows (issue #67) - this is the leg that answers "does it work
+        # there", not just "does it parse as POSIX sh".
+        shell: bash
     steps:
       - uses: actions/checkout@v4
-      - name: Install shellcheck and jq
-        run: sudo apt-get update && sudo apt-get install -y shellcheck jq
-      - name: Lint hooks and tests
+      # jq ships preinstalled on all three hosted runner images; shellcheck
+      # does not on Windows. Checked rather than assumed, same discipline as
+      # every hook's own jq-presence check.
+      - name: Ensure jq
+        run: command -v jq >/dev/null 2>&1 || { echo "jq missing on $RUNNER_OS" >&2; exit 1; }
+      # Static analysis of file content - the result doesn't depend on which
+      # OS runs it, so one leg is enough. Kept on Linux, where it's already
+      # preinstalled, rather than installing it fresh on the other two.
+      - name: Install shellcheck (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - name: Lint hooks and tests (Linux)
+        if: runner.os == 'Linux'
         run: shellcheck -s sh hooks/*.sh tests/*.sh
-      - name: Validate JSON manifests
+      - name: Validate JSON manifests (Linux)
+        if: runner.os == 'Linux'
         run: |
           jq -e '.hooks | keys' hooks/hooks.json >/dev/null
           jq -e '.name and .version' .claude-plugin/plugin.json >/dev/null
           jq -e '.plugins' .claude-plugin/marketplace.json >/dev/null
           jq -e '.name and .version' .codex-plugin/plugin.json >/dev/null
           jq -e '.plugins' .agents/plugins/marketplace.json >/dev/null
-      - name: Check plugin version agreement
+      - name: Check plugin version agreement (Linux)
+        if: runner.os == 'Linux'
         run: |
           c=$(jq -r .version .claude-plugin/plugin.json)
           x=$(jq -r .version .codex-plugin/plugin.json)
