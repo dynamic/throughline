@@ -480,6 +480,27 @@ has   "onboard(compact) tail includes the most recent line" "$O_TAIL" 'cmd40`'
 before "onboard(compact) live git state precedes the buffer-tail inline" \
   "$O_TAIL" 'Live git state' 'Context was just compacted'
 
+# 7b3. review finding: `head -20` bounds the live-git-state block's LINE
+#      COUNT but not each line's WIDTH - `git status -s` prints one line per
+#      modified tracked file regardless of path depth, so a single very long
+#      path is truncated per-line the same way an oversized buffer-tail line
+#      already is (7c below), keeping this block bounded on both axes the
+#      way its "renders first, has no fallback" placement (7b2) assumes.
+FRESH_LONGPATH="$WORK/fresh-longpath"
+LONGPATH="a/very/deeply/nested/directory/structure/that/goes/on/for/quite/a/while/to/simulate/a/real/monorepo/with/excessively/long/generated/paths"
+LONGNAME="a_very_long_generated_filename_that_pushes_this_line_well_past_two_hundred_characters_in_length.txt"
+mkdir -p "$FRESH_LONGPATH/$LONGPATH"
+: > "$FRESH_LONGPATH/$LONGPATH/$LONGNAME"
+( cd "$FRESH_LONGPATH" && git init -q && git add -A && git commit -q -m init ) 2>/dev/null \
+  || bad "fixture setup failed: $FRESH_LONGPATH (git init/add/commit)"
+printf -- 'changed\n' >> "$FRESH_LONGPATH/$LONGPATH/$LONGNAME"
+O_LONGPATH=$(printf '%s' '{"source":"startup","session_id":"T"}' | CLAUDE_PROJECT_DIR="$FRESH_LONGPATH" sh "$H/session-onboard.sh")
+# git status prints the path RELATIVE to the repo root, not the fixture's
+# absolute $FRESH_LONGPATH prefix - assert against the repo-relative form,
+# the same string the untruncated line would actually contain.
+hasnt "onboard(startup) does not inline an oversized git-status line verbatim" "$O_LONGPATH" "$LONGPATH/$LONGNAME"
+has   "onboard(startup) marks a truncated oversized git-status line" "$O_LONGPATH" '…[line truncated]'
+
 # 7c. a single OVERSIZED line within the tail window is truncated per-line
 #     (review finding: session-capture.sh never length-clamps a Bash
 #     description or an Edit/Write/NotebookEdit file_path, so this hook's own
@@ -801,6 +822,18 @@ hasnt "onboard does not flag a HANDOFF.md updated the same day as the latest com
 #       mid-session.
 O_STALE_COMPACT=$(printf '%s' '{"source":"compact","session_id":"T"}' | CLAUDE_PROJECT_DIR="$FRESH_STALE" sh "$H/session-onboard.sh")
 hasnt "onboard does not repeat the stale-handoff warning on a compact re-fire" "$O_STALE_COMPACT" 'may be stale'
+
+# 12j5. review finding: a HANDOFF.md whose "Last Updated" date is shaped like
+#       a date (\d{4}-\d{2}-\d{2}) but isn't a real calendar date (month/day
+#       out of range) must NOT compute a confident-looking wrong answer - the
+#       stale check's own stated contract is "say nothing when unparseable",
+#       and a malformed month/day is exactly as unparseable as a missing one.
+FRESH_BADDATE="$WORK/fresh-baddate"
+mkdir -p "$FRESH_BADDATE/.claude/throughline"
+printf -- '# Test\n**Last Updated:** 2026-00-00\n' > "$FRESH_BADDATE/.claude/throughline/HANDOFF.md"
+fixture_repo "$FRESH_BADDATE"
+O_BADDATE=$(printf '%s' '{"source":"startup","session_id":"T"}' | CLAUDE_PROJECT_DIR="$FRESH_BADDATE" sh "$H/session-onboard.sh")
+hasnt "onboard does not flag a malformed (out-of-range) Last-Updated date as stale" "$O_BADDATE" 'may be stale'
 
 # 12k. the gitignore nudge does not repeat on a `compact` re-fire within the
 #      same already-running session - it still fires on genuinely new session

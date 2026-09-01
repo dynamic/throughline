@@ -150,11 +150,25 @@ if [ "$src" != "compact" ] && [ "$in_worktree" = "1" ] && [ -f "$hf" ]; then
     # Plain-integer civil-calendar day count (Howard Hinnant's days_from_civil),
     # not `date -d`/`date -j`: those flags differ between GNU and BSD date, and
     # this needs to run unmodified on macOS, Linux, and (per issue #67) Windows
-    # Git Bash alike. Verified against a same-month gap, a year boundary, and a
-    # leap-year February before landing here.
+    # Git Bash alike. Independently diffed against Python's calendar for every
+    # date from 1899-01-01 to 2100-12-31 (including every ÷100/÷400 leap-year
+    # boundary) before landing here - zero mismatches.
+    #
+    # The regex above only checks that hf_date/commit_date are digit-shaped,
+    # not that they're a real calendar date - a hand-edited HANDOFF.md with
+    # "**Last Updated:** 2026-00-00" would otherwise compute a confident wrong
+    # answer instead of the "say nothing" this hook promises elsewhere. `days()`
+    # range-checks month/day/leap-February itself and sets `bad` rather than
+    # silently returning a number for garbage input.
     stale_days=$(awk -v hf="$hf_date" -v co="$commit_date" '
-      function days(ds,   y,m,d,era,yoe,doy,doe) {
+      function is_leap(y) { return (y % 4 == 0 && y % 100 != 0) || y % 400 == 0 }
+      function days(ds,   y,m,d,era,yoe,doy,doe,maxd) {
         y = substr(ds,1,4)+0; m = substr(ds,6,2)+0; d = substr(ds,9,2)+0
+        if (m < 1 || m > 12) { bad = 1; return 0 }
+        if (m==1||m==3||m==5||m==7||m==8||m==10||m==12) maxd=31
+        else if (m==4||m==6||m==9||m==11) maxd=30
+        else maxd = is_leap(y) ? 29 : 28
+        if (d < 1 || d > maxd) { bad = 1; return 0 }
         if (m <= 2) y -= 1
         era = int((y >= 0 ? y : y-399) / 400)
         yoe = y - era*400
@@ -162,7 +176,7 @@ if [ "$src" != "compact" ] && [ "$in_worktree" = "1" ] && [ -f "$hf" ]; then
         doe = yoe*365 + int(yoe/4) - int(yoe/100) + doy
         return era*146097 + doe - 719468
       }
-      BEGIN { print days(co) - days(hf) }
+      BEGIN { n = days(co) - days(hf); if (!bad) print n }
     ' 2>/dev/null)
     # Strip a leading '-' before the digit-only check so a HANDOFF.md newer
     # than the latest commit (a negative gap - describing in-flight,
@@ -226,20 +240,28 @@ case "$data" in
     ;;
 esac
 
-# Live git state, deliberately placed early (issue #64): it's small and
-# tightly bounded (one branch line + `head -20` status lines), unlike the
-# post-compaction buffer-tail inline below, whose size depends on how much
-# was captured and is the thing most likely to push this block past whatever
-# undocumented size limit Claude Code applies to SessionStart output. If
-# truncation happens, it should cut into the buffer tail - which already
-# carries its own "full history is at <path>" fallback pointer - not into
-# this, which has none.
+# Live git state, deliberately placed early (issue #64): it's bounded on
+# BOTH axes - `head -20` caps the line count, and TL_GIT_STATUS_LINE_CHARS
+# below caps each line's width - unlike the post-compaction buffer-tail
+# inline further down, whose total size depends on how much was captured. A
+# `head -20` line-count cap alone is not a size cap: `git status -s` prints
+# one line per modified tracked file regardless of path depth, and a
+# deep-path monorepo with 20 modified files measured over 2KB here with
+# nothing but the line-count bound - line WIDTH needed capping too, the same
+# discipline the buffer tail already applies to its own lines. If truncation
+# happens, it should cut into the buffer tail - which already carries its
+# own "full history is at <path>" fallback pointer - not into this, which
+# has none.
+TL_GIT_STATUS_LINE_CHARS=200
 if [ "$in_worktree" = "1" ]; then
   echo
   echo "### Live git state"
   echo '```'
   echo "branch: $(git -C "$root" rev-parse --abbrev-ref HEAD 2>/dev/null)"
-  git -C "$root" status -s 2>/dev/null | head -20
+  git -C "$root" status -s 2>/dev/null | head -20 | awk -v max="$TL_GIT_STATUS_LINE_CHARS" '
+    { if (length($0) > max) print substr($0, 1, max) " …[line truncated]"
+      else print
+    }'
   echo '```'
 fi
 
