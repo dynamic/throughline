@@ -1,0 +1,20 @@
+# Populated by ../setup.sh from the canonical copies at the repo root, so the
+# demo never drifts from the real hooks/skills. Not tracked here.
+.claude/hooks/
+.claude/skills/
+
+# The repo root's `.claude/throughline/` line is a repo-relative pattern (it
+# has a `/` in the middle), so it only ever matches the repo root's own data
+# dir - nothing here ignores this subtree by default. throughline's data is
+# still per-operator working memory, not something a real project would
+# track (see the root README's "Local by default"); the demo is the
+# deliberate exception, since its throughline data IS the example. Only the
+# scratch paths below need excluding - a user running the demo will see
+# their own rewritten HANDOFF.md/session log/buffer as uncommitted changes,
+# which is expected.
+.claude/throughline/buffer/archive/
+.claude/throughline/.capture-errors
+
+# The root .gitignore ignores *.log everywhere; this one sample log is part
+# of the fixture, not scratch output, so it's tracked deliberately.
+!logs/link-check.log

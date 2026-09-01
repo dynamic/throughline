@@ -1,0 +1,4 @@
+https://example.com/
+https://example.com/about
+https://example.com/blog
+https://status.example.com/
