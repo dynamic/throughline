@@ -58,6 +58,10 @@ ok()  { PASS=$((PASS + 1)); printf '  ok   %s\n' "$1"; }
 bad() { FAIL=$((FAIL + 1)); printf '  FAIL %s\n' "$1"; }
 has()    { case "$2" in *"$3"*) ok "$1" ;; *) bad "$1 (missing: $3)"; printf '       got: %s\n' "$2" ;; esac; }
 hasnt()  { case "$2" in *"$3"*) bad "$1 (unexpected: $3)"; printf '       got: %s\n' "$2" ;; *) ok "$1" ;; esac; }
+# before <label> <haystack> <needle-A> <needle-B> - both substrings are
+# present AND A appears before B (case-pattern `*A*B*` is a left-to-right
+# greedy match, so this only succeeds when B occurs somewhere after A).
+before() { case "$2" in *"$3"*"$4"*) ok "$1" ;; *) bad "$1 (want '$3' before '$4')"; printf '       got: %s\n' "$2" ;; esac; }
 present(){ if [ -f "$2" ]; then ok "$1"; else bad "$1 (no file: $2)"; fi; }
 dir_present(){ if [ -d "$2" ]; then ok "$1"; else bad "$1 (no dir: $2)"; fi; }
 absent() { if [ -e "$2" ]; then bad "$1 (exists: $2)"; else ok "$1"; fi; }
@@ -452,6 +456,10 @@ hasnt "onboard(resume) does not inline the buffer tail" "$O_RESUME" '**bash**'
 
 # 7b. the inline tail is BOUNDED to the last N lines - an old line well before
 #     the compaction seam is not inlined, only recent history near it.
+#     Bound is TL_COMPACT_TAIL_LINES=20 (issue #64 shrunk it from 30 to keep
+#     this block's worst-case size well under Claude Code's undocumented
+#     SessionStart output cap), so of 40 written lines only the last 20
+#     (line21-line40) are inlined.
 reset_buf
 i=1
 while [ "$i" -le 40 ]; do
@@ -459,9 +467,18 @@ while [ "$i" -le 40 ]; do
   i=$((i + 1))
 done
 O_TAIL=$(printf '%s' '{"source":"compact","session_id":"T"}' | sh "$H/session-onboard.sh")
-hasnt "onboard(compact) tail excludes a line beyond the bound" "$O_TAIL" 'cmd10`'
-has   "onboard(compact) tail includes the first line within the bound" "$O_TAIL" 'cmd11`'
+hasnt "onboard(compact) tail excludes a line beyond the bound" "$O_TAIL" 'cmd20`'
+has   "onboard(compact) tail includes the first line within the bound" "$O_TAIL" 'cmd21`'
 has   "onboard(compact) tail includes the most recent line" "$O_TAIL" 'cmd40`'
+
+# 7b2. issue #64: live git state renders BEFORE the compaction-tail inline,
+#      not after - the tail's size depends on how much was captured and is
+#      the block most likely to push total output past whatever undocumented
+#      limit Claude Code applies to SessionStart output; git state is small
+#      and bounded and has no fallback pointer of its own if it gets cut, so
+#      it must not be the thing sitting after a large, truncatable block.
+before "onboard(compact) live git state precedes the buffer-tail inline" \
+  "$O_TAIL" 'Live git state' 'Context was just compacted'
 
 # 7c. a single OVERSIZED line within the tail window is truncated per-line
 #     (review finding: session-capture.sh never length-clamps a Bash
@@ -755,6 +772,35 @@ printf -- '# Test\n**Last Updated:** 2024-01-01\n' > "$FRESH_K/.claude/throughli
 fixture_repo "$FRESH_K"
 O12=$(printf '%s' '{"source":"startup","session_id":"T"}' | CLAUDE_PROJECT_DIR="$FRESH_K" sh "$H/session-onboard.sh")
 has "gitignore nudge still fires after a handoff has already run" "$O12" 'not gitignored yet'
+
+# 12j2. issue #66: a HANDOFF.md whose "Last Updated" date sits well behind
+#       the branch's latest commit is flagged as possibly stale - the one
+#       failure mode every handoff-file design shares (the file only
+#       reflects what was written), and the one signal available here
+#       (commit history) to catch it going wrong silently.
+FRESH_STALE="$WORK/fresh-stale"
+mkdir -p "$FRESH_STALE/.claude/throughline"
+printf -- '# Test\n**Last Updated:** 2020-01-01\n' > "$FRESH_STALE/.claude/throughline/HANDOFF.md"
+fixture_repo "$FRESH_STALE"
+O_STALE=$(printf '%s' '{"source":"startup","session_id":"T"}' | CLAUDE_PROJECT_DIR="$FRESH_STALE" sh "$H/session-onboard.sh")
+has "onboard flags a HANDOFF.md far behind the latest commit as possibly stale" "$O_STALE" 'may be stale'
+
+# 12j3. ...but a HANDOFF.md updated the same day as the latest commit is not
+#       flagged - a 0-day (or negative, in-flight-uncommitted-state) gap is
+#       the normal case and must stay silent.
+TODAY=$(date '+%Y-%m-%d')
+FRESH_CURRENT="$WORK/fresh-current"
+mkdir -p "$FRESH_CURRENT/.claude/throughline"
+printf -- '# Test\n**Last Updated:** %s\n' "$TODAY" > "$FRESH_CURRENT/.claude/throughline/HANDOFF.md"
+fixture_repo "$FRESH_CURRENT"
+O_CURRENT=$(printf '%s' '{"source":"startup","session_id":"T"}' | CLAUDE_PROJECT_DIR="$FRESH_CURRENT" sh "$H/session-onboard.sh")
+hasnt "onboard does not flag a HANDOFF.md updated the same day as the latest commit" "$O_CURRENT" 'may be stale'
+
+# 12j4. the stale check does not repeat on a compact re-fire, matching the
+#       gitignore nudge's own reasoning - informational, not worth repeating
+#       mid-session.
+O_STALE_COMPACT=$(printf '%s' '{"source":"compact","session_id":"T"}' | CLAUDE_PROJECT_DIR="$FRESH_STALE" sh "$H/session-onboard.sh")
+hasnt "onboard does not repeat the stale-handoff warning on a compact re-fire" "$O_STALE_COMPACT" 'may be stale'
 
 # 12k. the gitignore nudge does not repeat on a `compact` re-fire within the
 #      same already-running session - it still fires on genuinely new session
