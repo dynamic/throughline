@@ -13,6 +13,10 @@
       "run": "sh tests/run.sh"
     },
     {
+      "label": "typography",
+      "run": "export LC_ALL=C.UTF-8; out=$(git grep -I -n -P '[—–‘’“”]' -- README.md docs/*.md docs/index.html .claude-plugin/marketplace.json); rc=$?; if [ \"$rc\" -eq 0 ]; then echo \"$out\" >&2; exit 1; elif [ \"$rc\" -ne 1 ]; then echo \"typography check failed to run (git grep rc=$rc)\" >&2; exit 1; fi"
+    },
+    {
       "label": "opencode plugin",
       "run": "cd .opencode-plugin && npm ci && npm run typecheck && npm test"
     }

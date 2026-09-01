@@ -11,6 +11,12 @@ All notable changes to throughline are documented here. Format loosely follows
   availability, live/archived buffer counts, and the three env vars'
   current values - so diagnosing "why isn't capture firing" no longer means
   reading `_lib.sh` and reasoning through the precedence rules by hand.
+- **CI typography gate** (issue #72): a `git grep` step fails the build on
+  em/en-dashes or curly quotes in outward-facing files (`README.md`,
+  `docs/*.md`, `docs/index.html`, the plugin marketplace description) -
+  mechanizes the existing no-em-dash writing-style rule instead of relying
+  on review to catch a regression. Mirrored in `.local-ci.json`. Fixed one
+  live violation in `.claude-plugin/marketplace.json`'s description.
 
 ## [0.15.0]
 

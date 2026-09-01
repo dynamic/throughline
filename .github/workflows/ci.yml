@@ -53,6 +53,39 @@ jobs:
             echo "version drift: .claude-plugin/plugin.json=$c .codex-plugin/plugin.json=$x .opencode-plugin/package.json=$o" >&2
             exit 1
           fi
+      - name: Typography (Linux)
+        if: runner.os == 'Linux'
+        # Mechanizes Jason's writing-style rule (no em/en-dashes or curly
+        # quotes in outward-facing content) so it can't regress silently -
+        # scoped to files a reader/user actually opens (README, promo site,
+        # per-harness docs, the plugin marketplace description), not the
+        # whole tree: internal docs (CHANGELOG, HANDOFF, this project's own
+        # memory files, code comments) are explicitly exempt per the style
+        # guide. The pattern is written as escape sequences on purpose - a
+        # literal em-dash pasted into this step would make it match itself.
+        #
+        # LC_ALL pinned to a UTF-8 locale: git grep -P only enables PCRE2's
+        # UTF mode under a UTF-8 locale codeset, and \x{2013} exceeds PCRE2's
+        # 8-bit max outside it - under e.g. LC_ALL=C the pattern fails to
+        # COMPILE (rc=128), and a bare `if git grep ...; then FAIL; fi` reads
+        # that failure as "no match found" and passes clean. A gate whose
+        # whole point is "can't regress silently" must not itself have a
+        # silent-pass failure mode, so the exit code is checked explicitly
+        # instead of trusting the if/then branch alone.
+        run: |
+          set +e
+          hits=$(LC_ALL=C.UTF-8 git grep -I -n -P '[\x{2013}\x{2014}\x{2018}\x{2019}\x{201C}\x{201D}]' -- \
+                   README.md docs/*.md docs/index.html .claude-plugin/marketplace.json)
+          rc=$?
+          set -e
+          if [ "$rc" -eq 0 ]; then
+            printf '%s\n' "$hits"
+            echo "non-ASCII em/en-dash or curly quote in outward-facing files (see above) - use ASCII punctuation instead ( - , straight quotes)" >&2
+            exit 1
+          elif [ "$rc" -ne 1 ]; then
+            echo "typography check failed to run (git grep rc=$rc) - this must not read as a clean pass" >&2
+            exit 1
+          fi
       - name: Run hook tests
         run: sh tests/run.sh
 
