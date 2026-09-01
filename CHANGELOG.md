@@ -5,11 +5,36 @@ All notable changes to throughline are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Added
+- **Stale-handoff warning** (issue #66): `SessionStart` now compares
+  `HANDOFF.md`'s `Last Updated` date against the branch's latest commit and
+  warns past a 14-day gap. Every handoff-file design shares this blind spot
+  by construction - the file only reflects what was written - and this
+  project's own handoff went 5+ weeks stale this way before anyone noticed.
+- A `demo/homelab/` fictional project with a real, populated
+  `.claude/throughline/` already in it, wired via `demo/setup.sh`, so someone
+  can try throughline in under a minute without installing into a real repo.
+- A `Related` section in `README.md` naming 9 alternative session-memory
+  tools and how throughline differs from each.
+
 ### Changed
 - Publishing `@dynamicagency/throughline-opencode` to npm is now automated from a
   `v*` tag push via npm Trusted Publishing (OIDC) in
   `.github/workflows/release.yml`, with provenance attestation and no
   long-lived npm token (issue #61).
+- `README.md` split: per-harness install detail moved to `docs/INSTALL.md`,
+  and Configuration/worktrees/opt-out/housekeeping/layout moved to
+  `docs/REFERENCE.md` (which now also documents the trust boundary a tracked
+  `HANDOFF.md` implies - it's input the agent acts on, not passive
+  documentation). README drops from 492 to 231 lines.
+- `session-onboard.sh`'s `SessionStart` output is now budgeted more
+  defensively against Claude Code's undocumented size limit on that output
+  (issue #64): the post-compaction buffer-tail inline shrank from 30/300 to
+  20/200 lines/chars-per-line and now renders last (after live git state and
+  the unconsumed-buffer scan, both small and bounded), and live git state's
+  `git status` lines are now also capped in width, not just count - a
+  realistic worst case measured 11,026 characters before this change, 5,818
+  after.
 
 ## [0.14.0]
 

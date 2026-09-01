@@ -42,7 +42,7 @@ all five to its own hook/event API - the mechanism differs, the behavior doesn't
 
 | Capture point | What it does |
 |---|---|
-| **Session start** | Injects a HANDOFF.md pointer + live git state into context. Mechanical and cheap. |
+| **Session start** | Injects a HANDOFF.md pointer + live git state into context, and warns if the handoff looks stale against the branch's latest commit. Mechanical and cheap. |
 | **User intent** | Appends a redacted, truncated one-liner per prompt to the per-session buffer - the "why" behind the work that otherwise lives only in the (compactable) conversation. |
 | **Action** | Appends a structured one-liner per captured action: the command, file, search, fetch, or delegated task, flagged if it was interrupted, with obvious secrets masked before anything is written. Mutating actions (bash/edit/write) plus high-signal read-side actions (grep/fetch/search/delegated tasks) and MCP tool calls are captured; the noisiest (plain file reads/globs) are deliberately skipped so the buffer stays skimmable. |
 | **Compaction boundary** | Stamps a marker into the buffer at the moment of compaction, so a later handoff knows to distill the actions above it from the buffer text rather than from summarized conversation recall - and re-injects the buffer's tail into context right after, so the current session doesn't lose its own recent history to the compaction. |

@@ -130,6 +130,68 @@ else
   echo "No HANDOFF.md yet for this project. One will be written at the next handoff."
 fi
 
+# Stale-handoff detection (issue #66): HANDOFF.md's own "Last Updated" date
+# compared against the latest commit on this branch. A handoff-file design
+# has one built-in blind spot: the file only reflects what was written, so
+# it can look current - still present, still readable - while work has
+# quietly moved past it. This project's own handoff went 5+ weeks stale this
+# way before anyone noticed (nested-workspace gap: a parent-directory
+# session's work on this repo never reached this repo's own HANDOFF.md).
+# Live commit history is the one signal available here to catch that
+# silently, so use it - skipped on `compact` (same reasoning as the
+# gitignore nudge above: informational, not worth repeating mid-session) and
+# whenever either date is unavailable or unparseable, in which case this
+# says nothing rather than guessing.
+TL_STALE_HANDOFF_DAYS=14
+if [ "$src" != "compact" ] && [ "$in_worktree" = "1" ] && [ -f "$hf" ]; then
+  hf_date=$(grep -m1 -i "last updated" "$hf" 2>/dev/null | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}' | head -1)
+  commit_date=$(git -C "$root" log -1 --format=%cd --date=short 2>/dev/null)
+  if [ -n "$hf_date" ] && [ -n "$commit_date" ]; then
+    # Plain-integer civil-calendar day count (Howard Hinnant's days_from_civil),
+    # not `date -d`/`date -j`: those flags differ between GNU and BSD date, and
+    # this needs to run unmodified on macOS, Linux, and (per issue #67) Windows
+    # Git Bash alike. Independently diffed against Python's calendar for every
+    # date from 1899-01-01 to 2100-12-31 (including every ÷100/÷400 leap-year
+    # boundary) before landing here - zero mismatches.
+    #
+    # The regex above only checks that hf_date/commit_date are digit-shaped,
+    # not that they're a real calendar date - a hand-edited HANDOFF.md with
+    # "**Last Updated:** 2026-00-00" would otherwise compute a confident wrong
+    # answer instead of the "say nothing" this hook promises elsewhere. `days()`
+    # range-checks month/day/leap-February itself and sets `bad` rather than
+    # silently returning a number for garbage input.
+    stale_days=$(awk -v hf="$hf_date" -v co="$commit_date" '
+      function is_leap(y) { return (y % 4 == 0 && y % 100 != 0) || y % 400 == 0 }
+      function days(ds,   y,m,d,era,yoe,doy,doe,maxd) {
+        y = substr(ds,1,4)+0; m = substr(ds,6,2)+0; d = substr(ds,9,2)+0
+        if (m < 1 || m > 12) { bad = 1; return 0 }
+        if (m==1||m==3||m==5||m==7||m==8||m==10||m==12) maxd=31
+        else if (m==4||m==6||m==9||m==11) maxd=30
+        else maxd = is_leap(y) ? 29 : 28
+        if (d < 1 || d > maxd) { bad = 1; return 0 }
+        if (m <= 2) y -= 1
+        era = int((y >= 0 ? y : y-399) / 400)
+        yoe = y - era*400
+        doy = int((153*(m + (m>2?-3:9)) + 2)/5) + d - 1
+        doe = yoe*365 + int(yoe/4) - int(yoe/100) + doy
+        return era*146097 + doe - 719468
+      }
+      BEGIN { n = days(co) - days(hf); if (!bad) print n }
+    ' 2>/dev/null)
+    # Strip a leading '-' before the digit-only check so a HANDOFF.md newer
+    # than the latest commit (a negative gap - describing in-flight,
+    # uncommitted state, which is normal) isn't blanked out as "unparseable"
+    # the way genuinely non-numeric awk output would be.
+    _tl_check=${stale_days#-}
+    case "$_tl_check" in
+      ''|*[!0-9]*) stale_days="" ;;
+    esac
+    if [ -n "$stale_days" ] && [ "$stale_days" -ge "$TL_STALE_HANDOFF_DAYS" ]; then
+      echo "⚠️ HANDOFF.md was last updated $hf_date, $stale_days day(s) before the most recent commit ($commit_date) - it may be stale."
+    fi
+  fi
+fi
+
 # Nudge toward gitignoring bufdir/ - the one subdir that must ALWAYS stay
 # untracked regardless of policy, since it can hold raw, only best-effort-
 # redacted command/path text. Checks bufdir/ specifically rather than $data/
@@ -178,28 +240,25 @@ case "$data" in
     ;;
 esac
 
-# Post-compaction recovery (issue #9): the conversation was just summarized,
-# but this session's buffer is intact on disk. Inline its TAIL directly into
-# this SessionStart block instead of only pointing at the file - a bare
-# pointer costs the model a tool call it may not make, right where
-# post-compaction recall is weakest. Bounded to the last N lines, EACH also
-# capped at TL_COMPACT_TAIL_LINE_CHARS characters (via the awk pass below) -
-# not just line count. A record's Bash `description` and Edit/Write/
-# NotebookEdit `file_path` fields are never length-clamped in
-# session-capture.sh (only `command` and the other free-text fields are), so
-# without this hook's OWN cap an unusually long one of those would still
-# inline verbatim; capping here, at the point this block's own bounded-size
-# claim is made, holds regardless of what any capture-side branch does or
-# later stops doing. The full-file pointer is kept for anything older than
-# the tail.
-TL_COMPACT_TAIL_LINES=30
-TL_COMPACT_TAIL_LINE_CHARS=300
-if [ "$src" = "compact" ] && [ -n "$sid" ] && [ -f "$bufdir/session-$sid.md" ]; then
-  buf="$bufdir/session-$sid.md"
+# Live git state, deliberately placed early (issue #64): it's bounded on
+# BOTH axes - `head -20` caps the line count, and TL_GIT_STATUS_LINE_CHARS
+# below caps each line's width - unlike the post-compaction buffer-tail
+# inline further down, whose total size depends on how much was captured. A
+# `head -20` line-count cap alone is not a size cap: `git status -s` prints
+# one line per modified tracked file regardless of path depth, and a
+# deep-path monorepo with 20 modified files measured over 2KB here with
+# nothing but the line-count bound - line WIDTH needed capping too, the same
+# discipline the buffer tail already applies to its own lines. If truncation
+# happens, it should cut into the buffer tail - which already carries its
+# own "full history is at <path>" fallback pointer - not into this, which
+# has none.
+TL_GIT_STATUS_LINE_CHARS=200
+if [ "$in_worktree" = "1" ]; then
   echo
-  echo "🧷 Context was just compacted. The last $TL_COMPACT_TAIL_LINES line(s) of this session's action buffer are inlined below to recover what you did before the compaction, without an extra read - the raw actions persist even though the conversation summary dropped detail. Full history (if the session ran longer than this tail) is at \`${bufdir#"$droot"/}/session-$sid.md\`."
+  echo "### Live git state"
   echo '```'
-  tail -n "$TL_COMPACT_TAIL_LINES" "$buf" 2>/dev/null | awk -v max="$TL_COMPACT_TAIL_LINE_CHARS" '
+  echo "branch: $(git -C "$root" rev-parse --abbrev-ref HEAD 2>/dev/null)"
+  git -C "$root" status -s 2>/dev/null | head -20 | awk -v max="$TL_GIT_STATUS_LINE_CHARS" '
     { if (length($0) > max) print substr($0, 1, max) " …[line truncated]"
       else print
     }'
@@ -292,12 +351,45 @@ if [ -d "$bufdir" ]; then
   fi
 fi
 
-if [ "$in_worktree" = "1" ]; then
+# Post-compaction recovery (issue #9): the conversation was just summarized,
+# but this session's buffer is intact on disk. Inline its TAIL directly into
+# this SessionStart block instead of only pointing at the file - a bare
+# pointer costs the model a tool call it may not make, right where
+# post-compaction recall is weakest. Bounded to the last N lines, EACH also
+# capped at TL_COMPACT_TAIL_LINE_CHARS characters (via the awk pass below) -
+# not just line count. A record's Bash `description` and Edit/Write/
+# NotebookEdit `file_path` fields are never length-clamped in
+# session-capture.sh (only `command` and the other free-text fields are), so
+# without this hook's OWN cap an unusually long one of those would still
+# inline verbatim; capping here, at the point this block's own bounded-size
+# claim is made, holds regardless of what any capture-side branch does or
+# later stops doing. The full-file pointer is kept for anything older than
+# the tail.
+#
+# Placed LAST in this script (issue #64), not where it used to sit: a
+# realistic worst case (a 30-line, near-max-width tail plus a normal header
+# and a handful of untracked files) measured at 11KB, over an undocumented
+# ~10,000-character cap a competing plugin claims Claude Code enforces on
+# SessionStart output (unverified against Claude Code's own docs, which
+# specify no limit at all - but an unbounded worst case is worth budgeting
+# against regardless of the exact cutoff). 30/300 shrunk to 20/200 to bring
+# the worst case for this block alone down to roughly 4-5KB, and it now
+# renders after every other block in this script, all of which are small and
+# bounded - so if truncation does happen, it eats into the one block that
+# already tells you where to find the rest (`session-$sid.md`), not into
+# live git state or the HANDOFF pointer, which have no such fallback.
+TL_COMPACT_TAIL_LINES=20
+TL_COMPACT_TAIL_LINE_CHARS=200
+if [ "$src" = "compact" ] && [ -n "$sid" ] && [ -f "$bufdir/session-$sid.md" ]; then
+  buf="$bufdir/session-$sid.md"
   echo
-  echo "### Live git state"
+  echo "🧷 Context was just compacted. The last $TL_COMPACT_TAIL_LINES line(s) of this session's action buffer are inlined below to recover what you did before the compaction, without an extra read - the raw actions persist even though the conversation summary dropped detail. Full history (if the session ran longer than this tail) is at \`${bufdir#"$droot"/}/session-$sid.md\`."
   echo '```'
-  echo "branch: $(git -C "$root" rev-parse --abbrev-ref HEAD 2>/dev/null)"
-  git -C "$root" status -s 2>/dev/null | head -20
+  tail -n "$TL_COMPACT_TAIL_LINES" "$buf" 2>/dev/null | awk -v max="$TL_COMPACT_TAIL_LINE_CHARS" '
+    { if (length($0) > max) print substr($0, 1, max) " …[line truncated]"
+      else print
+    }'
   echo '```'
 fi
+
 exit 0
