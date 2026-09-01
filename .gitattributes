@@ -1,0 +1,5 @@
+# Every hook is a shebang script executed directly - a CRLF-mangled shebang
+# or an embedded \r mid-line breaks execution outright on Windows, where
+# GitHub's hosted runner defaults core.autocrlf to true on checkout (issue
+# #67). Force LF regardless of that setting or a contributor's local config.
+*.sh text eol=lf

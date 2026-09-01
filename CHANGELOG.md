@@ -6,6 +6,14 @@ All notable changes to throughline are documented here. Format loosely follows
 ## [Unreleased]
 
 ### Added
+- CI now runs the shell test suite on `windows-latest` and `macos-latest` in
+  addition to `ubuntu-latest` (issue #67) - previously an unmade platform
+  claim for hooks that are pure POSIX `sh`. A `.gitattributes` forces LF line
+  endings on `*.sh` regardless of the Windows runner's `core.autocrlf`
+  default, and a handful of permission-based test assertions that stage a
+  POSIX mode bit (000/444/555) are skipped on Windows/NTFS, same as the
+  existing root-bypasses-permissions skip, with the skip count reported in
+  the final summary.
 - **Stale-handoff warning** (issue #66): `SessionStart` now compares
   `HANDOFF.md`'s `Last Updated` date against the branch's latest commit and
   warns past a 14-day gap. Every handoff-file design shares this blind spot

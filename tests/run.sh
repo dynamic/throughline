@@ -42,6 +42,18 @@ ROOT=$(unset CDPATH; cd -- "$(dirname -- "$0")/.." && pwd)
 H="$ROOT/hooks"
 PASS=0
 FAIL=0
+SKIPPED_WINDOWS=0
+
+# Git Bash / MSYS2 sets MSYSTEM (MINGW64, UCRT64, MSYS, ...); nothing else
+# realistically sets it (issue #67). A few permission-based assertions below
+# stage a POSIX mode bit (000/444/555) that NTFS's chmod emulation cannot
+# reliably enforce the same way ext4/APFS do - those are skipped here, same
+# as the existing root-bypasses-permissions guard, and counted so the final
+# summary says how many were skipped rather than the count silently reading
+# lower with no explanation (the same transparency
+# adrrr/persistent-handoff's own Windows leg documents for its 3 skips).
+is_windows() { [ -n "${MSYSTEM:-}" ]; }
+skip_win() { SKIPPED_WINDOWS=$((SKIPPED_WINDOWS + 1)); ok "$1 (skipped: NTFS chmod can't stage this)"; }
 
 WORK=$(mktemp -d 2>/dev/null || echo "/tmp/tl-tests.$$")
 mkdir -p "$WORK/proj/.claude/throughline/buffer"
@@ -571,8 +583,12 @@ has "a buffer with zero conforming lines is still counted, not dropped" "$O3a4" 
 # rather than feeding an empty operand to the integer test, which would
 # otherwise leak a shell diagnostic to stderr, breaking this hook's
 # always-silent-on-error contract (every other error path here is
-# 2>/dev/null'd). Skipped when running as root, which bypasses permissions.
-if [ "$(id -u)" != "0" ]; then
+# 2>/dev/null'd). Skipped when running as root, which bypasses permissions,
+# or on Windows/NTFS, which can't stage an unreadable-to-owner file (see
+# is_windows() above).
+if is_windows; then
+  skip_win "unreadable-buffer stderr test"
+elif [ "$(id -u)" != "0" ]; then
   reset_buf
   printf -- '- x\n' > "$BUF/session-T.md"
   printf 'test' > "$BUF/session-UNREAD.md"
@@ -606,9 +622,18 @@ has   "no-end-stamp buffer surfaced with hedged wording" "$O3b" 'no end-stamp'
 hasnt "no-end-stamp buffer NOT mislabeled as ended" "$O3b" 'ended without'
 
 # 11. missing jq surfaces a visible warning in onboard (curated PATH without jq)
+# A tiny exec wrapper script per tool, not `ln -sf` or `cp`: a symlink needs
+# an elevated privilege Windows doesn't grant by default (issue #67), and a
+# COPY of the real binary is worse - on macOS a Homebrew-built binary can
+# resolve its shared libraries via an @executable_path-relative reference,
+# which breaks (hangs or crashes) once the binary is relocated to $STUB. A
+# plain `#!/bin/sh -c 'exec <real> "$@"'` wrapper needs no privilege beyond
+# writing a text file and never touches the real binary's own location.
 STUB="$WORK/bin"; mkdir -p "$STUB"
 for c in sh dirname cat grep git tr head; do
-  real=$(command -v "$c" 2>/dev/null) && ln -sf "$real" "$STUB/$c"
+  real=$(command -v "$c" 2>/dev/null) || continue
+  printf '#!/bin/sh\nexec "%s" "$@"\n' "$real" > "$STUB/$c"
+  chmod +x "$STUB/$c"
 done
 O4=$(printf '%s' '{"source":"startup","session_id":"T"}' | PATH="$STUB" sh "$H/session-onboard.sh")
 has "onboard warns when jq is missing" "$O4" 'jq'
@@ -678,7 +703,11 @@ present "capture-first auto-activates and writes a buffer entry" "$FRESH_D/.clau
 FRESH_E="$WORK/fresh-e"
 mkdir -p "$FRESH_E"
 fixture_repo "$FRESH_E"
-if [ "$(id -u)" != "0" ]; then
+if is_windows; then
+  skip_win "failed-bootstrap warning test"
+  skip_win "failed-bootstrap no-dir-created test"
+  skip_win "failed-bootstrap path-relativization test"
+elif [ "$(id -u)" != "0" ]; then
   chmod 555 "$FRESH_E" 2>/dev/null
   O8=$(printf '%s' '{"source":"startup","session_id":"T"}' | CLAUDE_PROJECT_DIR="$FRESH_E" sh "$H/session-onboard.sh")
   chmod 755 "$FRESH_E" 2>/dev/null
@@ -1066,5 +1095,6 @@ eq "precompact: boundary after a post-boundary action stamps again" "$(grep -c '
 
 echo "----------------------"
 printf 'passed: %s   failed: %s\n' "$PASS" "$FAIL"
+[ "$SKIPPED_WINDOWS" -eq 0 ] || printf '  (%s permission-based assertion(s) skipped on Windows/NTFS - see is_windows() above)\n' "$SKIPPED_WINDOWS"
 rm -rf "$WORK"
 [ "$FAIL" -eq 0 ]
