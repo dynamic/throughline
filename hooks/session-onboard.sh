@@ -52,6 +52,26 @@ if [ "${1:-}" = "--doctor" ]; then
   else
     state="would-bootstrap"
     reason="no data directory yet - the next hook run will create one"
+    # Walk up to the nearest existing ancestor and probe its writability -
+    # without this, --doctor could not distinguish an ordinary not-yet-
+    # activated project from the one state a real hook run treats as
+    # bootstrap-failed (permissions, disk full; see the warning below at
+    # $_tl_active_reason = "bootstrap-failed"), in exactly the scenario
+    # ("why isn't capture firing") this diagnostic exists to explain. Pure
+    # parameter expansion, not dirname, for the same no-extra-deps reason as
+    # the buffer-count loop below - safe to loop unbounded since $data is
+    # always absolute (derived from tl_root(), which is always $PWD or
+    # $CLAUDE_PROJECT_DIR), so stripping one path segment at a time always
+    # terminates at "" (treated as "/") in a bounded number of steps.
+    _tl_p="$data"
+    while [ ! -d "$_tl_p" ] && [ -n "$_tl_p" ]; do
+      _tl_p="${_tl_p%/*}"
+    done
+    [ -z "$_tl_p" ] && _tl_p="/"
+    if [ ! -w "$_tl_p" ]; then
+      state="would-bootstrap (LIKELY TO FAIL)"
+      reason="\`$_tl_p\` is not writable - bootstrap will fail"
+    fi
   fi
 
   if tl_have_jq; then
