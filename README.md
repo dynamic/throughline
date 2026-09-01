@@ -64,7 +64,7 @@ does the full orientation pass (open PRs/issues, deep read) on demand.
 | User intent | `UserPromptSubmit` hook | `chat.message` hook |
 | Action | `PostToolUse` hook | `tool.execute.after` hook |
 | Compaction boundary | `PreCompact` hook, then `SessionStart` re-fires with `source=compact` | `session.compacted` event, which queues the recovery block for the next context injection |
-| Session end | `SessionEnd` hook | `session.idle` event (fires after every turn, not once at exit - see [OpenCode](#opencode)) |
+| Session end | `SessionEnd` hook | `session.idle` event (fires after every turn, not once at exit - see [docs/INSTALL.md#opencode](docs/INSTALL.md#opencode)) |
 
 Claude Code and Codex CLI share the identical shell hook scripts; OpenCode's plugin
 is a TypeScript port of the same logic against OpenCode's own API.
