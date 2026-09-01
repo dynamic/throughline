@@ -261,7 +261,7 @@ if [ "$in_worktree" = "1" ]; then
   git -C "$root" status -s 2>/dev/null | head -20 | awk -v max="$TL_GIT_STATUS_LINE_CHARS" '
     { if (length($0) > max) print substr($0, 1, max) " …[line truncated]"
       else print
-    }'
+    }' 2>/dev/null
   echo '```'
 fi
 
@@ -388,7 +388,7 @@ if [ "$src" = "compact" ] && [ -n "$sid" ] && [ -f "$bufdir/session-$sid.md" ]; 
   tail -n "$TL_COMPACT_TAIL_LINES" "$buf" 2>/dev/null | awk -v max="$TL_COMPACT_TAIL_LINE_CHARS" '
     { if (length($0) > max) print substr($0, 1, max) " …[line truncated]"
       else print
-    }'
+    }' 2>/dev/null
   echo '```'
 fi
 

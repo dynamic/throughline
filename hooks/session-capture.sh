@@ -68,7 +68,19 @@ mkdir -p "$bufdir" 2>/dev/null || { tl_err "mkdir failed for buffer dir"; exit 0
 # the identical final sanitized id even in the currently-unreachable case of a
 # stranger one. A regression test locks in that capture and flush agree on the
 # filename for a tab-containing id.
-out=$(printf '%s' "$input" | jq -r --arg root "$root" "$(tl_jq_redact_defs)"'
+#
+# $root reaches jq through the ENVIRONMENT (env.root below), not `--arg root
+# "$root"`: on Windows Git Bash, jq is a native, non-MSYS binary, and MSYS
+# auto-converts a POSIX-looking ARGUMENT to a Windows-native path before a
+# native executable ever sees it (issue #67, root-caused via a real Windows
+# CI run - `$root` arrived at jq already rewritten while the file_path being
+# compared against it, delivered over stdin, stayed untouched, so the two
+# never matched and every path this hook wrote stayed unrelativized). MSYS's
+# conversion targets argv, not arbitrary environment variables, so passing it
+# this way sidesteps the mismatch entirely - and does so without a blanket
+# opt-out that would also break session-onboard.sh's own `jq ... plugin.json`
+# read, which legitimately NEEDS argv conversion to open that file on Windows.
+out=$(printf '%s' "$input" | root="$root" jq -r "$(tl_jq_redact_defs)"'
   # Observable outcome from the tool result. The Claude Code Bash tool_response
   # exposes "interrupted" but NOT an exit code, so a plain non-zero exit is not
   # visible to a PostToolUse hook and is deliberately left unmarked rather than
@@ -94,7 +106,7 @@ out=$(printf '%s' "$input" | jq -r --arg root "$root" "$(tl_jq_redact_defs)"'
       ((.tool_input.command // "") | redact | clean | clamp(200; "…[truncated]")) + "`"
     elif ($t == "Edit" or $t == "Write" or $t == "NotebookEdit") then
       "**" + $t + "** " +
-      ((.tool_input.file_path // .tool_input.notebook_path // "?") | ltrimstr($root + "/") | redact | clean) +
+      ((.tool_input.file_path // .tool_input.notebook_path // "?") | ltrimstr(env.root + "/") | redact | clean) +
       outcome($t)
     # High-signal read-side tools (issue #6): one redacted+cleaned argument
     # each, same outcome suffix. Each argument is clamped to a short prefix so

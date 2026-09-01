@@ -44,15 +44,26 @@ PASS=0
 FAIL=0
 SKIPPED_WINDOWS=0
 
-# Git Bash / MSYS2 sets MSYSTEM (MINGW64, UCRT64, MSYS, ...); nothing else
-# realistically sets it (issue #67). A few permission-based assertions below
-# stage a POSIX mode bit (000/444/555) that NTFS's chmod emulation cannot
-# reliably enforce the same way ext4/APFS do - those are skipped here, same
-# as the existing root-bypasses-permissions guard, and counted so the final
-# summary says how many were skipped rather than the count silently reading
-# lower with no explanation (the same transparency
-# adrrr/persistent-handoff's own Windows leg documents for its 3 skips).
-is_windows() { [ -n "${MSYSTEM:-}" ]; }
+# A few permission-based assertions below stage a POSIX mode bit (000/444/555)
+# that NTFS's chmod emulation cannot reliably enforce the same way ext4/APFS
+# do - those are skipped on Windows, same as the existing
+# root-bypasses-permissions guard, and counted so the final summary says how
+# many were skipped rather than the count silently reading lower with no
+# explanation (the same transparency adrrr/persistent-handoff's own Windows
+# leg documents for its skips).
+#
+# review finding (issue #67): checking only MSYSTEM fails OPEN, not closed -
+# it's set by the Git-for-Windows wrapper bash.exe hands off to, not by the
+# MSYS runtime itself, so anything invoking usr/bin/sh.exe or usr/bin/bash.exe
+# directly (a plausible shape for how a harness spawns a command hook, and
+# exactly the scenario this issue exists to cover) leaves it unset and the
+# guards below would silently stop firing. `uname -s` (MINGW*/MSYS*/CYGWIN*)
+# and $OS=Windows_NT come from the kernel/process environment directly, not a
+# wrapper script, so either backstops the case MSYSTEM alone misses.
+is_windows() {
+  case "$(uname -s 2>/dev/null)" in MINGW*|MSYS*|CYGWIN*) return 0 ;; esac
+  [ -n "${MSYSTEM:-}" ] || [ "${OS:-}" = "Windows_NT" ]
+}
 skip_win() { SKIPPED_WINDOWS=$((SKIPPED_WINDOWS + 1)); ok "$1 (skipped: NTFS chmod can't stage this)"; }
 
 WORK=$(mktemp -d 2>/dev/null || echo "/tmp/tl-tests.$$")
@@ -294,9 +305,19 @@ E=$(grep Edit "$BUF/session-T.md")
 has   "Edit path is relativized to project root" "$E" 'src/app.js'
 hasnt "Edit path drops the absolute prefix" "$E" "$WORK"
 cap '{"session_id":"T","tool_name":"Write","tool_input":{"file_path":"'"$WORK"'/proj/src/new.js"}}'
-has "Write path is relativized to project root" "$(grep '\*\*Write\*\*' "$BUF/session-T.md")" 'src/new.js'
+W=$(grep '\*\*Write\*\*' "$BUF/session-T.md")
+has   "Write path is relativized to project root" "$W" 'src/new.js'
+# review finding: only the Edit assertion above checked for the ABSENCE of
+# the absolute prefix - Write and NotebookEdit share the identical
+# relativization code path and would fail identically (as they briefly did
+# on Windows, per env.root vs. --arg root above) without anyone catching it,
+# since "the tail is present" alone stays true even when the prefix was
+# never stripped.
+hasnt "Write path drops the absolute prefix" "$W" "$WORK"
 cap '{"session_id":"T","tool_name":"NotebookEdit","tool_input":{"notebook_path":"'"$WORK"'/proj/nb/a.ipynb"}}'
-has "NotebookEdit uses notebook_path fallback" "$(grep NotebookEdit "$BUF/session-T.md")" 'nb/a.ipynb'
+NB=$(grep NotebookEdit "$BUF/session-T.md")
+has   "NotebookEdit uses notebook_path fallback" "$NB" 'nb/a.ipynb'
+hasnt "NotebookEdit path drops the absolute prefix" "$NB" "$WORK"
 cap '{"session_id":"T","tool_name":"Write","tool_input":{}}'
 has "Write with neither path key falls back to ?" "$(grep '\*\*Write\*\* ?' "$BUF/session-T.md")" '**Write** ?'
 
@@ -498,12 +519,19 @@ before "onboard(compact) live git state precedes the buffer-tail inline" \
 #      path is truncated per-line the same way an oversized buffer-tail line
 #      already is (7c below), keeping this block bounded on both axes the
 #      way its "renders first, has no fallback" placement (7b2) assumes.
+# Path length is tuned deliberately, not just "as long as possible": the
+# repo-relative path needs to push a git-status line past
+# TL_GIT_STATUS_LINE_CHARS=200, but the FULL filesystem path (this fixture's
+# $WORK prefix included) must stay under Windows' classic 260-character
+# MAX_PATH - review finding: the original version of this fixture exceeded
+# it and failed to even stage on Windows CI (git init/add/commit itself
+# failed), never reaching the assertion this test exists to make.
 FRESH_LONGPATH="$WORK/fresh-longpath"
-LONGPATH="a/very/deeply/nested/directory/structure/that/goes/on/for/quite/a/while/to/simulate/a/real/monorepo/with/excessively/long/generated/paths"
-LONGNAME="a_very_long_generated_filename_that_pushes_this_line_well_past_two_hundred_characters_in_length.txt"
+LONGPATH="a/very/deeply/nested/directory/structure/for/testing"
+LONGNAME="a_generated_file_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.txt"
 mkdir -p "$FRESH_LONGPATH/$LONGPATH"
 : > "$FRESH_LONGPATH/$LONGPATH/$LONGNAME"
-( cd "$FRESH_LONGPATH" && git init -q && git add -A && git commit -q -m init ) 2>/dev/null \
+( cd "$FRESH_LONGPATH" && git init -q && git config core.longpaths true && git add -A && git commit -q -m init ) 2>/dev/null \
   || bad "fixture setup failed: $FRESH_LONGPATH (git init/add/commit)"
 printf -- 'changed\n' >> "$FRESH_LONGPATH/$LONGPATH/$LONGNAME"
 O_LONGPATH=$(printf '%s' '{"source":"startup","session_id":"T"}' | CLAUDE_PROJECT_DIR="$FRESH_LONGPATH" sh "$H/session-onboard.sh")
@@ -630,7 +658,7 @@ hasnt "no-end-stamp buffer NOT mislabeled as ended" "$O3b" 'ended without'
 # plain `#!/bin/sh -c 'exec <real> "$@"'` wrapper needs no privilege beyond
 # writing a text file and never touches the real binary's own location.
 STUB="$WORK/bin"; mkdir -p "$STUB"
-for c in sh dirname cat grep git tr head; do
+for c in sh dirname cat grep git tr head awk; do
   real=$(command -v "$c" 2>/dev/null) || continue
   printf '#!/bin/sh\nexec "%s" "$@"\n' "$real" > "$STUB/$c"
   chmod +x "$STUB/$c"
