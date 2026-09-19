@@ -49,6 +49,11 @@ function runHook(script: string, payload: Record<string, unknown>, cwd: string):
 			// whatever stdout is available (empty on failure) rather than throwing.
 			(_error, stdout) => resolve(stdout ?? ""),
 		);
+		// Every hook script guard-clause exits 0 before reading stdin when
+		// inactive/disabled/no-jq (tl_active/tl_disabled/tl_have_jq checks) - the
+		// pending write then hits a closed pipe. Without a listener, that EPIPE
+		// surfaces as an uncaught 'error' event and kills the host OMP process.
+		child.stdin?.on("error", () => {});
 		child.stdin?.end(JSON.stringify(payload));
 	});
 }
@@ -75,11 +80,12 @@ async function onboard(pi: { sendMessage: (msg: unknown, opts?: unknown) => void
  * on purpose, matching Claude Code's own exclusion (too noisy — see
  * hooks.json's comment history / issue #6).
  *
- * Field names for `bash`/`edit`/`write`/`grep` are confirmed against OMP's
- * own tool schemas (`src/tools/{bash,write,grep}.ts`: `command`, `path`,
- * `pattern`). `web_search`/`task`'s field names below are a best-effort
- * guess pending live verification (dynamic/throughline#85) — if wrong, the
- * fields simply come through empty rather than crashing or misfiring.
+ * Field names for `bash`/`write`/`grep` are confirmed against OMP's own tool
+ * schemas (`src/tools/{bash,write,grep}.ts`: `command`, `path`, `pattern`).
+ * `edit`'s `path`/`paths` and `web_search`/`task`'s field names below are a
+ * best-effort guess pending live verification (dynamic/throughline#85) - if
+ * wrong, the fields simply come through empty rather than crashing or
+ * misfiring.
  */
 // event is loosely typed pending OMP's own published @types package
 // (verified field names against OMP source directly — see comment above).
@@ -106,7 +112,12 @@ function buildCapturePayload(event: any, ctx: MinimalContext): Record<string, un
 				tool_name: "Task",
 				tool_input: {
 					subagent_type: input.subagent_type ?? input.agent ?? "",
-					description: input.description ?? input.prompt ?? "",
+					// || not ??, matching session-capture.sh's own empty-aware jq
+					// `select(. != "" and . != null) // .tool_input.prompt` guard: an
+					// empty-string description must still fall through to prompt, or
+					// the delegated intent (the highest-value line in a research
+					// session) silently disappears.
+					description: input.description || input.prompt || "",
 				},
 			};
 		case "read":
@@ -118,52 +129,85 @@ function buildCapturePayload(event: any, ctx: MinimalContext): Record<string, un
 			// principle session-capture.sh's own `mcp__.*` fallback branch
 			// already applies. Never silently drop an unrecognized-but-allowed
 			// tool (the exact bug .opencode-plugin shipped and fixed).
-			if (event.toolName.startsWith("mcp__")) {
+			if (String(event.toolName ?? "").startsWith("mcp__")) {
 				return { ...base, tool_name: event.toolName, tool_input: {} };
 			}
 			return null;
 	}
 }
 
+// hooks/*.sh contract is "always exit 0, never block a tool or the session."
+// A handler here throwing (a malformed/unexpected event shape from an OMP
+// version this shim hasn't been checked against) must not violate that
+// contract by taking down the host OMP process - swallow and move on.
+function safe<E, C>(handler: (event: E, ctx: C) => Promise<void>): (event: E, ctx: C) => Promise<void> {
+	return async (event, ctx) => {
+		try {
+			await handler(event, ctx);
+		} catch {
+			// Intentionally silent, matching every hooks/*.sh script's own
+			// never-block contract.
+		}
+	};
+}
+
 export default function throughline(pi: {
 	on: (event: string, handler: (event: unknown, ctx: unknown) => Promise<void> | void) => void;
 	sendMessage: (msg: unknown, opts?: unknown) => void;
 }): void {
-	pi.on("session_start", async (_event, ctx) => {
-		await onboard(pi, ctx as MinimalContext, "startup");
-	});
+	pi.on(
+		"session_start",
+		safe(async (_event, ctx) => {
+			await onboard(pi, ctx as MinimalContext, "startup");
+		}),
+	);
 
-	pi.on("before_agent_start", async (event, ctx) => {
-		const e = event as { prompt: string };
-		const c = ctx as MinimalContext;
-		await runHook("session-prompt.sh", { session_id: c.sessionManager.getSessionId(), prompt: e.prompt }, c.cwd);
-	});
+	pi.on(
+		"before_agent_start",
+		safe(async (event, ctx) => {
+			const e = event as { prompt: string };
+			const c = ctx as MinimalContext;
+			await runHook("session-prompt.sh", { session_id: c.sessionManager.getSessionId(), prompt: e.prompt }, c.cwd);
+		}),
+	);
 
-	pi.on("tool_result", async (event, ctx) => {
-		const c = ctx as MinimalContext;
-		const payload = buildCapturePayload(event, c);
-		if (payload) await runHook("session-capture.sh", payload, c.cwd);
-	});
+	pi.on(
+		"tool_result",
+		safe(async (event, ctx) => {
+			const c = ctx as MinimalContext;
+			const payload = buildCapturePayload(event, c);
+			if (payload) await runHook("session-capture.sh", payload, c.cwd);
+		}),
+	);
 
-	pi.on("session_before_compact", async (_event, ctx) => {
-		const c = ctx as MinimalContext;
-		await runHook(
-			"session-precompact.sh",
-			{ session_id: c.sessionManager.getSessionId(), reason: "auto" },
-			c.cwd,
-		);
-	});
+	pi.on(
+		"session_before_compact",
+		safe(async (_event, ctx) => {
+			const c = ctx as MinimalContext;
+			await runHook(
+				"session-precompact.sh",
+				{ session_id: c.sessionManager.getSessionId(), reason: "auto" },
+				c.cwd,
+			);
+		}),
+	);
 
-	pi.on("session_compact", async (_event, ctx) => {
-		// OMP has no single re-fired "session start" for post-compaction the way
-		// Claude Code's SessionStart(source=compact) works; session-onboard.sh's
-		// buffer-tail recovery block is keyed on that source value, so replicate
-		// it explicitly here.
-		await onboard(pi, ctx as MinimalContext, "compact");
-	});
+	pi.on(
+		"session_compact",
+		safe(async (_event, ctx) => {
+			// OMP has no single re-fired "session start" for post-compaction the way
+			// Claude Code's SessionStart(source=compact) works; session-onboard.sh's
+			// buffer-tail recovery block is keyed on that source value, so replicate
+			// it explicitly here.
+			await onboard(pi, ctx as MinimalContext, "compact");
+		}),
+	);
 
-	pi.on("session_shutdown", async (_event, ctx) => {
-		const c = ctx as MinimalContext;
-		await runHook("session-flush.sh", { session_id: c.sessionManager.getSessionId(), reason: "end" }, c.cwd);
-	});
+	pi.on(
+		"session_shutdown",
+		safe(async (_event, ctx) => {
+			const c = ctx as MinimalContext;
+			await runHook("session-flush.sh", { session_id: c.sessionManager.getSessionId(), reason: "end" }, c.cwd);
+		}),
+	);
 }

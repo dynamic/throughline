@@ -83,6 +83,22 @@ describe("throughline OMP shim", () => {
 		expect(sentMessages[0].content).toContain("throughline");
 	});
 
+	test("large payload does not crash when the target hook script exits before reading stdin", async () => {
+		// Regression: every hooks/*.sh script guard-clause exits 0 (before ever
+		// reading stdin) when THROUGHLINE_DISABLE is set. A payload large enough
+		// to exceed the pipe buffer then hits EPIPE on the write - unhandled,
+		// that tears down the whole host process, not just this one hook call.
+		const prev = process.env.THROUGHLINE_DISABLE;
+		process.env.THROUGHLINE_DISABLE = "1";
+		try {
+			const bigPrompt = "x".repeat(5 * 1024 * 1024);
+			await fire("before_agent_start", { type: "before_agent_start", prompt: bigPrompt });
+		} finally {
+			if (prev === undefined) delete process.env.THROUGHLINE_DISABLE;
+			else process.env.THROUGHLINE_DISABLE = prev;
+		}
+	});
+
 	test("before_agent_start captures the prompt", async () => {
 		await fire("before_agent_start", { type: "before_agent_start", prompt: "hello from omp" });
 		const buf = readFileSync(bufferPath(), "utf8");
@@ -129,6 +145,22 @@ describe("throughline OMP shim", () => {
 		expect(buf).toContain("**Write** foo.txt");
 		expect(buf).toContain("**grep** `TODO`");
 		expect(buf).toContain("**mcp__github_search_issues**");
+	});
+
+	test("tool_result falls back to task's prompt when description is an empty string", async () => {
+		// Regression: an empty-string description must still fall through to
+		// prompt (matches session-capture.sh's own empty-aware jq select) - a
+		// naive `??` fallback stops at the empty string and drops the intent.
+		await fire("tool_result", {
+			type: "tool_result",
+			toolName: "task",
+			toolCallId: "1",
+			input: { subagent_type: "Explore", description: "", prompt: "find the auth code paths" },
+			content: [],
+			isError: false,
+		});
+		const buf = readFileSync(bufferPath(), "utf8");
+		expect(buf).toContain("find the auth code paths");
 	});
 
 	test("tool_result skips read and glob (matches Claude Code's own exclusion)", async () => {
