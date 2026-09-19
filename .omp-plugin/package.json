@@ -12,6 +12,10 @@
   "repository": "https://github.com/dynamic/throughline",
   "license": "MIT",
   "keywords": ["memory", "handoff", "session", "context", "continuity", "compaction", "git-state", "cross-harness", "resume", "onboarding", "omp", "oh-my-pi"],
+  "omp": {
+    "name": "throughline",
+    "description": "Continuous, state-aware session memory - capture what you did and what is, hand it off with judgment."
+  },
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "bun test"
