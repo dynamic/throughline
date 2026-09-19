@@ -179,6 +179,26 @@ install), `git pull` is the update step - no separate reinstall needed. The runn
 version is printed in the injected session-start block (`## throughline vX.Y.Z`),
 same as every other harness.
 
+**Marketplace install (alternative).** If you don't want a local checkout to
+manage:
+
+```sh
+omp plugin marketplace add dynamic/throughline
+omp plugin install throughline@throughline
+```
+
+OMP falls back to reading Claude Code's `.claude-plugin/marketplace.json` format
+when there's no OMP-native marketplace file, so this works against the same
+repo without any extra OMP-specific manifest. Unlike `omp plugin link`, this
+installs a versioned snapshot into `~/.omp/plugins/cache/` (discovered through a
+different code path - OMP's `claude-plugins` provider, not the `omp-plugins` one
+`omp plugin link` uses) - updating means re-running `omp plugin install
+throughline@throughline` for a new version, not `git pull`.
+
+**Do not use both install methods on the same machine.** The link and the
+marketplace snapshot are different files on disk, so OMP would register the hook
+shim twice and every capture point would fire twice per event. Pick one.
+
 ## npx skills
 
 ```sh
