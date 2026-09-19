@@ -2,7 +2,7 @@
   "checks": [
     {
       "label": "manifest validation",
-      "run": "jq -e '.hooks | keys' hooks/hooks.json >/dev/null && jq -e '.name and .version' .claude-plugin/plugin.json >/dev/null && jq -e '.plugins' .claude-plugin/marketplace.json >/dev/null && jq -e '.name and .version' .codex-plugin/plugin.json >/dev/null && jq -e '.plugins' .agents/plugins/marketplace.json >/dev/null && jq -e '.name and .version' .omp-plugin/package.json >/dev/null"
+      "run": "jq -e '.hooks | keys' hooks/hooks.json >/dev/null && jq -e '.name and .version' .claude-plugin/plugin.json >/dev/null && jq -e '.plugins' .claude-plugin/marketplace.json >/dev/null && jq -e '.name and .version' .codex-plugin/plugin.json >/dev/null && jq -e '.plugins' .agents/plugins/marketplace.json >/dev/null && jq -e '.name and .version and .omp' .omp-plugin/package.json >/dev/null"
     },
     {
       "label": "plugin version agreement",

@@ -43,7 +43,7 @@ jobs:
           jq -e '.plugins' .claude-plugin/marketplace.json >/dev/null
           jq -e '.name and .version' .codex-plugin/plugin.json >/dev/null
           jq -e '.plugins' .agents/plugins/marketplace.json >/dev/null
-          jq -e '.name and .version' .omp-plugin/package.json >/dev/null
+          jq -e '.name and .version and .omp' .omp-plugin/package.json >/dev/null
       - name: Check plugin version agreement (Linux)
         if: runner.os == 'Linux'
         run: |
