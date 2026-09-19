@@ -1,0 +1,24 @@
+{
+  "name": "@dynamicagency/throughline-omp",
+  "version": "0.15.0",
+  "private": true,
+  "type": "module",
+  "description": "Continuous, state-aware session memory for OMP (Oh My Pi). Captures what you did and what is (commands, file changes, decisions, and live git/PR state), then hands it off with judgment at session wrap-up. Readable, local-first artifacts (commit them if you choose).",
+  "author": {
+    "name": "Dynamic Agency",
+    "email": "support@dynamicagency.com"
+  },
+  "homepage": "https://github.com/dynamic/throughline",
+  "repository": "https://github.com/dynamic/throughline",
+  "license": "MIT",
+  "keywords": ["memory", "handoff", "session", "context", "continuity", "compaction", "git-state", "cross-harness", "resume", "onboarding", "omp", "oh-my-pi"],
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "bun-types": "^1.3.0",
+    "typescript": "^5.4.0"
+  }
+}

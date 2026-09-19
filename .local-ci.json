@@ -2,11 +2,11 @@
   "checks": [
     {
       "label": "manifest validation",
-      "run": "jq -e '.hooks | keys' hooks/hooks.json >/dev/null && jq -e '.name and .version' .claude-plugin/plugin.json >/dev/null && jq -e '.plugins' .claude-plugin/marketplace.json >/dev/null && jq -e '.name and .version' .codex-plugin/plugin.json >/dev/null && jq -e '.plugins' .agents/plugins/marketplace.json >/dev/null"
+      "run": "jq -e '.hooks | keys' hooks/hooks.json >/dev/null && jq -e '.name and .version' .claude-plugin/plugin.json >/dev/null && jq -e '.plugins' .claude-plugin/marketplace.json >/dev/null && jq -e '.name and .version' .codex-plugin/plugin.json >/dev/null && jq -e '.plugins' .agents/plugins/marketplace.json >/dev/null && jq -e '.name and .version' .omp-plugin/package.json >/dev/null"
     },
     {
       "label": "plugin version agreement",
-      "run": "set -e; c=$(jq -r .version .claude-plugin/plugin.json); x=$(jq -r .version .codex-plugin/plugin.json); o=$(jq -r .version .opencode-plugin/package.json); [ \"$c\" = \"$x\" ] && [ \"$c\" = \"$o\" ] || { echo \"version drift: .claude-plugin/plugin.json=$c .codex-plugin/plugin.json=$x .opencode-plugin/package.json=$o\" >&2; exit 1; }"
+      "run": "set -e; c=$(jq -r .version .claude-plugin/plugin.json); x=$(jq -r .version .codex-plugin/plugin.json); o=$(jq -r .version .opencode-plugin/package.json); m=$(jq -r .version .omp-plugin/package.json); [ \"$c\" = \"$x\" ] && [ \"$c\" = \"$o\" ] && [ \"$c\" = \"$m\" ] || { echo \"version drift: .claude-plugin/plugin.json=$c .codex-plugin/plugin.json=$x .opencode-plugin/package.json=$o .omp-plugin/package.json=$m\" >&2; exit 1; }"
     },
     {
       "label": "hook tests",
@@ -19,6 +19,10 @@
     {
       "label": "opencode plugin",
       "run": "cd .opencode-plugin && npm ci && npm run typecheck && npm test"
+    },
+    {
+      "label": "omp plugin",
+      "run": "cd .omp-plugin && bun install --frozen-lockfile && bun run typecheck && bun test"
     }
   ]
 }

@@ -22,7 +22,9 @@ silently.
 memory system of its own (`/memory`, backed by `MEMORY.md`) - the session-start
 injection above complements that auto-load with project-level state, and the
 `handoff`/`consolidate-memory` skills promote genuinely durable facts into it.
-Codex and OpenCode have no equivalent system to bind into today.
+Codex, OpenCode, and OMP have no throughline binding into their own memory system
+today (OMP has its own native memory tools, but throughline doesn't integrate with
+them yet).
 
 **Updating.** Installed plugins are snapshots - they do not track this repo. An old
 copy keeps running (without newer redaction and activation fixes) until you update it
@@ -42,8 +44,8 @@ the identical hook scripts. Without `jq`, capture cannot run. Works in Codex CLI
 Codex Desktop.
 
 **What you get:** the 4 skills plus all 5 hooks, reading and writing the same
-`.claude/throughline/` data format Claude Code and OpenCode use - so a project's
-history is readable and continuable from any of the three.
+`.claude/throughline/` data format Claude Code, OpenCode, and OMP use - so a
+project's history is readable and continuable from any of them.
 
 **The one-time trust step.** Codex gates hook execution behind a one-time trust
 decision per machine (Claude Code has no equivalent gate - a plugin's hooks just run
@@ -136,6 +138,46 @@ The package's `main` field points at compiled `dist/`, which is gitignored, so a
 local-path install needs a build first: `cd .opencode-plugin && npm ci && npm run
 build`. Unlike the npm install, this stays a live checkout - `git pull` and
 rebuild to update it.
+
+## OMP
+
+```sh
+git clone https://github.com/dynamic/throughline && cd throughline
+omp plugin link .omp-plugin
+```
+
+`omp plugin link` symlinks a local directory into OMP's plugin roots, so this stays
+a live checkout - `git pull` to update, no separate install/reinstall step. Restart
+your OMP session afterward.
+
+**Requirements:** `git`, `jq`, and [Bun](https://bun.sh) on your `PATH` - OMP's own
+runtime is Bun-based, and the shim still shells out to the same `jq`-using hook
+scripts Claude Code and Codex CLI run.
+
+**What you get:** the 4 skills (auto-discovered from `.omp-plugin/skills/`, a
+symlink to the shared `skills/` directory - zero extra step) plus all 5 capture
+points, wired through OMP's own event bus rather than a subprocess hook transport.
+OMP's hooks are in-process TypeScript event handlers (`pi.on(event, handler)`), so
+`.omp-plugin/hooks/post/throughline.ts` registers against six of OMP's own events -
+`session_start`, `before_agent_start`, `tool_result`, `session_before_compact`,
+`session_compact`, and `session_shutdown` - and each handler shells out to the
+identical `hooks/*.sh` scripts Claude Code and Codex CLI run, translating OMP's own
+tool-call shape into the same JSON those scripts already parse. No capture or
+redaction logic is duplicated in TypeScript.
+
+One difference worth knowing: OMP splits what Claude Code does with one re-fired
+`SessionStart(source=compact)` into two separate events (`session_before_compact` to
+stamp the boundary, `session_compact` to re-inject the buffer tail), so the shim
+registers both rather than one.
+
+By default the OMP shim uses the same `.claude/throughline/` data directory as
+Claude Code, Codex CLI, and OpenCode, so a project's history stays continuous
+across every harness you use.
+
+**Updating.** Since this is a live checkout (`omp plugin link`, not a package
+install), `git pull` is the update step - no separate reinstall needed. The running
+version is printed in the injected session-start block (`## throughline vX.Y.Z`),
+same as every other harness.
 
 ## npx skills
 

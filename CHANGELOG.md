@@ -6,6 +6,15 @@ All notable changes to throughline are documented here. Format loosely follows
 ## [Unreleased]
 
 ### Added
+- **OMP (Oh My Pi) support** (issue #85): a 4th delivery format, `.omp-plugin/`.
+  OMP's hooks are in-process TypeScript event handlers rather than subprocess
+  hooks, so a thin shim (`hooks/post/throughline.ts`) registers against six of
+  OMP's own events (`session_start`, `before_agent_start`, `tool_result`,
+  `session_before_compact`, `session_compact`, `session_shutdown`) and shells
+  out to the identical `hooks/*.sh` scripts Claude Code and Codex CLI run -
+  no capture/redaction logic is duplicated. Skills are auto-discovered via a
+  symlink (`.omp-plugin/skills` -> `../skills`), zero extra step. Install via
+  `omp plugin link .omp-plugin` from a checkout of this repo.
 - `session-onboard.sh --doctor` (issue #71): a read-only diagnostic that
   prints the resolved data root, activation state and reason, `jq`
   availability, live/archived buffer counts, and the three env vars'

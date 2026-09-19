@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>throughline</title>
-<meta name="description" content="Continuous, state-aware session memory for AI coding agents. Captures what you did and what is - commands, files, decisions, live git and PR state - then hands it off with judgment. Works with Claude Code, Codex CLI, OpenCode, and any SKILL.md-reading harness." />
+<meta name="description" content="Continuous, state-aware session memory for AI coding agents. Captures what you did and what is - commands, files, decisions, live git and PR state - then hands it off with judgment. Works with Claude Code, Codex CLI, OpenCode, OMP, and any SKILL.md-reading harness." />
 <meta property="og:title" content="throughline" />
 <meta property="og:description" content="Continuous capture, judged handoff, automatic orientation. Memory that survives compaction because it lives on disk, not in the transcript." />
 <meta property="og:type" content="website" />
@@ -377,7 +377,7 @@
     <div class="wrap">
       <div class="section-head">
         <span class="kicker">Choose your harness</span>
-        <h2>One data format, four ways in.</h2>
+        <h2>One data format, five ways in.</h2>
         <p>Every harness reads and writes the same <code>.claude/throughline/</code> layout, so a
           project's history stays readable and continuable no matter which one you're sitting in today.
           Capabilities differ - see the matrix below for the honest comparison.</p>
@@ -418,6 +418,18 @@ codex plugin add throughline@throughline</pre>
           <span class="status full"><span class="dot"></span>automatic capture</span>
         </div>
         <div class="h-card">
+          <span class="h-kicker">$ omp</span>
+          <h3>OMP</h3>
+          <pre><span class="c"># in a terminal</span>
+git clone https://github.com/dynamic/throughline
+cd throughline && omp plugin link .omp-plugin</pre>
+          <p class="note">All 4 skills (auto-discovered via a symlink, zero extra step) plus all 5 capture
+            points, wired through OMP's own in-process event bus - a thin TypeScript shim shells out to
+            the identical hook scripts Claude Code and Codex CLI run. Requires <strong>git</strong>,
+            <strong>jq</strong>, and <a href="https://bun.sh">Bun</a>.</p>
+          <span class="status full"><span class="dot"></span>skills + automatic capture</span>
+        </div>
+        <div class="h-card">
           <span class="h-kicker">$ npx</span>
           <h3>Any SKILL.md harness</h3>
           <pre><span class="c"># works anywhere skills are read from disk</span>
@@ -431,14 +443,14 @@ npx skills add dynamic/throughline</pre>
       <div class="tablewrap" style="margin-top:28px">
         <table>
           <thead>
-            <tr><th>Capability</th><th>Claude Code</th><th>Codex CLI</th><th>OpenCode</th><th>npx skills</th></tr>
+            <tr><th>Capability</th><th>Claude Code</th><th>Codex CLI</th><th>OpenCode</th><th>OMP</th><th>npx skills</th></tr>
           </thead>
           <tbody>
-            <tr><td class="feature">Skills (handoff, onboard, consolidate, consolidate-memory)</td><td class="yes">yes</td><td class="yes">yes</td><td class="partial">separate install</td><td class="yes">yes</td></tr>
-            <tr><td class="feature">Automatic capture</td><td class="yes">yes - 5 hooks</td><td class="yes">yes - 5 hooks, one-time trust</td><td class="yes">yes - 5 hooks</td><td class="no">no</td></tr>
-            <tr><td class="feature">Compaction survival</td><td class="yes">yes</td><td class="yes">yes</td><td class="yes">yes</td><td class="no">no</td></tr>
-            <tr><td class="feature">Native memory binding</td><td class="yes">yes</td><td class="no">no</td><td class="no">no</td><td class="no">no</td></tr>
-            <tr><td class="feature">Requires jq</td><td class="partial">yes</td><td class="partial">yes</td><td class="no">no</td><td class="no">n/a - skills only</td></tr>
+            <tr><td class="feature">Skills (handoff, onboard, consolidate, consolidate-memory)</td><td class="yes">yes</td><td class="yes">yes</td><td class="partial">separate install</td><td class="yes">yes</td><td class="yes">yes</td></tr>
+            <tr><td class="feature">Automatic capture</td><td class="yes">yes - 5 hooks</td><td class="yes">yes - 5 hooks, one-time trust</td><td class="yes">yes - 5 hooks</td><td class="yes">yes - 6 events</td><td class="no">no</td></tr>
+            <tr><td class="feature">Compaction survival</td><td class="yes">yes</td><td class="yes">yes</td><td class="yes">yes</td><td class="yes">yes</td><td class="no">no</td></tr>
+            <tr><td class="feature">Native memory binding</td><td class="yes">yes</td><td class="no">no</td><td class="no">no</td><td class="no">no</td><td class="no">no</td></tr>
+            <tr><td class="feature">Requires jq</td><td class="partial">yes</td><td class="partial">yes</td><td class="no">no</td><td class="partial">yes</td><td class="no">n/a - skills only</td></tr>
           </tbody>
         </table>
       </div>
