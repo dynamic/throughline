@@ -5,6 +5,8 @@ All notable changes to throughline are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [0.16.0]
+
 ### Added
 - **OMP (Oh My Pi) support** (issue #85): a 4th delivery format, `.omp-plugin/`.
   OMP's hooks are in-process TypeScript event handlers rather than subprocess
