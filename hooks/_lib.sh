@@ -528,6 +528,16 @@ tl_jq_redact_defs() {
   # path ONLY (not redact_prompt): prompts are natural language, where a lazy
   # span like this would happily swallow ordinary words after any sentence
   # that happens to mention "mysql".
+  # Known miss, stated rather than left to be rediscovered: only the FIRST
+  # -p<password> of a client-anchored segment is masked. Once it is replaced a
+  # second -p further along the SAME segment has no anchor left to match, and
+  # the single all-occurrences rule that would fix it needs variable-length
+  # lookbehind, which jq's regex engine rejects outright ("invalid pattern in
+  # look-behind", verified on jq 1.7.1). Two passwords in one client segment is
+  # not a shape any real capture showed; the handoff skill re-scan backstops it.
+  # A client name that is not a standalone word is also a miss by design: the
+  # leading \b means a versioned or prefixed binary (mysql5.7, mymysql) does not
+  # anchor the rule at all - the same trade the \b is there to make.
   def _mysql_pw:
     gsub("(?<pre>\\b(?:mysqldump|mariadb-dump|mariadb-admin|mysqladmin|mysql|mariadb)\\b[^|;&\\r\\n]*?\\s-p)(?<pw>'[^']*'|\"[^\"]*\"|'[^\\r\\n]*|\"[^\\r\\n]*|[^\\s'\"]+)"; "\(.pre)***");
   def _unmask: gsub("\(M)"; "***");
