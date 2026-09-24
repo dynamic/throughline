@@ -385,13 +385,48 @@ cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"shortglpa
 has   "a 19-character glpat body is NOT masked (the 20 floor is real)" "$(grep shortglpat "$BUF/session-T.md")" 'glpat-ABCDEFGHIJKLMNOPQRS'
 cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"shortglpat2","command":"echo glpat-abc"}}'
 has   "a too-short glpat- sample is NOT masked" "$(grep shortglpat2 "$BUF/session-T.md")" 'glpat-abc'
-# Prefix rules are word-anchored too: an identifier that merely ENDS in one of
-# these prefixes is not a credential, and an allowlist that matches inside a
-# longer word mangles ordinary identifiers on the way to masking nothing.
+# Prefix rules are LEFT-ANCHORED as well as length-floored: an identifier that
+# merely CONTAINS one of these prefixes is not a credential. The anchor is a
+# lookbehind and not \b on purpose - underscore is a word character, so \b gives
+# no boundary between `disk` and `_test_`, which is exactly how `disk_test_…` was
+# getting masked as a Stripe key.
 cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"msgprop","command":"cat MSG.errorMessageTemplate.userNotFoundError"}}'
 has   "MSG.* identifier is not mistaken for a SendGrid key" "$(grep msgprop "$BUF/session-T.md")" 'MSG.errorMessageTemplate.userNotFoundError'
 cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"xappid","command":"ls xapp-config-generator"}}'
 has   "xapp-config-generator identifier is not mistaken for a Slack token" "$(grep xappid "$BUF/session-T.md")" 'xapp-config-generator'
+# The lookbehind on its own, isolated from the length floor and from the digit
+# segment: each of these CONTAINS a real prefix mid-word.
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"disktest","command":"echo disk_test_AbCdEfGh1234567890"}}'
+has   "disk_test_ is not mistaken for a Stripe key" "$(grep disktest "$BUF/session-T.md")" 'disk_test_AbCdEfGh1234567890'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"fooxapp","command":"echo fooxapp-1-A01B2C3D4E5F-1234567890abcdef"}}'
+has   "fooxapp- is not mistaken for a Slack token" "$(grep fooxapp "$BUF/session-T.md")" 'fooxapp-1-A01B2C3D4E5F-1234567890abcdef'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mynpm","command":"echo mynpm_AbCdEfGh1234567890AbCdEfGh123456"}}'
+has   "mynpm_ is not mistaken for an npm token" "$(grep mynpm "$BUF/session-T.md")" 'mynpm_AbCdEfGh1234567890AbCdEfGh123456'
+
+# 2i2. the span must cross the two things that LOOK like separators but are not:
+#      a backslash-newline continuation (that chain is ONE command, and capture
+#      sees its newlines before clean turns them into spaces, so a same-line-only
+#      rule misses the whole shape) and a file-descriptor redirect. A newline with
+#      NO continuation stays a hard stop - that is the control which keeps the
+#      first two cases from being an accident of a match-anything span.
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqlcont","command":"mysqldump \\\\\n  -u root \\\\\n  -pS3cretPw dbname"}}'
+hasnt "line-continued mysqldump still reaches -p<password>" "$(grep mysqlcont "$BUF/session-T.md")" 'S3cretPw'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqlredir","command":"mysql -h h 2>&1 -pS3cretPw db"}}'
+hasnt "a 2>&1 redirect between client and flag does not stop the span" "$(grep mysqlredir "$BUF/session-T.md")" 'S3cretPw'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqlmulti","command":"mysqldump dbname\nssh -p2222 host"}}'
+has   "a plain newline is still a hard stop for the span" "$(grep mysqlmulti "$BUF/session-T.md")" 'ssh -p2222'
+
+# 2i3. glued value tails. In a real shell `-p'abc'def` is ONE argument that
+#      concatenates a quoted part with a bare part, and a value alternation that
+#      matched the quoted part first left `-def` - part of the password - sitting
+#      in cleartext immediately after the mask. The value group is one compound
+#      run for exactly this reason.
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqltailsingle","command":"mysql -u root -p\u0027abc\u0027def dbname"}}'
+hasnt "bare tail glued after a quoted -p value is not stored" "$(grep mysqltailsingle "$BUF/session-T.md")" 'def dbname'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqltaildouble","command":"mysql -u root -p\"pa ss\"word dbname"}}'
+hasnt "bare tail glued after a double-quoted -p value is not stored" "$(grep mysqltaildouble "$BUF/session-T.md")" 'word dbname'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqltailsubst","command":"mysql -u root -p$(cat f)tail dbname"}}'
+hasnt "bare tail glued after a command substitution is not stored" "$(grep mysqltailsubst "$BUF/session-T.md")" 'tail dbname'
 
 # 2f. redaction applies to the Bash *description* field, not just command
 cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"deploy with ghp_abcdefghij1234567890","command":"true"}}'

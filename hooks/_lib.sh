@@ -501,30 +501,44 @@ tl_jq_redact_defs() {
   # that an ordinary word/identifier cannot match it - these run over prompt
   # prose as well as commands, so a prefix whose short form could be ordinary
   # English would corrupt the very intent prompt capture exists to preserve.
+  # The prefixes added for issue #81 are also LEFT-ANCHORED, because a length
+  # floor alone still matches inside a longer identifier: `disk_test_` contains
+  # `rk_test_`, and an unanchored rule masked it. `\b` is the wrong tool for
+  # these (underscore is a word character, so there is no boundary between
+  # `disk` and `_test_`), hence the explicit "not preceded by a word character
+  # or an underscore" lookbehind on each. `SG.` is the one that can use `\b`,
+  # since it starts with letters and a dot: that is what stops
+  # `MSG.errorMessageTemplate.userNotFoundError` from reading as a key.
   def _prefix_tokens:
     gsub("ghp_[A-Za-z0-9]{10,}"; "ghp_***")
     | gsub("github_pat_[A-Za-z0-9_]{10,}"; "github_pat_***")
     | gsub("gh[oprsu]_[A-Za-z0-9]{10,}"; "gh_***")
     | gsub("xox[baprs]-[A-Za-z0-9-]{6,}"; "xox-***")
-    | gsub("xapp-[0-9]{1,2}-[A-Za-z0-9-]{10,}"; "xapp-***")
+    | gsub("(?<![A-Za-z0-9_])xapp-[0-9]{1,2}-[A-Za-z0-9-]{10,}"; "xapp-***")
     | gsub("sk-[A-Za-z0-9_-]{10,}"; "sk-***")
-    | gsub("(?<t>(?:sk|rk)_(?:live|test)_)[A-Za-z0-9]{16,}"; "\(.t)***")
+    | gsub("(?<t>(?<![A-Za-z0-9_])(?:sk|rk)_(?:live|test)_)[A-Za-z0-9]{16,}"; "\(.t)***")
     | gsub("AKIA[0-9A-Z]{12,}"; "AKIA***")
     | gsub("AIza[0-9A-Za-z_\\-]{35}"; "AIza***")
-    | gsub("glpat-[A-Za-z0-9_-]{20,}"; "glpat-***")
-    | gsub("npm_[A-Za-z0-9]{30,}"; "npm_***")
+    | gsub("(?<![A-Za-z0-9_])glpat-[A-Za-z0-9_-]{20,}"; "glpat-***")
+    | gsub("(?<![A-Za-z0-9_])npm_[A-Za-z0-9]{30,}"; "npm_***")
     | gsub("\\bSG\\.[A-Za-z0-9_-]{16,}\\.[A-Za-z0-9_-]{16,}"; "SG.***");
   # MySQL/MariaDB client-anchored `-p<password>` (issue #81). The flag itself is
   # far too overloaded to redact generically, so the anchor is the CLIENT NAME:
   # the rule only fires when a known client binary appears earlier on the same
   # line, and the client-name-to-flag span may not cross an UNQUOTED shell
-  # command separator (| ; & CR LF) - which is precisely what keeps a bare
+  # command separator (| ; & LF CR) - which is precisely what keeps a bare
   # `ssh -p 2222` and an `-p` on the far side of a pipe untouched. The span is
   # quote-aware rather than separator-blind: it consumes `'...'`/`"..."` whole,
   # so `mysql -e "show databases;" -pS3cret` (an idiomatic trailing semicolon in
   # the SQL, not a command separator) is still redacted, and because the span
   # can only stop OUTSIDE a quoted run, the first `-p` it can reach is the real
-  # option and not some `-pfoo` sitting inside the SQL string.
+  # option and not some `-pfoo` sitting inside the SQL string. Two things that
+  # look like separators but are not, and are crossed: a backslash-newline
+  # continuation (a `mysqldump \` / `-u root \` / `-p<pw>` chain is ONE command,
+  # and capture sees the newlines before `clean` turns them into spaces), and a
+  # file-descriptor redirect such as `2>&1` sitting between the client name and
+  # the flag. An ordinary newline is still a hard stop, so a `-p` on the next
+  # line of a multi-line captured command is not swallowed by an anchor above it.
   # Client coverage is the whole family, not just the two names the first report
   # happened to contain: every MySQL/MariaDB client that takes `-p<password>` is
   # listed (mysql/dump/admin/import/check/show/pump/binlog/slap/sh/_upgrade and
@@ -536,12 +550,16 @@ tl_jq_redact_defs() {
   # A bare `-p` followed by whitespace is MySQL's "ask me for the password"
   # prompt, so the word after it is a database name and is deliberately NOT
   # masked: every value alternative requires non-whitespace content touching
-  # the -p. The value group consumes the shell shapes a password can legitimately
-  # be wrapped in whole - a balanced `'...'`/`"..."`, a `$(...)`/backtick command
-  # substitution, an escaped space (`-pS3cret\ with\ space`), a quote glued onto
-  # the end of a bare run (`-pa'b c'`), and an unterminated quote (falls through
-  # to rest-of-line, same as the generic keyword rule's alternatives) - so no
-  # fragment of the password and no orphaned quote is left behind.
+  # The value group is ONE compound run, not an alternation of whole-value
+  # shapes: it consumes any mix of `'...'`, `"..."`, `$(...)`, a backtick run and
+  # a backslash-escaped character, and may then finish with an unterminated
+  # quote (rest of line). A run rather than an alternation matters, because the
+  # shapes glue together in real shells: `-p'abc'def`, `-p"pa ss"word` and
+  # `-p$(cat f)tail` are each a single argument that concatenates a quoted part
+  # with a bare part, and an alternation that matched the quoted part first left
+  # the bare tail - part of the password - sitting in cleartext right after the
+  # mask. The `(?=\S)` guard is what keeps `mysql -p <db>` out: at least one
+  # non-whitespace character has to touch the -p for anything to be consumed.
   # Command path ONLY (not redact_prompt): prompts are natural language, where a
   # span like this would happily swallow ordinary words after any sentence that
   # happens to mention "mysql".
@@ -563,7 +581,7 @@ tl_jq_redact_defs() {
   # ("invalid pattern in look-behind", verified on jq 1.7.1). The handoff skill
   # re-scan backstops it.
   def _mysql_pw:
-    gsub("(?<pre>\\b(?:mysql(?:dump|admin|import|check|show|pump|binlog|slap|sh|_upgrade)?|mariadb(?:-[a-z]+)?)\\b(?:[^|;&\\r\\n'\"]|'[^']*'|\"[^\"]*\")*?\\s-p)(?<pw>\\$\\([^)]*\\)|`[^`]*`|'[^']*'|\"[^\"]*\"|'[^\\r\\n]*|\"[^\\r\\n]*|(?:'[^']*'|\"[^\"]*\"|\\\\[^\\r\\n]|[^\\s'\"\\\\])+)"; "\(.pre)***");
+    gsub("(?<pre>\\b(?:mysql(?:dump|admin|import|check|show|pump|binlog|slap|sh|_upgrade)?|mariadb(?:-[a-z]+)?)\\b(?:\\\\\r?\\n|[0-9]*>&[0-9]*|[^|;&\\r\\n'\"]|'[^']*'|\"[^\"]*\")*?\\s-p)(?<pw>(?=\\S)(?:\\$\\([^)]*\\)|`[^`]*`|'[^']*'|\"[^\"]*\"|\\\\[^\\r\\n]|[^\\s'\"\\\\])*(?:'[^\\r\\n]*|\"[^\\r\\n]*)?)"; "\(.pre)***");
   def _unmask: gsub("\(M)"; "***");
   # Bearer/Basic scheme-value matchers, parameterized on the length floor
   # (issue #16): `_auth_scheme` and `_auth_scheme_prose` below used to spell
