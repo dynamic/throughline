@@ -456,10 +456,15 @@ tl_jq_redact_defs() {
   # bare opaque token with no recognizable shape or keyword will not be caught.
   # Known gap, not fixable here without a high false-positive cost: a
   # credential attached to a bare single-letter CLI flag with no keyword at all
-  # (mysql -p<password>, curl -u user:pass) has no keyword for this rule to
-  # anchor on, and flags like -u/-p are too overloaded across tools (docker run
-  # -u uid:gid, ssh -p <port>) to redact generically. The handoff skill re-scan
-  # is the second barrier for exactly this shape.
+  # (curl -u user:pass, a bare psql/pg_dump connection string with no keyword)
+  # has no keyword for this rule to anchor on, and flags like -u/-p are too
+  # overloaded across tools (docker run -u uid:gid, ssh -p <port>) to redact
+  # generically.
+  # The one exception closed by issue #81 is the MySQL/MariaDB family: `-p` is
+  # still overloaded, but it IS unambiguous when a known client binary name
+  # appears earlier on the same line, so `_mysql_pw` below redacts exactly that
+  # anchored shape and nothing else. Remaining bare-flag gaps of this class
+  # (notably `curl -u user:pass`) are still the handoff skill re-scan's job.
   #
   # Internal sentinel for one specific hand-off: the URL-userinfo rule below is
   # the only shape rule whose replacement abuts a non-whitespace character (the
@@ -489,14 +494,42 @@ tl_jq_redact_defs() {
     | gsub("-----BEGIN [A-Z ]*PRIVATE KEY-----[\\s\\S]*"; "***private-key-redacted***");
   def _url:
     gsub("(?<pfx>://[^:@/\\s]+):(?<pw>[^@/\\s]+)@"; "\(.pfx):\(M)@");
+  # Vendor prefixes are a maintained allowlist: add a rule when a real capture
+  # shows a shape this set misses (issue #81). Keep every floor long enough
+  # that an ordinary word/identifier cannot match it - these run over prompt
+  # prose as well as commands, so a prefix whose short form could be ordinary
+  # English would corrupt the very intent prompt capture exists to preserve.
   def _prefix_tokens:
     gsub("ghp_[A-Za-z0-9]{10,}"; "ghp_***")
     | gsub("github_pat_[A-Za-z0-9_]{10,}"; "github_pat_***")
     | gsub("gh[oprsu]_[A-Za-z0-9]{10,}"; "gh_***")
     | gsub("xox[baprs]-[A-Za-z0-9-]{6,}"; "xox-***")
+    | gsub("xapp-[A-Za-z0-9-]{10,}"; "xapp-***")
     | gsub("sk-[A-Za-z0-9_-]{10,}"; "sk-***")
+    | gsub("(?<t>(?:sk|rk)_(?:live|test)_)[A-Za-z0-9]{16,}"; "\(.t)***")
     | gsub("AKIA[0-9A-Z]{12,}"; "AKIA***")
-    | gsub("AIza[0-9A-Za-z_\\-]{35}"; "AIza***");
+    | gsub("AIza[0-9A-Za-z_\\-]{35}"; "AIza***")
+    | gsub("glpat-[A-Za-z0-9_-]{20,}"; "glpat-***")
+    | gsub("npm_[A-Za-z0-9]{30,}"; "npm_***")
+    | gsub("SG\\.[A-Za-z0-9_-]{16,}\\.[A-Za-z0-9_-]{16,}"; "SG.***");
+  # MySQL/MariaDB client-anchored `-p<password>` (issue #81). The flag itself is
+  # far too overloaded to redact generically, so the anchor is the CLIENT NAME:
+  # the rule only fires when a known client binary appears earlier on the same
+  # line, and the client-name-to-flag span may not cross a shell command
+  # separator (| ; & CR LF) - which is precisely what keeps `mysql ... | ssh -p
+  # 2222` and a bare `ssh -p 2222` untouched, since there the `-p` either has no
+  # client name before it on this line or sits on the far side of a pipe.
+  # A bare `-p` followed by whitespace is MySQL's "ask me for the password"
+  # prompt, so the word after it is a database name and is deliberately NOT
+  # masked: every value alternative requires non-whitespace content touching
+  # the -p. Quoted values are consumed whole (both quotes) so no orphaned
+  # quote survives, with an unterminated-quote fallback consuming the rest of
+  # the line, same shape as the generic keyword rule's alternatives. Command
+  # path ONLY (not redact_prompt): prompts are natural language, where a lazy
+  # span like this would happily swallow ordinary words after any sentence
+  # that happens to mention "mysql".
+  def _mysql_pw:
+    gsub("(?<pre>\\b(?:mysqldump|mariadb-dump|mariadb-admin|mysqladmin|mysql|mariadb)\\b[^|;&\\r\\n]*?\\s-p)(?<pw>'[^']*'|\"[^\"]*\"|'[^\\r\\n]*|\"[^\\r\\n]*|[^\\s'\"]+)"; "\(.pre)***");
   def _unmask: gsub("\(M)"; "***");
   # Bearer/Basic scheme-value matchers, parameterized on the length floor
   # (issue #16): `_auth_scheme` and `_auth_scheme_prose` below used to spell
@@ -593,6 +626,7 @@ tl_jq_redact_defs() {
     | gsub("(?i)\\btoken\\s+(?<t>[A-Za-z0-9._\\-]+)"; "Token ***")
     | _url
     | _prefix_tokens
+    | _mysql_pw
     | gsub("(?i)(?<k>\\w*(?:token|secret|password|passwd|api[_-]?key|access[_-]?key|credential|auth(?:orization)?|client[_-]?id)\\w*)(?<s>\\s*[:=]\\s*|\\s+(?:is|was|are)\\s+|\\s+)(?<v>\"[^\"]*\"|\(M)|\"[^\\r\\n]*|[^\\s\"]+)"; "\(.k)\(.s)***")
     | _unmask;
   # Prose-safe redaction for user prompts (issue #5), and for the WebSearch

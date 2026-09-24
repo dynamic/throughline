@@ -286,6 +286,59 @@ hasnt "second word of an unterminated multi-word secret is not stored" "$MULTIWO
 hasnt "first word of an unterminated multi-word secret is not stored" "$MULTIWORD_LINE" 'open'
 has   "unterminated multi-word secret is masked in full" "$MULTIWORD_LINE" 'password=***'
 
+# 2h. issue #81: MySQL/MariaDB client-ANCHORED `-p<password>`. A generic -p
+#       rule is impossible (-p is a port, a parallel flag, a print flag), so
+#       the anchor is the CLIENT NAME, and the negative controls below are what
+#       prove it is an anchor rather than an excuse: `ssh -p 2222`,
+#       `docker run -u 1000:1000`, and a real `mysql -p <db>` (interactive
+#       password prompt, so the next word is a database name) must ALL survive
+#       untouched, and an -p on the far side of a pipe must not be swallowed
+#       even with a client name earlier on the line.
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqlpw","command":"mysql -h db -u app -pS3cretPw dbname"}}'
+MYSQL_LINE=$(grep mysqlpw "$BUF/session-T.md")
+hasnt "mysql -p<password> value is not stored" "$MYSQL_LINE" 'S3cretPw'
+has   "mysql -p is masked in place, db name kept" "$MYSQL_LINE" '-p*** dbname'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"sshdump","command":"ssh host \"mysqldump -u x -pS3cretPw dbname\""}}'
+hasnt "mysqldump over ssh: -p<password> value is not stored" "$(grep sshdump "$BUF/session-T.md")" 'S3cretPw'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqladminpw","command":"mysqladmin -h1 -pS3cretPw status"}}'
+hasnt "mysqladmin -p<password> value is not stored" "$(grep mysqladminpw "$BUF/session-T.md")" 'S3cretPw'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mariadbdumppw","command":"mariadb-dump --single-transaction -pS3cretPw dbname"}}'
+hasnt "mariadb-dump -p<password> value is not stored" "$(grep mariadbdumppw "$BUF/session-T.md")" 'S3cretPw'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqlquoted","command":"mysql -u app -p\"pa ss\" dbname"}}'
+MQ_LINE=$(grep mysqlquoted "$BUF/session-T.md")
+hasnt "quoted -p<password> is not stored, not even its second word" "$MQ_LINE" 'pa ss'
+has   "quoted -p<password> is masked whole with no orphaned quote" "$MQ_LINE" '-p*** dbname'
+# negative controls - the anchor, proven
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"sshport","command":"ssh -p 2222 host true"}}'
+has   "ssh -p <port> is NOT masked by the client-anchored rule" "$(grep sshport "$BUF/session-T.md")" 'ssh -p 2222'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"dockeruid","command":"docker run -u 1000:1000 img"}}'
+has   "docker run -u <uid:gid> is NOT masked" "$(grep dockeruid "$BUF/session-T.md")" '-u 1000:1000'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqlinteractive","command":"mysql -p dbname"}}'
+has   "bare mysql -p (interactive prompt) keeps the following db name" "$(grep mysqlinteractive "$BUF/session-T.md")" 'mysql -p dbname'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqlpipe","command":"mysql -u app -pS3cretPw dbname | ssh -p 2222 host"}}'
+PIPE_LINE=$(grep mysqlpipe "$BUF/session-T.md")
+hasnt "mysql -p<password> before a pipe is still masked" "$PIPE_LINE" 'S3cretPw'
+has   "ssh -p on the far side of the pipe is not swallowed" "$PIPE_LINE" 'ssh -p 2222'
+
+# 2i. issue #81: extended vendor token PREFIX allowlist (glpat-, sk_live_/
+#     rk_test_, xapp-, npm_, SG.x.y). Each floor is set above anything an
+#     ordinary word or identifier could be, and the too-short case at the end
+#     is what proves those floors are floors and not a match-anything rule.
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"gitlabpat","command":"glab api -H \"X: glpat-ABCDEFGHIJKLMNOPQRST\""}}'
+hasnt "gitlab glpat- token not stored" "$(grep gitlabpat "$BUF/session-T.md")" 'glpat-ABCDEFGHIJKLMNOPQRST'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"stripelive","command":"deploy --key sk_live_AbCdEfGh1234567890"}}'
+hasnt "stripe sk_live_ key not stored" "$(grep stripelive "$BUF/session-T.md")" 'sk_live_AbCdEfGh1234567890'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"striperestricted","command":"deploy --key rk_test_AbCdEfGh1234567890"}}'
+hasnt "stripe rk_test_ key not stored" "$(grep striperestricted "$BUF/session-T.md")" 'rk_test_AbCdEfGh1234567890'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"slackapp","command":"echo xapp-1A2B3C4D5E-1234567890-abcdef"}}'
+hasnt "slack xapp- token not stored" "$(grep slackapp "$BUF/session-T.md")" 'xapp-1A2B3C4D5E-1234567890-abcdef'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"npmtoken","command":"echo npm_AbCdEfGh1234567890AbCdEfGh1234"}}'
+hasnt "npm_ automation token not stored" "$(grep npmtoken "$BUF/session-T.md")" 'npm_AbCdEfGh1234567890AbCdEfGh1234'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"sendgrid","command":"mail --key SG.abcdefghijklmnopqrst.ABCDEFGHIJKLMNOPQRST"}}'
+hasnt "sendgrid SG. key not stored" "$(grep sendgrid "$BUF/session-T.md")" 'SG.abcdefghijklmnopqrst.ABCDEFGHIJKLMNOPQRST'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"shortglpat","command":"echo glpat-abc"}}'
+has   "a too-short glpat- sample is NOT masked (length floors hold)" "$(grep shortglpat "$BUF/session-T.md")" 'glpat-abc'
+
 # 2f. redaction applies to the Bash *description* field, not just command
 cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"deploy with ghp_abcdefghij1234567890","command":"true"}}'
 DESC_LINE=$(grep '\*\*bash\*\* deploy' "$BUF/session-T.md")
@@ -1072,6 +1125,13 @@ prompt '{"session_id":"P","prompt":"deploy with my key ghp_abcdefghij1234567890"
 PS=$(grep 'deploy with' "$BUF/session-P.md")
 hasnt "prompt: gh token not stored" "$PS" 'ghp_abcdefghij1234567890'
 has   "prompt: gh token masked"     "$PS" '***'
+# issue #81: the newly added vendor prefixes live in the SHARED _prefix_tokens
+# def, so they protect prompts too - and, being shape-distinctive, they do it
+# without the prose-corruption problem that made the keyword rules command-only.
+prompt '{"session_id":"P","prompt":"rotate the gitlab token glpat-ABCDEFGHIJKLMNOPQRST before it expires"}'
+hasnt "prompt: glpat- token not stored" "$(grep 'rotate the gitlab' "$BUF/session-P.md")" 'glpat-ABCDEFGHIJKLMNOPQRST'
+prompt '{"session_id":"P","prompt":"the stripe key sk_live_AbCdEfGh1234567890 leaked, rotate it"}'
+hasnt "prompt: sk_live_ key not stored" "$(grep 'the stripe key' "$BUF/session-P.md")" 'sk_live_AbCdEfGh1234567890'
 # Prose safety: ordinary English containing credential KEYWORDS but no
 # recognizable structural shape survives verbatim — the whole point of
 # redact_prompt. The command path's copula/bare-space rule would mangle all

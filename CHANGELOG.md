@@ -5,6 +5,21 @@ All notable changes to throughline are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+- **Capture-buffer credential misses** (issue #81): two real captures in one
+  project's buffers got through the capture-time filter - a production MySQL
+  password attached to the bare `-p` flag, and a third-party API key whose
+  vendor prefix was not in the allowlist. `_lib.sh` now redacts `-p<password>`
+  when a known MySQL/MariaDB client name (`mysql`, `mysqldump`, `mysqladmin`,
+  `mariadb`, `mariadb-dump`, `mariadb-admin`) appears earlier on the same line
+  and no shell command separator sits between them, so `ssh -p 2222`,
+  `docker run -u 1000:1000` and the interactive `mysql -p <db>` form are all
+  untouched. The prefix allowlist also gains `glpat-`, `sk_live_`/`rk_test_`,
+  `xapp-`, `npm_` and `SG.x.y` shapes; since they live in the shared
+  `_prefix_tokens` def they protect prompts as well as commands. Remaining
+  bare-flag gaps (e.g. `curl -u user:pass`) are unchanged and still rely on
+  the handoff skill's re-scan.
+
 ## [0.16.0]
 
 ### Added
