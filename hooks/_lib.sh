@@ -463,7 +463,9 @@ tl_jq_redact_defs() {
   # The one exception closed by issue #81 is the MySQL/MariaDB family: `-p` is
   # still overloaded, but it IS unambiguous when a known client binary name
   # appears earlier on the same line, so `_mysql_pw` below redacts exactly that
-  # anchored shape and nothing else. Remaining bare-flag gaps of this class
+  # anchored shape and nothing else. The one thing it does over-match is a line
+  # that merely mentions a client name and then carries an unrelated attached
+  # `-p` (see the false-positive note on `_mysql_pw`); remaining bare-flag gaps
   # (notably `curl -u user:pass`) are still the handoff skill re-scan's job.
   #
   # Internal sentinel for one specific hand-off: the URL-userinfo rule below is
@@ -504,42 +506,64 @@ tl_jq_redact_defs() {
     | gsub("github_pat_[A-Za-z0-9_]{10,}"; "github_pat_***")
     | gsub("gh[oprsu]_[A-Za-z0-9]{10,}"; "gh_***")
     | gsub("xox[baprs]-[A-Za-z0-9-]{6,}"; "xox-***")
-    | gsub("xapp-[A-Za-z0-9-]{10,}"; "xapp-***")
+    | gsub("xapp-[0-9]{1,2}-[A-Za-z0-9-]{10,}"; "xapp-***")
     | gsub("sk-[A-Za-z0-9_-]{10,}"; "sk-***")
     | gsub("(?<t>(?:sk|rk)_(?:live|test)_)[A-Za-z0-9]{16,}"; "\(.t)***")
     | gsub("AKIA[0-9A-Z]{12,}"; "AKIA***")
     | gsub("AIza[0-9A-Za-z_\\-]{35}"; "AIza***")
     | gsub("glpat-[A-Za-z0-9_-]{20,}"; "glpat-***")
     | gsub("npm_[A-Za-z0-9]{30,}"; "npm_***")
-    | gsub("SG\\.[A-Za-z0-9_-]{16,}\\.[A-Za-z0-9_-]{16,}"; "SG.***");
+    | gsub("\\bSG\\.[A-Za-z0-9_-]{16,}\\.[A-Za-z0-9_-]{16,}"; "SG.***");
   # MySQL/MariaDB client-anchored `-p<password>` (issue #81). The flag itself is
   # far too overloaded to redact generically, so the anchor is the CLIENT NAME:
   # the rule only fires when a known client binary appears earlier on the same
-  # line, and the client-name-to-flag span may not cross a shell command
-  # separator (| ; & CR LF) - which is precisely what keeps `mysql ... | ssh -p
-  # 2222` and a bare `ssh -p 2222` untouched, since there the `-p` either has no
-  # client name before it on this line or sits on the far side of a pipe.
+  # line, and the client-name-to-flag span may not cross an UNQUOTED shell
+  # command separator (| ; & CR LF) - which is precisely what keeps a bare
+  # `ssh -p 2222` and an `-p` on the far side of a pipe untouched. The span is
+  # quote-aware rather than separator-blind: it consumes `'...'`/`"..."` whole,
+  # so `mysql -e "show databases;" -pS3cret` (an idiomatic trailing semicolon in
+  # the SQL, not a command separator) is still redacted, and because the span
+  # can only stop OUTSIDE a quoted run, the first `-p` it can reach is the real
+  # option and not some `-pfoo` sitting inside the SQL string.
+  # Client coverage is the whole family, not just the two names the first report
+  # happened to contain: every MySQL/MariaDB client that takes `-p<password>` is
+  # listed (mysql/dump/admin/import/check/show/pump/binlog/slap/sh/_upgrade and
+  # any `mariadb-<suffix>` form, which is why the mariadb branch is a prefix
+  # pattern rather than two literal names - mariadb-check and mariadb-import take
+  # the flag too). A client name that is not a standalone word is a miss by
+  # design: the leading \b is what stops `notmysql -pX` from anchoring, and the
+  # same \b is what stops a versioned name (mysql5.7) from anchoring.
   # A bare `-p` followed by whitespace is MySQL's "ask me for the password"
   # prompt, so the word after it is a database name and is deliberately NOT
   # masked: every value alternative requires non-whitespace content touching
-  # the -p. Quoted values are consumed whole (both quotes) so no orphaned
-  # quote survives, with an unterminated-quote fallback consuming the rest of
-  # the line, same shape as the generic keyword rule's alternatives. Command
-  # path ONLY (not redact_prompt): prompts are natural language, where a lazy
-  # span like this would happily swallow ordinary words after any sentence
-  # that happens to mention "mysql".
+  # the -p. The value group consumes the shell shapes a password can legitimately
+  # be wrapped in whole - a balanced `'...'`/`"..."`, a `$(...)`/backtick command
+  # substitution, an escaped space (`-pS3cret\ with\ space`), a quote glued onto
+  # the end of a bare run (`-pa'b c'`), and an unterminated quote (falls through
+  # to rest-of-line, same as the generic keyword rule's alternatives) - so no
+  # fragment of the password and no orphaned quote is left behind.
+  # Command path ONLY (not redact_prompt): prompts are natural language, where a
+  # span like this would happily swallow ordinary words after any sentence that
+  # happens to mention "mysql".
+  # KNOWN FALSE POSITIVE, pinned by a test rather than left to be rediscovered:
+  # the anchor is a word, not a parse position, so a line that merely mentions a
+  # MySQL client/path and then carries an unrelated attached `-p` gets that -p
+  # masked too - `find /var/lib/mysql -name x.ibd -print` becomes `-p***`, and so
+  # does `docker run --name mysql -p3306:3306 mysql:8`. Over-redaction of captured
+  # command text is the safe side of this trade (the buffer is a memory, not a
+  # script you re-run), and the alternatives that would avoid it are worse:
+  # anchoring on command position needs a real shell parse, and exempting
+  # port-shaped values (`\d+:\d+`) would leak a password that happens to look
+  # like a port mapping. This is the one behavior the earlier "exactly that shape
+  # and nothing else" claim got wrong.
   # Known miss, stated rather than left to be rediscovered: only the FIRST
-  # -p<password> of a client-anchored segment is masked. Once it is replaced a
-  # second -p further along the SAME segment has no anchor left to match, and
-  # the single all-occurrences rule that would fix it needs variable-length
-  # lookbehind, which jq's regex engine rejects outright ("invalid pattern in
-  # look-behind", verified on jq 1.7.1). Two passwords in one client segment is
-  # not a shape any real capture showed; the handoff skill re-scan backstops it.
-  # A client name that is not a standalone word is also a miss by design: the
-  # leading \b means a versioned or prefixed binary (mysql5.7, mymysql) does not
-  # anchor the rule at all - the same trade the \b is there to make.
+  # reachable -p<password> of a client-anchored segment is masked, so a second
+  # one in the same segment leaks; the single all-occurrences rule that would fix
+  # it needs variable-length lookbehind, which jq's regex engine rejects outright
+  # ("invalid pattern in look-behind", verified on jq 1.7.1). The handoff skill
+  # re-scan backstops it.
   def _mysql_pw:
-    gsub("(?<pre>\\b(?:mysqldump|mariadb-dump|mariadb-admin|mysqladmin|mysql|mariadb)\\b[^|;&\\r\\n]*?\\s-p)(?<pw>'[^']*'|\"[^\"]*\"|'[^\\r\\n]*|\"[^\\r\\n]*|[^\\s'\"]+)"; "\(.pre)***");
+    gsub("(?<pre>\\b(?:mysql(?:dump|admin|import|check|show|pump|binlog|slap|sh|_upgrade)?|mariadb(?:-[a-z]+)?)\\b(?:[^|;&\\r\\n'\"]|'[^']*'|\"[^\"]*\")*?\\s-p)(?<pw>\\$\\([^)]*\\)|`[^`]*`|'[^']*'|\"[^\"]*\"|'[^\\r\\n]*|\"[^\\r\\n]*|(?:'[^']*'|\"[^\"]*\"|\\\\[^\\r\\n]|[^\\s'\"\\\\])+)"; "\(.pre)***");
   def _unmask: gsub("\(M)"; "***");
   # Bearer/Basic scheme-value matchers, parameterized on the length floor
   # (issue #16): `_auth_scheme` and `_auth_scheme_prose` below used to spell
