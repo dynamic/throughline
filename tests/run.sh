@@ -286,6 +286,159 @@ hasnt "second word of an unterminated multi-word secret is not stored" "$MULTIWO
 hasnt "first word of an unterminated multi-word secret is not stored" "$MULTIWORD_LINE" 'open'
 has   "unterminated multi-word secret is masked in full" "$MULTIWORD_LINE" 'password=***'
 
+# 2h. issue #81: MySQL/MariaDB client-ANCHORED `-p<password>`. A generic -p
+#       rule is impossible (-p is a port, a parallel flag, a print flag), so
+#       the anchor is the CLIENT NAME, and the negative controls below are what
+#       prove it is an anchor rather than an excuse: `ssh -p 2222`,
+#       `docker run -u 1000:1000`, and a real `mysql -p <db>` (interactive
+#       password prompt, so the next word is a database name) must ALL survive
+#       untouched, and an -p on the far side of a pipe must not be swallowed
+#       even with a client name earlier on the line.
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqlpw","command":"mysql -h db -u app -pS3cretPw dbname"}}'
+MYSQL_LINE=$(grep mysqlpw "$BUF/session-T.md")
+hasnt "mysql -p<password> value is not stored" "$MYSQL_LINE" 'S3cretPw'
+has   "mysql -p is masked in place, db name kept" "$MYSQL_LINE" '-p*** dbname'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"sshdump","command":"ssh host \"mysqldump -u x -pS3cretPw dbname\""}}'
+hasnt "mysqldump over ssh: -p<password> value is not stored" "$(grep sshdump "$BUF/session-T.md")" 'S3cretPw'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqladminpw","command":"mysqladmin -h1 -pS3cretPw status"}}'
+hasnt "mysqladmin -p<password> value is not stored" "$(grep mysqladminpw "$BUF/session-T.md")" 'S3cretPw'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mariadbdumppw","command":"mariadb-dump --single-transaction -pS3cretPw dbname"}}'
+hasnt "mariadb-dump -p<password> value is not stored" "$(grep mariadbdumppw "$BUF/session-T.md")" 'S3cretPw'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqlquoted","command":"mysql -u app -p\"pa ss\" dbname"}}'
+MQ_LINE=$(grep mysqlquoted "$BUF/session-T.md")
+hasnt "quoted -p<password> is not stored, not even its second word" "$MQ_LINE" 'pa ss'
+has   "quoted -p<password> is masked whole with no orphaned quote" "$MQ_LINE" '-p*** dbname'
+# negative controls - the anchor, proven
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"sshport","command":"ssh -p 2222 host true"}}'
+has   "ssh -p <port> is NOT masked by the client-anchored rule" "$(grep sshport "$BUF/session-T.md")" 'ssh -p 2222'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"dockeruid","command":"docker run -u 1000:1000 img"}}'
+has   "docker run -u <uid:gid> is NOT masked" "$(grep dockeruid "$BUF/session-T.md")" '-u 1000:1000'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqlinteractive","command":"mysql -p dbname"}}'
+has   "bare mysql -p (interactive prompt) keeps the following db name" "$(grep mysqlinteractive "$BUF/session-T.md")" 'mysql -p dbname'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqlpipe","command":"mysql -u app db | ssh -p2222 host"}}'
+PIPE_LINE=$(grep mysqlpipe "$BUF/session-T.md")
+has   "ssh -p2222 on the far side of a pipe is not swallowed" "$PIPE_LINE" 'ssh -p2222'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqlsemi","command":"mysql db; tar -pczf x.tgz d"}}'
+has   "tar -pczf after a semicolon is not swallowed" "$(grep mysqlsemi "$BUF/session-T.md")" 'tar -pczf'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqlandand","command":"mysqldump db && cp -pr a b"}}'
+has   "cp -pr after && is not swallowed" "$(grep mysqlandand "$BUF/session-T.md")" 'cp -pr'
+# 2h2. the separator class must be QUOTE-AWARE. A trailing `;` inside `-e "..."`
+#      is idiomatic MySQL, not a command boundary; a separator-blind span stops
+#      at it, never reaches -p, and the password is written in plaintext. These
+#      four lines are the exact shapes issue #81 reported.
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqlquotedsemi","command":"mysql -h db -u root -e \"show databases;\" -pS3cretPw"}}'
+hasnt "semicolon inside a quoted -e does not stop the span" "$(grep mysqlquotedsemi "$BUF/session-T.md")" 'S3cretPw'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqldumpwhere","command":"mysqldump --where=\"id=1 || id=2\" -pS3cretPw dbname"}}'
+hasnt "|| inside a quoted --where does not stop the span" "$(grep mysqldumpwhere "$BUF/session-T.md")" 'S3cretPw'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqlpipequote","command":"mysql -e \u0027a|b\u0027 -pS3cretPw dbname"}}'
+hasnt "pipe inside a quoted -e does not stop the span" "$(grep mysqlpipequote "$BUF/session-T.md")" 'S3cretPw'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqltarget","command":"mysql -e \"select -pfoo from t\" -pS3cretPw dbname"}}'
+TARGET_LINE=$(grep mysqltarget "$BUF/session-T.md")
+hasnt "the real -p after a quoted -pfoo is the one masked" "$TARGET_LINE" 'S3cretPw'
+has   "the -pfoo inside the SQL string is left as the text it is" "$TARGET_LINE" '-pfoo from t'
+# 2h3. client coverage: every MySQL/MariaDB client that takes -p<password>, not
+#      just the two names the first report happened to contain.
+for TL_BC in mysqlpump mysqlcheck mysql_upgrade mariadb-check; do
+  cap "{\"session_id\":\"T\",\"tool_name\":\"Bash\",\"tool_input\":{\"description\":\"cl_${TL_BC}\",\"command\":\"${TL_BC} -u x -pS3cretPw dbname\"}}"
+  hasnt "${TL_BC} -p<password> value is not stored" "$(grep "cl_${TL_BC}" "$BUF/session-T.md")" 'S3cretPw'
+done
+# 2h4. value shapes. A password can legitimately be a command substitution, an
+#      escaped-space run, or have a quote glued onto its end; each must be
+#      consumed whole, with no fragment and no orphaned tail left behind.
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqlsubst","command":"mysql -u root -p$(cat pwfile) dbname"}}'
+SUB_LINE=$(grep mysqlsubst "$BUF/session-T.md")
+hasnt "command-substitution -p value is consumed whole" "$SUB_LINE" 'pwfile)'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqlescapedspace","command":"mysql -u root -pS3cret\\ with\\ space dbname"}}'
+ESC_LINE=$(grep mysqlescapedspace "$BUF/session-T.md")
+hasnt "escaped-space -p value is not stored (first chunk)" "$ESC_LINE" 'S3cret'
+hasnt "escaped-space -p value is not stored (tail chunk)" "$ESC_LINE" 'space dbname'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqlgluedquote","command":"mysql -u root -paS3cret\u0027x y\u0027 dbname"}}'
+hasnt "quote glued onto a bare -p value is consumed whole" "$(grep mysqlgluedquote "$BUF/session-T.md")" 'x y'
+# 2h5. KNOWN FALSE POSITIVE, pinned so it is a documented trade and not a
+#      surprise. The anchor is a word, not a parse position, so a line that only
+#      MENTIONS a mysql path and then carries an unrelated -p masks that -p too.
+#      Over-redacting captured command text is the safe side of this trade; the
+#      alternatives need a shell parse, or would leak a password that happens to
+#      look like a port mapping.
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqlfpfind","command":"find /var/lib/mysql -name x.ibd -print"}}'
+has "known false positive: find -print after a mysql path is masked too" "$(grep mysqlfpfind "$BUF/session-T.md")" '-p***'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqlfpdocker","command":"docker run --name mysql -p3306:3306 mysql:8"}}'
+has "known false positive: docker -p3306:3306 after a mysql name is masked too" "$(grep mysqlfpdocker "$BUF/session-T.md")" '-p***'
+
+# 2i. issue #81: extended vendor token PREFIX allowlist (glpat-, sk_live_/
+#     rk_test_, xapp-, npm_, SG.x.y). Each floor is set above anything an
+#     ordinary word or identifier could be, and the cases at the end pin that:
+#     a 19-char glpat body and vendor-shaped identifiers stay unmasked.
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"gitlabpat","command":"glab api -H \"X: glpat-ABCDEFGHIJKLMNOPQRST\""}}'
+hasnt "gitlab glpat- token not stored" "$(grep gitlabpat "$BUF/session-T.md")" 'glpat-ABCDEFGHIJKLMNOPQRST'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"stripelive","command":"deploy --key sk_live_AbCdEfGh1234567890"}}'
+hasnt "stripe sk_live_ key not stored" "$(grep stripelive "$BUF/session-T.md")" 'sk_live_AbCdEfGh1234567890'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"striperestricted","command":"deploy --key rk_test_AbCdEfGh1234567890"}}'
+hasnt "stripe rk_test_ key not stored" "$(grep striperestricted "$BUF/session-T.md")" 'rk_test_AbCdEfGh1234567890'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"slackapp","command":"echo xapp-1-A01B2C3D4E5F-1234567890abcdef-abcdef1234"}}'
+hasnt "slack xapp- token not stored" "$(grep slackapp "$BUF/session-T.md")" 'xapp-1-A01B2C3D4E5F-1234567890abcdef-abcdef1234'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"npmtoken","command":"echo npm_AbCdEfGh1234567890AbCdEfGh1234"}}'
+hasnt "npm_ automation token not stored" "$(grep npmtoken "$BUF/session-T.md")" 'npm_AbCdEfGh1234567890AbCdEfGh1234'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"sendgrid","command":"mail --key SG.abcdefghijklmnopqrst.ABCDEFGHIJKLMNOPQRST"}}'
+hasnt "sendgrid SG. key not stored" "$(grep sendgrid "$BUF/session-T.md")" 'SG.abcdefghijklmnopqrst.ABCDEFGHIJKLMNOPQRST'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"shortglpat","command":"echo glpat-ABCDEFGHIJKLMNOPQRS"}}'
+has   "a 19-character glpat body is NOT masked (the 20 floor is real)" "$(grep shortglpat "$BUF/session-T.md")" 'glpat-ABCDEFGHIJKLMNOPQRS'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"shortglpat2","command":"echo glpat-abc"}}'
+has   "a too-short glpat- sample is NOT masked" "$(grep shortglpat2 "$BUF/session-T.md")" 'glpat-abc'
+# Prefix rules are LEFT-ANCHORED as well as length-floored: an identifier that
+# merely CONTAINS one of these prefixes is not a credential. The anchor is a
+# lookbehind and not \b on purpose - underscore is a word character, so \b gives
+# no boundary between `disk` and `_test_`, which is exactly how `disk_test_…` was
+# getting masked as a Stripe key.
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"msgprop","command":"cat MSG.errorMessageTemplate.userNotFoundError"}}'
+has   "MSG.* identifier is not mistaken for a SendGrid key" "$(grep msgprop "$BUF/session-T.md")" 'MSG.errorMessageTemplate.userNotFoundError'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"xappid","command":"ls xapp-config-generator"}}'
+has   "xapp-config-generator identifier is not mistaken for a Slack token" "$(grep xappid "$BUF/session-T.md")" 'xapp-config-generator'
+# The lookbehind on its own, isolated from the length floor and from the digit
+# segment: each of these CONTAINS a real prefix mid-word.
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"disktest","command":"echo disk_test_AbCdEfGh1234567890"}}'
+has   "disk_test_ is not mistaken for a Stripe key" "$(grep disktest "$BUF/session-T.md")" 'disk_test_AbCdEfGh1234567890'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"fooxapp","command":"echo fooxapp-1-A01B2C3D4E5F-1234567890abcdef"}}'
+has   "fooxapp- is not mistaken for a Slack token" "$(grep fooxapp "$BUF/session-T.md")" 'fooxapp-1-A01B2C3D4E5F-1234567890abcdef'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mynpm","command":"echo mynpm_AbCdEfGh1234567890AbCdEfGh123456"}}'
+has   "mynpm_ is not mistaken for an npm token" "$(grep mynpm "$BUF/session-T.md")" 'mynpm_AbCdEfGh1234567890AbCdEfGh123456'
+
+# 2i2. the span must cross the two things that LOOK like separators but are not:
+#      a backslash-newline continuation (that chain is ONE command, and capture
+#      sees its newlines before clean turns them into spaces, so a same-line-only
+#      rule misses the whole shape) and a file-descriptor redirect. A newline with
+#      NO continuation stays a hard stop - that is the control which keeps the
+#      first two cases from being an accident of a match-anything span.
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqlcont","command":"mysqldump \\n  -u root \\n  -pS3cretPw dbname"}}'
+hasnt "line-continued mysqldump still reaches -p<password>" "$(grep mysqlcont "$BUF/session-T.md")" 'S3cretPw'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqlredir","command":"mysql -h h 2>&1 -pS3cretPw db"}}'
+hasnt "a 2>&1 redirect between client and flag does not stop the span" "$(grep mysqlredir "$BUF/session-T.md")" 'S3cretPw'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqlmulti","command":"mysqldump dbname\nssh -p2222 host"}}'
+has   "a plain newline is still a hard stop for the span" "$(grep mysqlmulti "$BUF/session-T.md")" 'ssh -p2222'
+# 2i1b. backtracking regression: 12+ file-descriptor redirects with NO -p must
+#      NOT cause regex failure (Oniguruma retry-limit-in-match). The span group
+#      is atomic (?> … ) so it is O(n) regardless of redirect count.
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysql12redirects","command":"mysql 2>&1 2>&1 2>&1 2>&1 2>&1 2>&1 2>&1 2>&1 2>&1 2>&1 2>&1 2>&1"}}'
+has   "12+ redirects without -p does not cause regex failure" "$(grep mysql12redirects "$BUF/session-T.md")" 'mysql 2>&1'
+# 2i1c. quoted -p<value> inside double quotes (the container-entrypoint shape
+#      mysql -uroot "-p$PW" db): the span group consumes the full quoted run
+#      including the -p. The pre-rule _mysql_pw_pre catches this shape.
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqlquotedvar","command":"mysql -uroot \"-pS3cret\" db"}}'
+hasnt "quoted -p<value> inside double-quotes is masked" "$(grep mysqlquotedvar "$BUF/session-T.md")" 'S3cret'
+has   "masked quoted -p value has sentinel" "$(grep mysqlquotedvar "$BUF/session-T.md")" '"-p***"'
+
+# 2i3. glued value tails. In a real shell `-p'abc'def` is ONE argument that
+#      concatenates a quoted part with a bare part, and a value alternation that
+#      matched the quoted part first left `-def` - part of the password - sitting
+#      in cleartext immediately after the mask. The value group is one compound
+#      run for exactly this reason.
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqltailsingle","command":"mysql -u root -p\u0027abc\u0027def dbname"}}'
+hasnt "bare tail glued after a quoted -p value is not stored" "$(grep mysqltailsingle "$BUF/session-T.md")" 'def dbname'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqltaildouble","command":"mysql -u root -p\"pa ss\"word dbname"}}'
+hasnt "bare tail glued after a double-quoted -p value is not stored" "$(grep mysqltaildouble "$BUF/session-T.md")" 'word dbname'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqltailsubst","command":"mysql -u root -p$(cat f)tail dbname"}}'
+hasnt "bare tail glued after a command substitution is not stored" "$(grep mysqltailsubst "$BUF/session-T.md")" 'tail dbname'
+
 # 2f. redaction applies to the Bash *description* field, not just command
 cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"deploy with ghp_abcdefghij1234567890","command":"true"}}'
 DESC_LINE=$(grep '\*\*bash\*\* deploy' "$BUF/session-T.md")
@@ -1072,6 +1225,13 @@ prompt '{"session_id":"P","prompt":"deploy with my key ghp_abcdefghij1234567890"
 PS=$(grep 'deploy with' "$BUF/session-P.md")
 hasnt "prompt: gh token not stored" "$PS" 'ghp_abcdefghij1234567890'
 has   "prompt: gh token masked"     "$PS" '***'
+# issue #81: the newly added vendor prefixes live in the SHARED _prefix_tokens
+# def, so they protect prompts too - and, being shape-distinctive, they do it
+# without the prose-corruption problem that made the keyword rules command-only.
+prompt '{"session_id":"P","prompt":"rotate the gitlab glpat-ABCDEFGHIJKLMNOPQRST before it expires"}'
+hasnt "prompt: glpat- not stored" "$(grep 'rotate the gitlab' "$BUF/session-P.md")" 'glpat-ABCDEFGHIJKLMNOPQRST'
+prompt '{"session_id":"P","prompt":"the stripe key sk_live_AbCdEfGh1234567890 leaked, rotate it"}'
+hasnt "prompt: sk_live_ key not stored" "$(grep 'the stripe key' "$BUF/session-P.md")" 'sk_live_AbCdEfGh1234567890'
 # Prose safety: ordinary English containing credential KEYWORDS but no
 # recognizable structural shape survives verbatim — the whole point of
 # redact_prompt. The command path's copula/bare-space rule would mangle all

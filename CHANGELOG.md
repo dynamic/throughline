@@ -5,6 +5,32 @@ All notable changes to throughline are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+- **Capture-buffer credential misses** (issue #81): two real captures in one
+  project's buffers got through the capture-time filter - a production MySQL
+  password attached to the bare `-p` flag, and a third-party API key whose
+  vendor prefix was not in the allowlist. `_lib.sh` now redacts `-p<password>`
+  when a known MySQL/MariaDB client name appears earlier on the same line and
+  no unquoted shell command separator (`|`, `;`, `&`) sits between them. The
+  client list is the whole family (`mysql`, `mysqldump`, `mysqladmin`,
+  `mysqlimport`, `mysqlcheck`, `mysqlshow`, `mysqlpump`, `mysqlbinlog`,
+  `mysqlslap`, `mysqlsh`, `mysql_upgrade`, and any `mariadb-*` client), the
+  span is quote-aware so an idiomatic `mysql -e "show databases;" -p<pw>` is
+  still caught, and the value is consumed whole through the shell shapes a
+  password can legitimately be wrapped in (quotes, `$(...)`, escaped spaces).
+  `ssh -p 2222`, `docker run -u 1000:1000` and the interactive `mysql -p <db>`
+  form are untouched. The known cost is over-redaction: a line that only
+  mentions a mysql path or name and then carries an unrelated attached `-p` gets
+  that `-p` masked too (`find /var/lib/mysql ... -print`, `docker run --name mysql
+  -p3306:3306 ...`); both are pinned by tests as a documented trade.
+- **Vendor token prefixes** (issue #81): `_prefix_tokens` gains `glpat-`,
+  `sk_live_`/`rk_test_`, `xapp-`, `npm_` and `SG.x.y`. Because they live in the
+  shared def they protect prompts as well as commands, and each is word-anchored
+  and length-floored so identifiers that merely end in a prefix (`MSG.etc`,
+  `xapp-config-generator`) are not masked. Remaining bare-flag gaps (e.g.
+  `curl -u user:pass`) are unchanged and still rely on the handoff skill's
+  re-scan.
+
 ## [0.16.0]
 
 ### Added
