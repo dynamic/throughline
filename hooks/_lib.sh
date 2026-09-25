@@ -462,8 +462,9 @@ tl_jq_redact_defs() {
   # generically.
   # The one exception closed by issue #81 is the MySQL/MariaDB family: `-p` is
   # still overloaded, but it IS unambiguous when a known client binary name
-  # appears earlier on the same line, so `_mysql_pw` below redacts exactly that
-  # anchored shape and nothing else. The one thing it does over-match is a line
+  # appears earlier on the same line, so `_mysql_pw` below redacts that
+  # anchored shape — with one documented false positive. The one thing it does
+  # over-match is a line
   # that merely mentions a client name and then carries an unrelated attached
   # `-p` (see the false-positive note on `_mysql_pw`); remaining bare-flag gaps
   # (notably `curl -u user:pass`) are still the handoff skill re-scan's job.
@@ -549,8 +550,8 @@ tl_jq_redact_defs() {
   # same \b is what stops a versioned name (mysql5.7) from anchoring.
   # A bare `-p` followed by whitespace is MySQL's "ask me for the password"
   # prompt, so the word after it is a database name and is deliberately NOT
-  # masked: every value alternative requires non-whitespace content touching
-  # The value group is ONE compound run, not an alternation of whole-value
+  # masked: every value alternative requires non-whitespace content touching `-p`.
+  # Value group is ONE compound run, not an alternation of whole-value
   # shapes: it consumes any mix of `'...'`, `"..."`, `$(...)`, a backtick run and
   # a backslash-escaped character, and may then finish with an unterminated
   # quote (rest of line). A run rather than an alternation matters, because the
@@ -580,8 +581,26 @@ tl_jq_redact_defs() {
   # it needs variable-length lookbehind, which jq's regex engine rejects outright
   # ("invalid pattern in look-behind", verified on jq 1.7.1). The handoff skill
   # re-scan backstops it.
+  # Deliberate gap, also stated: escaped quotes inside spans (e.g. `-e "select
+  # \"a;b\""` ) and case variants (MYSQL, MariaDB) are not covered by the
+  # client anchor (the \\b word boundary is case-sensitive). Not a leak in practice
+  # — MySQL client names are conventionally lowercase — but worth noting.
+  # Pre-rule: a quoted `-p<value>` inside double quotes is not reached by the
+  # span rule (the span consumes the full quoted run including the `-p`). This
+  # catches the container-entrypoint shape `mysql -uroot "-p$PW" db` where $PW
+  # is a literal, not a variable that the span would see. (Single-quoted
+  # `-p'val'` is already handled by the span's `'...'` alternative.)
+  def _mysql_pw_pre:
+    gsub("\"-p(\\S+)\""; "\"-p***\"");
+  # Main span rule — the span group is ATOMIC (?> … ) to prevent catastrophic
+  # backtracking when many `N>&M` redirects appear without a `-p` (issue #81
+  # review: Oniguruma retries every parse of each `>&` token and hits its retry
+  # limit with 12+ such tokens, causing jq to fail instead of returning the
+  # line. Atomic grouping commits each span step so the regex is O(n).)
   def _mysql_pw:
-    gsub("(?<pre>\\b(?:mysql(?:dump|admin|import|check|show|pump|binlog|slap|sh|_upgrade)?|mariadb(?:-[a-z]+)?)\\b(?:\\\\\r?\\n|[0-9]*>&[0-9]*|[^|;&\\r\\n'\"]|'[^']*'|\"[^\"]*\")*?\\s-p)(?<pw>(?=\\S)(?:\\$\\([^)]*\\)|`[^`]*`|'[^']*'|\"[^\"]*\"|\\\\[^\\r\\n]|[^\\s'\"\\\\])*(?:'[^\\r\\n]*|\"[^\\r\\n]*)?)"; "\(.pre)***");
+    gsub("(?<pre>\\b(?:mysql(?:dump|admin|import|check|show|pump|binlog|slap|sh|_upgrade)?|mariadb(?:-[a-z]+)?)\\b(?>\\\\\r?\\n|[0-9]*>&[0-9]*|[^|;&\\r\\n'\"]|'[^']*'|\"[^\"]*\")*?\\s-p)(?<pw>(?=\\S)(?:\\$\\([^)]*\\)|`[^`]*`|'[^']*'|\"[^\"]*\"|\\\\[^\\r\\n]|[^\\s'\"\\\\])*(?:'[^\\r\\n]*|\"[^\\r\\n]*)?)"; "\(.pre)***");
+  def _mysql_pw_all:
+    _mysql_pw_pre | _mysql_pw;
   def _unmask: gsub("\(M)"; "***");
   # Bearer/Basic scheme-value matchers, parameterized on the length floor
   # (issue #16): `_auth_scheme` and `_auth_scheme_prose` below used to spell
@@ -678,7 +697,7 @@ tl_jq_redact_defs() {
     | gsub("(?i)\\btoken\\s+(?<t>[A-Za-z0-9._\\-]+)"; "Token ***")
     | _url
     | _prefix_tokens
-    | _mysql_pw
+    | _mysql_pw_all
     | gsub("(?i)(?<k>\\w*(?:token|secret|password|passwd|api[_-]?key|access[_-]?key|credential|auth(?:orization)?|client[_-]?id)\\w*)(?<s>\\s*[:=]\\s*|\\s+(?:is|was|are)\\s+|\\s+)(?<v>\"[^\"]*\"|\(M)|\"[^\\r\\n]*|[^\\s\"]+)"; "\(.k)\(.s)***")
     | _unmask;
   # Prose-safe redaction for user prompts (issue #5), and for the WebSearch

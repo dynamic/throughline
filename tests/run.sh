@@ -409,12 +409,23 @@ has   "mynpm_ is not mistaken for an npm token" "$(grep mynpm "$BUF/session-T.md
 #      rule misses the whole shape) and a file-descriptor redirect. A newline with
 #      NO continuation stays a hard stop - that is the control which keeps the
 #      first two cases from being an accident of a match-anything span.
-cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqlcont","command":"mysqldump \\\\\n  -u root \\\\\n  -pS3cretPw dbname"}}'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqlcont","command":"mysqldump \\n  -u root \\n  -pS3cretPw dbname"}}'
 hasnt "line-continued mysqldump still reaches -p<password>" "$(grep mysqlcont "$BUF/session-T.md")" 'S3cretPw'
 cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqlredir","command":"mysql -h h 2>&1 -pS3cretPw db"}}'
 hasnt "a 2>&1 redirect between client and flag does not stop the span" "$(grep mysqlredir "$BUF/session-T.md")" 'S3cretPw'
 cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqlmulti","command":"mysqldump dbname\nssh -p2222 host"}}'
 has   "a plain newline is still a hard stop for the span" "$(grep mysqlmulti "$BUF/session-T.md")" 'ssh -p2222'
+# 2i1b. backtracking regression: 12+ file-descriptor redirects with NO -p must
+#      NOT cause regex failure (Oniguruma retry-limit-in-match). The span group
+#      is atomic (?> … ) so it is O(n) regardless of redirect count.
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysql12redirects","command":"mysql 2>&1 2>&1 2>&1 2>&1 2>&1 2>&1 2>&1 2>&1 2>&1 2>&1 2>&1 2>&1"}}'
+has   "12+ redirects without -p does not cause regex failure" "$(grep mysql12redirects "$BUF/session-T.md")" 'mysql 2>&1'
+# 2i1c. quoted -p<value> inside double quotes (the container-entrypoint shape
+#      mysql -uroot "-p$PW" db): the span group consumes the full quoted run
+#      including the -p. The pre-rule _mysql_pw_pre catches this shape.
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqlquotedvar","command":"mysql -uroot \"-pS3cret\" db"}}'
+hasnt "quoted -p<value> inside double-quotes is masked" "$(grep mysqlquotedvar "$BUF/session-T.md")" 'S3cret'
+has   "masked quoted -p value has sentinel" "$(grep mysqlquotedvar "$BUF/session-T.md")" '"-p***"'
 
 # 2i3. glued value tails. In a real shell `-p'abc'def` is ONE argument that
 #      concatenates a quoted part with a bare part, and a value alternation that
@@ -1217,8 +1228,8 @@ has   "prompt: gh token masked"     "$PS" '***'
 # issue #81: the newly added vendor prefixes live in the SHARED _prefix_tokens
 # def, so they protect prompts too - and, being shape-distinctive, they do it
 # without the prose-corruption problem that made the keyword rules command-only.
-prompt '{"session_id":"P","prompt":"rotate the gitlab token glpat-ABCDEFGHIJKLMNOPQRST before it expires"}'
-hasnt "prompt: glpat- token not stored" "$(grep 'rotate the gitlab' "$BUF/session-P.md")" 'glpat-ABCDEFGHIJKLMNOPQRST'
+prompt '{"session_id":"P","prompt":"rotate the gitlab glpat-ABCDEFGHIJKLMNOPQRST before it expires"}'
+hasnt "prompt: glpat- not stored" "$(grep 'rotate the gitlab' "$BUF/session-P.md")" 'glpat-ABCDEFGHIJKLMNOPQRST'
 prompt '{"session_id":"P","prompt":"the stripe key sk_live_AbCdEfGh1234567890 leaked, rotate it"}'
 hasnt "prompt: sk_live_ key not stored" "$(grep 'the stripe key' "$BUF/session-P.md")" 'sk_live_AbCdEfGh1234567890'
 # Prose safety: ordinary English containing credential KEYWORDS but no
