@@ -12,14 +12,33 @@ All notable changes to throughline are documented here. Format loosely follows
   from every `*.md` including `MEMORY.md` - the four
   existing scans all look at files and the index, so a pass that split an
   oversized file and deleted the original left inbound `[[original-name]]` links
-  dangling with every scan reporting clean. Added as a post-operation check after
-  any split, rename, merge or delete, plus a Phase 4 step that repoints dead
-  links to the file that now carries the content, written as that file's
-  `name:` - to the canonical file on a merge, to the half that holds the content
-  on a split, or listed for the operator when that is ambiguous. Also: resolve a
-  symlinked edit target with `readlink -f` before editing, since the Edit tool
-  refuses to write through a symbolic link and memory files are routinely
-  symlinked into shared config repos.
+  dangling with every scan reporting clean. Added as a post-operation re-scan
+  after any split, rename, merge or delete performed in the same pass (one done
+  by an earlier session is caught by the ordinary Phase 2 scan instead), plus a
+  Phase 4 step that repoints dead links to the file that now carries the content,
+  written as that file's `name:` - to the canonical file on a merge, to the half
+  that holds the content on a split, or listed for the operator when that is
+  ambiguous. A repoint only ever applies a target the operator approved; a link
+  whose approved row names no target is listed, not guessed. Carries the
+  `#anchor` across and flags carried anchors for review.
+- **`consolidate-memory` scan edge cases** (issue #82): alias and anchor forms
+  resolve to their target (`[[slug|display]]`, `[[slug#heading]]`), a table-
+  escaped pipe and a trailing backslash are stripped and preserved on rewrite,
+  same-file `[[#Heading]]` anchors and links inside fenced or inline code are
+  skipped, fences close by the CommonMark length rule, targets match only
+  against the inventoried basenames and `name:` values (never a path built from
+  a target, never a filesystem test, so a case-insensitive volume cannot hide a
+  broken link), a target file with no usable `name:` is reported as missing
+  `name:` rather than repointed, a quoted `name:` scalar is unquoted when
+  collected, and duplicated `name:` values are reported as ambiguous.
+- **`consolidate-memory` safety guidelines** (issue #82): resolve a symlinked
+  edit target with `readlink -f` before editing, since the agent harness's Edit
+  tool may refuse to write through a symbolic link and memory files are routinely
+  symlinked into shared config repos; before a delete, check whether the file or
+  the memory *directory* is the symlink, because in the latter case every file in
+  it is the shared original; and treat link targets as data - compared in
+  process, passed after `--` to tools, never interpolated as shell syntax and
+  never used to build a path.
 
 ## [0.16.0]
 
