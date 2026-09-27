@@ -12,11 +12,13 @@ All notable changes to throughline are documented here. Format loosely follows
   existing scans all look at files and the index, so a pass that split an
   oversized file and deleted the original left inbound `[[original-name]]` links
   dangling with every scan reporting clean. Added as a post-operation check after
-  any split, rename, merge or delete, plus a Phase 4 step that repoints inbound
-  links to whichever half now carries the content (or lists them for the
-  operator when that is ambiguous). Also: resolve a symlinked edit target with
-  `readlink -f` before editing, since the Edit tool refuses to write through a
-  symbolic link and promotion targets are routinely symlinked config files.
+  any split, rename, merge or delete, plus a Phase 4 step that repoints dead
+  links to the file that now carries the content, written as that file's
+  `name:` - to the canonical file on a merge, to the half that holds the content
+  on a split, or listed for the operator when that is ambiguous. Also: resolve a
+  symlinked edit target with `readlink -f` before editing, since the Edit tool
+  refuses to write through a symbolic link and memory files are routinely
+  symlinked into shared config repos.
 
 ## [0.16.0]
 

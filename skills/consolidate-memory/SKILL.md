@@ -18,7 +18,7 @@ Handles memory file hygiene for project memories, scanning for duplicates, stale
 2. **Stale entries**: Files with `originSessionId` older than 90 days without updates → Flag for review/update
 3. **Unindexed orphans**: `.md` files present but not linked in MEMORY.md → Add to index or mark obsolete
 4. **Index orphans**: MEMORY.md links to non-existent files → Remove from index
-5. **Dangling wikilinks**: a `[[target]]` in any memory file whose `target` matches the frontmatter `name:` of no file in the memory directory → Repoint to the file that now holds that content, or list it for the operator. Splitting and deleting are this skill's own primary operations, so a pass that fixes the index can silently kill every inbound link to a file it just removed - and none of the four other scans notices.
+5. **Dangling wikilinks**: a `[[target]]` in any memory file whose `target` matches the frontmatter `name:` of no file in the memory directory → Repoint to the file that now holds that content, or list it for the operator. Removing files is this skill's own work - a merge deletes the duplicate, and a topic file may be split or renamed - so a pass that fixes the index can silently kill every inbound link to the file it just removed, and none of the four other scans notices.
 
 ## Phase 1: Determine Scope
 
@@ -35,9 +35,9 @@ Scan for the five problem types listed above:
 - Extract `originSessionId` from frontmatter and compare against staleness threshold (90 days default) - older files with no recent `updatedAt` are stale
 - Cross-reference actual files against indexed entries in MEMORY.md
 - Identify any dead links in the index
-- Extract every `[[...]]` wikilink across all `*.md` in the memory directory, `MEMORY.md` included, and flag any target absent from the Phase 1 name set. Three parsing details decide whether this scan is right or merely confident:
+- Extract every `[[...]]` wikilink across all `*.md` in the memory directory, `MEMORY.md` included, and flag any target absent from the Phase 1 name set. These parsing details decide whether the scan is right or merely confident:
   - Take the target as the text **before** any `|` - `[[split-half-b|the other half]]` links to `split-half-b`, and matching the whole string would report a link that resolves fine as dangling
-  - Skip matches inside fenced or inline code blocks: a memory file documenting the wikilink syntax contains `[[target]]` as an example, not as a link. Do the fence toggle **first** and strip inline code spans only from the lines left outside a fence - the other order corrupts the fence markers themselves (a ` ``` ` line contains backticks too), so fence detection is unreliable once inline-code stripping has run - in a scratch walk-through of both orders, strip-first reported the example link inside a fenced block as a real dangling link, while strip-last reported neither
+  - Skip matches inside fenced or inline code blocks: a memory file documenting the wikilink syntax contains `[[target]]` as an example, not as a link. Do the fence toggle **first** and strip inline code spans only from the lines left outside a fence - the other order corrupts the fence markers themselves (a ` ``` ` line contains backticks too), so fence detection is unreliable once inline-code stripping has run and example links inside a fence start being reported as real dead links
   - A target that matches a *filename* but no `name:` is still dangling. The frontmatter `name:` is authoritative; filename-matching is the approximation that lets a broken link look healthy. Matching is exact and case-sensitive
   - A target whose file exists but has no `name:` in its frontmatter at all is reported as "missing `name:`", not as a link to repoint: the fix there is to give the file a name, and repointing every inbound link would be the wrong action
 
@@ -50,7 +50,7 @@ Present candidates in a markdown table format:
 | project_x.md | Duplicate | 92% similar to project_y.md | Merge into project_y.md | High |
 | project_old.md | Stale | Created 180 days ago | Review and update or delete | Medium |
 | orphan.md | Unindexed | Not in MEMORY.md | Add to index | High |
-| sibling.md | Dangling wikilink | `[[original-name]]` has no matching `name:` | Repoint to split-half-b.md | High |
+| sibling.md | Dangling wikilink | `[[original-name]]` has no matching `name:` | Repoint to `[[split-half-b]]` (the `name:` of split-half-b.md) | High |
 
 For duplicates, show content comparison and suggest a canonical file to merge into.
 
@@ -64,7 +64,7 @@ After human approval:
 2. For stale entries: Present for manual update (or flag in MEMORY.md)
 3. For unindexed orphans: Add to MEMORY.md index with appropriate description
 4. For index orphans: Remove dead links from MEMORY.md
-5. For dangling wikilinks: on a split, rewrite each inbound `[[old-name]]` to whichever new file now carries that content. If the content's new home is genuinely ambiguous, do not guess - list the links for the operator to resolve and leave them in place with the rest of the report
+5. For dangling wikilinks: rewrite each dead link to the file that now carries the content, and put that file's **`name:` value** between the brackets - `[[split-half-b]]`, never `[[split-half-b.md]]`, because a filename inside a link is the exact failure this scan reports. On a merge, rewrite `[[deleted-name]]` to the canonical file's `name:` as part of the same approved merge. On a split, repoint to whichever half now carries the content; if that is genuinely ambiguous, do not guess - list the links for the operator to resolve and leave them in place with the rest of the report. For a link that was already dangling before any operation ran, apply the target the operator approved in Phase 3 - an approval for an unprefixed "repoint" is not an approval to pick a target yourself
 6. Re-run the dangling-wikilink scan after any split, rename, merge, or delete - as a post-operation check against the directory's final state, not just as a standalone scan. Rebuild the name set first: a set collected before the delete still contains the name that no longer exists, which is precisely the link this check exists to catch. Report the result (zero findings, or the surviving list) before recording the pass below. The index can look perfectly clean while every inbound link to the file you just deleted is dead; this re-scan is the only thing that catches it. It is read-only: if it still reports findings, report them for another decision rather than editing again unseen - this is a second approval gate, not a self-healing loop
 7. Record pass in `DATA/HANDOFF.md` under "Consolidation passes"
 
@@ -74,7 +74,7 @@ After human approval:
 - Never auto-merge without human gate
 - Always preserve original files until merge is approved
 - Maintain backward compatibility of file format and frontmatter structure
-- Resolve symlinks before editing: if an edit target is a symlink, resolve it (`readlink -f` / `realpath`) and edit the real path. The Edit tool refuses to write through a symbolic link, and promotion targets are routinely symlinked config files - resolving first turns a hard refusal mid-apply into an ordinary edit
+- Resolve symlinks before editing: if an edit target is a symlink, resolve it (`readlink -f` / `realpath`) and edit the real path. Memory files, and sometimes the memory directory itself, are symlinked into a shared config repo, and the agent harness's Edit tool refuses to write through a symbolic link - the run that reported issue 82 hit "Refusing to write ... it is a symbolic link" on exactly such a target. Editing the resolved path is the same file, seen by its real name; it does change the shared original, so the human approval gate above still governs
 - Link targets are data, never code: when scripting the wikilink scan, quote every variable and never interpolate a link target into a shell command. Memory file content is arbitrary text a previous session wrote
 
 ## Configuration
