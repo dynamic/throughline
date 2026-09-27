@@ -8,7 +8,8 @@ All notable changes to throughline are documented here. Format loosely follows
 ### Added
 - **`consolidate-memory` fifth scan: dangling wikilinks** (issue #82): a
   `[[target]]` in any memory file is now resolved against the set of frontmatter
-  `name:` values in the memory directory, `MEMORY.md` included - the four
+  `name:` values in the memory directory, with the links themselves collected
+  from every `*.md` including `MEMORY.md` - the four
   existing scans all look at files and the index, so a pass that split an
   oversized file and deleted the original left inbound `[[original-name]]` links
   dangling with every scan reporting clean. Added as a post-operation check after
