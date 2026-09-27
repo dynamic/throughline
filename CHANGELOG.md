@@ -5,6 +5,19 @@ All notable changes to throughline are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Added
+- **`consolidate-memory` fifth scan: dangling wikilinks** (issue #82): a
+  `[[target]]` in any memory file is now resolved against the set of frontmatter
+  `name:` values in the memory directory, `MEMORY.md` included - the four
+  existing scans all look at files and the index, so a pass that split an
+  oversized file and deleted the original left inbound `[[original-name]]` links
+  dangling with every scan reporting clean. Added as a post-operation check after
+  any split, rename, merge or delete, plus a Phase 4 step that repoints inbound
+  links to whichever half now carries the content (or lists them for the
+  operator when that is ambiguous). Also: resolve a symlinked edit target with
+  `readlink -f` before editing, since the Edit tool refuses to write through a
+  symbolic link and promotion targets are routinely symlinked config files.
+
 ## [0.16.0]
 
 ### Added
