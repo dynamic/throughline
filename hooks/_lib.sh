@@ -533,12 +533,15 @@ tl_jq_redact_defs() {
   # so `mysql -e "show databases;" -pS3cret` (an idiomatic trailing semicolon in
   # the SQL, not a command separator) is still redacted, and because the span
   # can only stop OUTSIDE a quoted run, the first `-p` it can reach is the real
-  # option and not some `-pfoo` sitting inside the SQL string. Two things that
+  # option and not some `-pfoo` sitting inside the SQL string. Three things that
   # look like separators but are not, and are crossed: a backslash-newline
   # continuation (a `mysqldump \` / `-u root \` / `-p<pw>` chain is ONE command,
-  # and capture sees the newlines before `clean` turns them into spaces), and a
+  # and capture sees the newlines before `clean` turns them into spaces), a
   # file-descriptor redirect such as `2>&1` sitting between the client name and
-  # the flag. An ordinary newline is still a hard stop, so a `-p` on the next
+  # the flag, and bash's combined `&>`/`&>>` redirect (`mysqldump db &>>log
+  # -p<pw>`) - the last one is why the span allows a `&` only when a `>` follows
+  # it, so a backgrounded command and `&&` stay hard stops. An ordinary newline
+  # is still a hard stop, so a `-p` on the next
   # line of a multi-line captured command is not swallowed by an anchor above it.
   # Client coverage is the whole family, not just the two names the first report
   # happened to contain: every MySQL/MariaDB client that takes `-p<password>` is
@@ -591,7 +594,7 @@ tl_jq_redact_defs() {
   # away from being honoured by one rule and not the other. $tail is the regex
   # text that follows the span, and closing the `pre` group is $tail's job.
   def _mysql_anchor($tail):
-    "(?<pre>\\b(?:mysql(?:dump|admin|import|check|show|pump|binlog|slap|sh|_upgrade)?|mariadb(?:-[a-z]+)?)\\b(?>\\\\\r?\\n|[0-9]*>&[0-9]*|[^|;&\\r\\n'\"]|'[^']*'|\"[^\"]*\")*?" + $tail;
+    "(?<pre>\\b(?:mysql(?:dump|admin|import|check|show|pump|binlog|slap|sh|_upgrade)?|mariadb(?:-[a-z]+)?)\\b(?>\\\\\r?\\n|(?<!&)&>>?|[0-9]*>&[0-9]*|[^|;&\\r\\n'\"]|'[^']*'|\"[^\"]*\")*?" + $tail;
   # Pre-rule: a WHOLE-ARGUMENT quoted `-p<value>` - the container-entrypoint
   # shape `mysql -uroot "-pS3cret" db`. The span rule cannot reach inside it: the
   # span consumes `'...'`/`"..."` whole, so a quoted run that contains the -p is

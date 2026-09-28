@@ -22,7 +22,11 @@ All notable changes to throughline are documented here. Format loosely follows
   (`mysql -uroot "-p<pw>" db`, in either quote style and with spaces in the
   value), which that span cannot step into. That quoted-argument rule is
   anchored to the same client name as the span, so `grep "-pattern" f` and
-  `rsync "-pavz" src dst` are left alone.
+  `rsync "-pavz" src dst` are left alone. The span crosses the things that look
+  like command separators but are not - a backslash-newline continuation, a
+  `2>&1` file-descriptor redirect and bash's `&>`/`&>>` redirect - and stops at
+  the ones that are: a bare `&`, `&&`, `|`, `;` and a newline that does not
+  continue the line.
   `ssh -p 2222`, `docker run -u 1000:1000` and the interactive `mysql -p <db>`
   form are untouched. The known cost is over-redaction: a line that only
   mentions a mysql path or name and then carries an unrelated attached `-p` gets

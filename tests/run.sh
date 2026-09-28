@@ -403,16 +403,36 @@ has   "fooxapp- is not mistaken for a Slack token" "$(grep fooxapp "$BUF/session
 cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mynpm","command":"echo mynpm_AbCdEfGh1234567890AbCdEfGh123456"}}'
 has   "mynpm_ is not mistaken for an npm token" "$(grep mynpm "$BUF/session-T.md")" 'mynpm_AbCdEfGh1234567890AbCdEfGh123456'
 
-# 2i2. the span must cross the two things that LOOK like separators but are not:
-#      a backslash-newline continuation (that chain is ONE command, and capture
+# 2i2. the span must cross the things that LOOK like separators but are not: a
+#      backslash-newline continuation (that chain is ONE command, and capture
 #      sees its newlines before clean turns them into spaces, so a same-line-only
-#      rule misses the whole shape) and a file-descriptor redirect. A newline with
-#      NO continuation stays a hard stop - that is the control which keeps the
-#      first two cases from being an accident of a match-anything span.
-cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqlcont","command":"mysqldump \\n  -u root \\n  -pS3cretPw dbname"}}'
+#      rule misses the whole shape), a file-descriptor redirect, and bash's `&>`
+#      combined redirect. In the first cap below the JSON escape sequence is two
+#      backslashes followed by n-backslash-n: the doubled backslash decodes to ONE
+#      literal backslash and the following escape decodes to a newline, so jq
+#      hands the hook a real shell line continuation. The earlier cut of this
+#      fixture had a doubled-backslash-n only, which is a backslash followed by
+#      the LETTER n - one ordinary line, which the span reaches without its
+#      continuation alternative, so that case passed with the alternative deleted
+#      and proved nothing (issue #81 review round 6). A
+#      newline with NO continuation stays a hard stop - that is the control which
+#      keeps the positive cases from being an accident of a match-anything span.
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqlcont","command":"mysqldump \\\n  -u root \\\n  -pS3cretPw dbname"}}'
 hasnt "line-continued mysqldump still reaches -p<password>" "$(grep mysqlcont "$BUF/session-T.md")" 'S3cretPw'
 cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqlredir","command":"mysql -h h 2>&1 -pS3cretPw db"}}'
 hasnt "a 2>&1 redirect between client and flag does not stop the span" "$(grep mysqlredir "$BUF/session-T.md")" 'S3cretPw'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqlampgt","command":"mysqladmin ping &>/dev/null -pS3cretPw"}}'
+hasnt "a &> combined redirect does not stop the span" "$(grep mysqlampgt "$BUF/session-T.md")" 'S3cretPw'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqlampgtgt","command":"mysqldump db &>>/tmp/out.log -pS3cretPw"}}'
+hasnt "a &>> append redirect does not stop the span" "$(grep mysqlampgtgt "$BUF/session-T.md")" 'S3cretPw'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqlampgtq","command":"mysql &>/dev/null \"-pS3cret\" db"}}'
+hasnt "the quoted rule crosses &> the same way the span does" "$(grep mysqlampgtq "$BUF/session-T.md")" 'S3cret'
+# negative controls for the new redirect alternative: a bare `&` (background) and
+# `&&` ARE separators, so the &> alternative must not swallow what follows them.
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqlbareamp","command":"mysqldump db & ssh -p2222 host"}}'
+has   "a backgrounded & still stops the span" "$(grep mysqlbareamp "$BUF/session-T.md")" 'ssh -p2222'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqlampampq","command":"mysql -uroot && rsync \"-pavz\" src dst"}}'
+has   "a quoted -pavz after && is NOT masked" "$(grep mysqlampampq "$BUF/session-T.md")" 'rsync "-pavz" src dst'
 cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqlmulti","command":"mysqldump dbname\nssh -p2222 host"}}'
 has   "a plain newline is still a hard stop for the span" "$(grep mysqlmulti "$BUF/session-T.md")" 'ssh -p2222'
 # 2i1b. backtracking regression: 12+ file-descriptor redirects with NO -p must
