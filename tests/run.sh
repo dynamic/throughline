@@ -433,6 +433,26 @@ cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqlbare
 has   "a backgrounded & still stops the span" "$(grep mysqlbareamp "$BUF/session-T.md")" 'ssh -p2222'
 cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqlampampq","command":"mysql -uroot && rsync \"-pavz\" src dst"}}'
 has   "a quoted -pavz after && is NOT masked" "$(grep mysqlampampq "$BUF/session-T.md")" 'rsync "-pavz" src dst'
+# 2i2b. escaped quotes inside the span (issue #81 review round 7). `-e "select
+#      \"it's\"" -p<pw>` is a normal way to put an apostrophe in SQL: the quoted
+#      run used to end at the escaped quote, the stray apostrophe then read as
+#      opening a run that never closed, and the password went through in
+#      cleartext. The negative control keeps this from being fixed by a span that
+#      simply walks through any quote: the same escaped-quote payload on a line
+#      with no client name stays exactly as typed.
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqlescaq","command":"mysql -uroot -e \"select \\\"it\u0027s\\\"" -pS3cretPw db"}}'
+hasnt "an escaped quote inside -e does not stop the span" "$(grep mysqlescaq "$BUF/session-T.md")" 'S3cretPw'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqlescaq2","command":"mysql -e \"a\\\"b\" -pS3cretPw db"}}'
+hasnt "an escaped double quote inside -e does not stop the span" "$(grep mysqlescaq2 "$BUF/session-T.md")" 'S3cretPw'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqlrecesq","command":"mysql --init-command=don\\\u0027t -pS3cretPw db"}}'
+hasnt "an escaped single quote outside a quoted run does not stop the span" "$(grep mysqlrecesq "$BUF/session-T.md")" 'S3cretPw'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"grepescaq","command":"grep -e \"a\\\"b\" file.txt"}}'
+has   "the same escaped-quote payload with no client name is NOT masked" "$(grep grepescaq "$BUF/session-T.md")" 'grep -e "a\"b" file.txt'
+# the escaped-separator side of the same branch: `\;` is a literal argument in a
+# shell, not a boundary, so the span crosses it - an over-match on the safe side,
+# pinned rather than left to be rediscovered.
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqlescsep","command":"mysql -e \"x\" \\; ssh -p2222 host"}}'
+has   "an escaped \; is a literal argument, so the span crosses it" "$(grep mysqlescsep "$BUF/session-T.md")" '-p***'
 cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqlmulti","command":"mysqldump dbname\nssh -p2222 host"}}'
 has   "a plain newline is still a hard stop for the span" "$(grep mysqlmulti "$BUF/session-T.md")" 'ssh -p2222'
 # 2i1b. backtracking regression: 12+ file-descriptor redirects with NO -p must

@@ -463,8 +463,8 @@ tl_jq_redact_defs() {
   # The one exception closed by issue #81 is the MySQL/MariaDB family: `-p` is
   # still overloaded, but it IS unambiguous when a known client binary name
   # appears earlier on the same line, so `_mysql_pw` below redacts that
-  # anchored shape — with one documented false positive. The one thing it does
-  # over-match is a line
+  # anchored shape - with documented false positives, all pinned by tests. The
+  # only thing it over-matches is a line
   # that merely mentions a client name and then carries an unrelated attached
   # `-p` (see the false-positive note on `_mysql_pw`); remaining bare-flag gaps
   # (notably `curl -u user:pass`) are still the handoff skill re-scan's job.
@@ -538,9 +538,12 @@ tl_jq_redact_defs() {
   # continuation (a `mysqldump \` / `-u root \` / `-p<pw>` chain is ONE command,
   # and capture sees the newlines before `clean` turns them into spaces), a
   # file-descriptor redirect such as `2>&1` sitting between the client name and
-  # the flag, and bash's combined `&>`/`&>>` redirect (`mysqldump db &>>log
+  # the flag, bash's combined `&>`/`&>>` redirect (`mysqldump db &>>log
   # -p<pw>`) - the last one is why the span allows a `&` only when a `>` follows
-  # it, so a backgrounded command and `&&` stay hard stops. An ordinary newline
+  # it, so a backgrounded command and `&&` stay hard stops - and a
+  # backslash-escaped character, which is how an escaped quote inside `-e "..."`
+  # gets through (a quoted run may contain `\"`, and an escaped separator such as
+  # `\;` is a literal argument rather than a boundary). An ordinary newline
   # is still a hard stop, so a `-p` on the next
   # line of a multi-line captured command is not swallowed by an anchor above it.
   # Client coverage is the whole family, not just the two names the first report
@@ -583,10 +586,14 @@ tl_jq_redact_defs() {
   # it needs variable-length lookbehind, which jq's regex engine rejects outright
   # ("invalid pattern in look-behind", verified on jq 1.7.1). The handoff skill
   # re-scan backstops it.
-  # Deliberate gap, also stated: escaped quotes inside spans (e.g. `-e "select
-  # \"a;b\""` ) and case variants (MYSQL, MariaDB) are not covered by the
-  # client anchor (the \\b word boundary is case-sensitive). Not a leak in practice
-  # — MySQL client names are conventionally lowercase — but worth noting.
+  # Deliberate gap, also stated: case variants (MYSQL, MariaDB) are not covered
+  # by the client anchor - the leading \b word boundary is case-sensitive. Not a
+  # leak in practice, since MySQL client names are conventionally lowercase.
+  # Escaped quotes inside a span ARE covered (issue #81 review round 7): the span
+  # has a backslash-escape step and a double-quoted run may contain \" and \'.
+  # Without them `-e "select \"it's\"" -p<pw>` leaked, because the quoted run
+  # ended at the escaped quote and the stray apostrophe could then only be read
+  # as opening a run that never closes.
   # Shared regex PREFIX for both MySQL-family rules: the client-name anchor plus
   # the client-to-flag span, stopping just before the flag itself. Built as a
   # string def so the two rules cannot drift apart - the same reason
@@ -594,7 +601,7 @@ tl_jq_redact_defs() {
   # away from being honoured by one rule and not the other. $tail is the regex
   # text that follows the span, and closing the `pre` group is $tail's job.
   def _mysql_anchor($tail):
-    "(?<pre>\\b(?:mysql(?:dump|admin|import|check|show|pump|binlog|slap|sh|_upgrade)?|mariadb(?:-[a-z]+)?)\\b(?>\\\\\r?\\n|(?<!&)&>>?|[0-9]*>&[0-9]*|[^|;&\\r\\n'\"]|'[^']*'|\"[^\"]*\")*?" + $tail;
+    "(?<pre>\\b(?:mysql(?:dump|admin|import|check|show|pump|binlog|slap|sh|_upgrade)?|mariadb(?:-[a-z]+)?)\\b(?>\\\\\r?\\n|(?<!&)&>>?|[0-9]*>&[0-9]*|\\\\.|[^|;&\\r\\n'\"]|'[^']*'|\"(?:[^\"\\\\]|\\\\.)*\")*?" + $tail;
   # Pre-rule: a WHOLE-ARGUMENT quoted `-p<value>` - the container-entrypoint
   # shape `mysql -uroot "-pS3cret" db`. The span rule cannot reach inside it: the
   # span consumes `'...'`/`"..."` whole, so a quoted run that contains the -p is
