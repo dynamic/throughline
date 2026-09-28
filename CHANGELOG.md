@@ -26,7 +26,14 @@ All notable changes to throughline are documented here. Format loosely follows
   like command separators but are not - a backslash-newline continuation, a
   `2>&1` file-descriptor redirect and bash's `&>`/`&>>` redirect - and stops at
   the ones that are: a bare `&`, `&&`, `|`, `;` and a newline that does not
-  continue the line.
+  continue the line - including a continuation line that starts at column 0, so
+  there is no whitespace left between the joined backslash-newline and the flag.
+  An escaped quote is stepped over wherever a real shell would step over it: inside
+  `-e "..."` (`mysql -uroot -e "select \"it's\"" -p<pw>`) and inside a quoted
+  `-p` value (`"-pSE\"CRET"`). One shape stays a known miss: a double-quoted `-p`
+  value holding an *unescaped* inner quote (`"-p$(echo "S3cret")"`) masks only up
+  to that inner quote, because letting the value span a nested `"..."` run instead
+  swallows unrelated quoted text from ordinary commands.
   `ssh -p 2222`, `docker run -u 1000:1000` and the interactive `mysql -p <db>`
   form are untouched. The known cost is over-redaction: a line that only
   mentions a mysql path or name and then carries an unrelated attached `-p` gets
