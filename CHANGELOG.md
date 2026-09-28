@@ -29,8 +29,13 @@ All notable changes to throughline are documented here. Format loosely follows
   continue the line - including a continuation line that starts at column 0, so
   there is no whitespace left between the joined backslash-newline and the flag.
   An escaped quote is stepped over wherever a real shell would step over it: inside
-  `-e "..."` (`mysql -uroot -e "select \"it's\"" -p<pw>`) and inside a quoted
-  `-p` value (`"-pSE\"CRET"`). One shape stays a known miss: a double-quoted `-p`
+  `-e "..."` (`mysql -uroot -e "select \"it's\"" -p<pw>`), inside a quoted `-p`
+  value (`"-pSE\"CRET"`), and on both sides of a whole-argument quoted `-p` that
+  sits inside an outer double-quoted command (`ssh prod "mysqldump -uroot
+  \"-p<pw>\" app"`, `docker exec db sh -c "mysql -uroot \"-p<pw>\" app"`). A value
+  glued on after a closing quote is consumed as part of the same argument
+  (`"-p"S3cretPw`, `"-pS3c"retPw`), so the mask never leaves a bare tail looking
+  like a redacted line. One shape stays a known miss: a double-quoted `-p`
   value holding an *unescaped* inner quote (`"-p$(echo "S3cret")"`) masks only up
   to that inner quote, because letting the value span a nested `"..."` run instead
   swallows unrelated quoted text from ordinary commands.
