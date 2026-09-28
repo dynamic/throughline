@@ -427,6 +427,39 @@ cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqlquot
 hasnt "quoted -p<value> inside double-quotes is masked" "$(grep mysqlquotedvar "$BUF/session-T.md")" 'S3cret'
 has   "masked quoted -p value has sentinel" "$(grep mysqlquotedvar "$BUF/session-T.md")" '"-p***"'
 
+# 2i1c2. the OTHER whole-argument quoted shapes (issue #81 review round 5). A
+#      quoted run that OPENS before the -p is a different case from `-p'val'`
+#      (2i3), and the span rule cannot enter it for the same reason it cannot
+#      enter the double-quoted one above. `'-p<value>'` was the repro round 3
+#      gave and round 4 still missed; a double-quoted value containing a space
+#      was missed by the first cut of the pre rule, whose value group could not
+#      cross the space. Each positive case below is paired with a control that
+#      keeps the SAME quoted argument unmasked, so the fix cannot be restored by
+#      a rule that simply masks every "-p..." it sees.
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqlqspace","command":"mysql -uroot \"-pS3cret word\" db"}}'
+QSPACE=$(grep mysqlqspace "$BUF/session-T.md")
+hasnt "double-quoted -p value with a space: whole value not stored" "$QSPACE" 'S3cret word'
+has   "double-quoted -p value with a space is masked whole" "$QSPACE" '"-p***"'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqlqsingle","command":"mysql -h db \u0027-pS3cret\u0027 db"}}'
+QSQ=$(grep mysqlqsingle "$BUF/session-T.md")
+hasnt "single-quoted whole-argument -p<value> is not stored" "$QSQ" 'S3cret'
+has   "single-quoted whole-argument -p<value> is masked whole" "$QSQ" "'-p***'"
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqlqaftersemi","command":"mysql -e \u0027show databases;\u0027 \u0027-pS3cret\u0027"}}'
+hasnt "single-quoted -p after a quoted -e is still reached" "$(grep mysqlqaftersemi "$BUF/session-T.md")" 'S3cret'
+# negative controls: the pre rule is ANCHORED like the span rule, so a quoted
+# -p on a line with no client name, or one across a command separator from the
+# client name, is ordinary text and stays exactly as typed.
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"grepqflag","command":"grep \"-pattern\" file.txt"}}'
+has   "grep \"-pattern\" is NOT masked (no client name to anchor on)" "$(grep grepqflag "$BUF/session-T.md")" 'grep "-pattern" file.txt'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"rsyncqflag","command":"rsync \u0027-pavz\u0027 src dst"}}'
+has   "rsync single-quoted -pavz is NOT masked" "$(grep rsyncqflag "$BUF/session-T.md")" "rsync '-pavz' src dst"
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"echoqflag","command":"echo \"-pfoo\""}}'
+has   "echo \"-pfoo\" is NOT masked" "$(grep echoqflag "$BUF/session-T.md")" 'echo "-pfoo"'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"pipeqflag","command":"mysql --version | grep \"-pattern\" f"}}'
+has   "quoted -pattern across a pipe from a client name is NOT masked" "$(grep pipeqflag "$BUF/session-T.md")" 'grep "-pattern" f'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"notclientq","command":"notmysql \"-pZ9\" db"}}'
+has   "a non-client binary name does not anchor the quoted rule either" "$(grep notclientq "$BUF/session-T.md")" 'notmysql "-pZ9" db'
+
 # 2i3. glued value tails. In a real shell `-p'abc'def` is ONE argument that
 #      concatenates a quoted part with a bare part, and a value alternation that
 #      matched the quoted part first left `-def` - part of the password - sitting

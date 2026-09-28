@@ -573,8 +573,7 @@ tl_jq_redact_defs() {
   # script you re-run), and the alternatives that would avoid it are worse:
   # anchoring on command position needs a real shell parse, and exempting
   # port-shaped values (`\d+:\d+`) would leak a password that happens to look
-  # like a port mapping. This is the one behavior the earlier "exactly that shape
-  # and nothing else" claim got wrong.
+  # like a port mapping.
   # Known miss, stated rather than left to be rediscovered: only the FIRST
   # reachable -p<password> of a client-anchored segment is masked, so a second
   # one in the same segment leaks; the single all-occurrences rule that would fix
@@ -585,20 +584,47 @@ tl_jq_redact_defs() {
   # \"a;b\""` ) and case variants (MYSQL, MariaDB) are not covered by the
   # client anchor (the \\b word boundary is case-sensitive). Not a leak in practice
   # — MySQL client names are conventionally lowercase — but worth noting.
-  # Pre-rule: a quoted `-p<value>` inside double quotes is not reached by the
-  # span rule (the span consumes the full quoted run including the `-p`). This
-  # catches the container-entrypoint shape `mysql -uroot "-p$PW" db` where $PW
-  # is a literal, not a variable that the span would see. (Single-quoted
-  # `-p'val'` is already handled by the span's `'...'` alternative.)
+  # Shared regex PREFIX for both MySQL-family rules: the client-name anchor plus
+  # the client-to-flag span, stopping just before the flag itself. Built as a
+  # string def so the two rules cannot drift apart - the same reason
+  # `_bearer_scheme` is parameterised: a hand-duplicated span is one tightening
+  # away from being honoured by one rule and not the other. $tail is the regex
+  # text that follows the span, and closing the `pre` group is $tail's job.
+  def _mysql_anchor($tail):
+    "(?<pre>\\b(?:mysql(?:dump|admin|import|check|show|pump|binlog|slap|sh|_upgrade)?|mariadb(?:-[a-z]+)?)\\b(?>\\\\\r?\\n|[0-9]*>&[0-9]*|[^|;&\\r\\n'\"]|'[^']*'|\"[^\"]*\")*?" + $tail;
+  # Pre-rule: a WHOLE-ARGUMENT quoted `-p<value>` - the container-entrypoint
+  # shape `mysql -uroot "-pS3cret" db`. The span rule cannot reach inside it: the
+  # span consumes `'...'`/`"..."` whole, so a quoted run that contains the -p is
+  # never entered. This is a different shape from `-p'val'` (quote AFTER the
+  # flag), whose value the span's own value group already consumes; here the
+  # quote sits BEFORE `-p`, and a quoted value holding spaces (`"-pS3cret
+  # word"`) is the same case. Parameterised on the quote character so both quote
+  # styles share the one anchor above.
+  # This rule is ANCHORED exactly like the span rule - same client name, same
+  # no-unquoted-separator span. It is deliberately not a general `"-p<value>"`
+  # rule: an unanchored version of it masked `grep "-pattern" f`, `rsync
+  # "-pavz" src dst` and `echo "-pfoo"`, none of which is a MySQL client, and
+  # that over-match was never one of the false positives this rule carries.
+  # Pinned by tests.
+  # Known miss, stated rather than left to be rediscovered: an UNTERMINATED
+  # whole-argument quote (`mysql -uroot "-pS3cret db`) is not masked here, because
+  # the closing quote is what bounds the value and a rule that fell through to
+  # end-of-line would mask an ordinary `"phrase` after any mention of a client.
+  def _mysql_pw_quoted($q):
+    gsub(_mysql_anchor("\\s" + $q + "-p)(?<pw>[^" + $q + "]*)" + $q); "\(.pre)***" + $q);
   def _mysql_pw_pre:
-    gsub("\"-p(\\S+)\""; "\"-p***\"");
+    _mysql_pw_quoted("\"") | _mysql_pw_quoted("'");
   # Main span rule — the span group is ATOMIC (?> … ) to prevent catastrophic
   # backtracking when many `N>&M` redirects appear without a `-p` (issue #81
-  # review: Oniguruma retries every parse of each `>&` token and hits its retry
-  # limit with 12+ such tokens, causing jq to fail instead of returning the
-  # line. Atomic grouping commits each span step so the regex is O(n).)
+  # review: the digits around `>&` can each be taken either by the redirect
+  # alternative or by the plain char class, so every `N>&M` token has about four
+  # parses and the total is EXPONENTIAL in the number of redirects, not
+  # quadratic; when no `-p` follows - the common case - Oniguruma tries them all
+  # and hits its retry limit at 12+ such tokens, so jq fails instead of returning
+  # the line. Atomic grouping commits each span step and makes the span linear in
+  # the line length.)
   def _mysql_pw:
-    gsub("(?<pre>\\b(?:mysql(?:dump|admin|import|check|show|pump|binlog|slap|sh|_upgrade)?|mariadb(?:-[a-z]+)?)\\b(?>\\\\\r?\\n|[0-9]*>&[0-9]*|[^|;&\\r\\n'\"]|'[^']*'|\"[^\"]*\")*?\\s-p)(?<pw>(?=\\S)(?:\\$\\([^)]*\\)|`[^`]*`|'[^']*'|\"[^\"]*\"|\\\\[^\\r\\n]|[^\\s'\"\\\\])*(?:'[^\\r\\n]*|\"[^\\r\\n]*)?)"; "\(.pre)***");
+    gsub(_mysql_anchor("\\s-p)(?<pw>(?=\\S)(?:\\$\\([^)]*\\)|`[^`]*`|'[^']*'|\"[^\"]*\"|\\\\[^\\r\\n]|[^\\s'\"\\\\])*(?:'[^\\r\\n]*|\"[^\\r\\n]*)?)"); "\(.pre)***");
   def _mysql_pw_all:
     _mysql_pw_pre | _mysql_pw;
   def _unmask: gsub("\(M)"; "***");

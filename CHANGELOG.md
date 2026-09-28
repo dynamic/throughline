@@ -17,7 +17,12 @@ All notable changes to throughline are documented here. Format loosely follows
   `mysqlslap`, `mysqlsh`, `mysql_upgrade`, and any `mariadb-*` client), the
   span is quote-aware so an idiomatic `mysql -e "show databases;" -p<pw>` is
   still caught, and the value is consumed whole through the shell shapes a
-  password can legitimately be wrapped in (quotes, `$(...)`, escaped spaces).
+  password can legitimately be wrapped in (quotes, `$(...)`, escaped spaces) -
+  including the container-entrypoint form where the WHOLE argument is quoted
+  (`mysql -uroot "-p<pw>" db`, in either quote style and with spaces in the
+  value), which that span cannot step into. That quoted-argument rule is
+  anchored to the same client name as the span, so `grep "-pattern" f` and
+  `rsync "-pavz" src dst` are left alone.
   `ssh -p 2222`, `docker run -u 1000:1000` and the interactive `mysql -p <db>`
   form are untouched. The known cost is over-redaction: a line that only
   mentions a mysql path or name and then carries an unrelated attached `-p` gets
