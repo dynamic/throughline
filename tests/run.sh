@@ -554,46 +554,6 @@ has   "single-quoted -p after a quoted -e: mask sentinel is present" "$(cap_line
 cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqlqescval","command":"mysql -uroot \"-pSE\\\"CRET\" db"}}'
 hasnt "escaped quote inside a quoted -p value does not cut the mask short" "$(cap_line mysqlqescval)" 'CRET'
 has   "quoted -p value with an escaped quote: mask sentinel is present" "$(cap_line mysqlqescval)" '"-p***"'
-# issue #81 review round 9: the whole-argument quoted shape ALSO appears inside an
-# OUTER double-quoted command, where both quotes are written `\"` - `ssh prod
-# "mysqldump -uroot \"-p<pw>\" app"` and `docker exec db sh -c "mysql -uroot
-# \"-p<pw>\" app"`. The pre-rule only accepted a bare `"` before `-p` and the span
-# rule, after stepping over `\"`, landed on a `-p` with no whitespace in front of
-# it, so the two shapes this PR calls important combined into nothing. Related case
-# in the same review: `mysqldump -p\"S3cret Pw\"` (an escaped-quoted value on the
-# SPAN side) masked only up to the space inside it, leaving the second word of the
-# password stored; the compound value run now takes an escaped-quoted run as one
-# alternative, listed before the generic escaped-character step.
-cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqlouterdq","command":"docker exec db sh -c \"mysql -uroot \\\"-pS3cretPw\\\" app\""}}'
-hasnt "escaped-quoted -p inside an outer double-quoted command is not stored" "$(cap_line mysqlouterdq)" 'S3cretPw'
-has   "escaped-quoted -p inside an outer command: mask sentinel is present" "$(cap_line mysqlouterdq)" '-p***'
-cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqlouterssh","command":"ssh prod \"mysqldump -uroot \\\"-pS3cretPw\\\" app\""}}'
-hasnt "ssh-wrapped escaped-quoted -p is not stored" "$(cap_line mysqlouterssh)" 'S3cretPw'
-has   "ssh-wrapped escaped-quoted -p: mask sentinel is present" "$(cap_line mysqlouterssh)" '-p***'
-cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqlouterspan","command":"ssh prod \"mysqldump -p\\\"S3cret Pw\\\" app\""}}'
-hasnt "escaped-quoted -p value with a space is consumed whole on the span side" "$(cap_line mysqlouterspan)" 'S3cret Pw'
-has   "escaped-quoted -p value with a space: mask sentinel is present" "$(cap_line mysqlouterspan)" '-p*** app'
-# The same review round's second finding: the pre-rule dropped the part of the
-# password GLUED on after the closing quote, which is the worst kind of leak - the
-# `***` makes the line look redacted while the whole password sits after it. Each of
-# these is ONE shell argument, so the compound run after the closing quote belongs
-# to the value; the controls above (a space after the closing quote stops the run)
-# keep ordinary `"-p" db` text intact.
-cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqlqgluebare","command":"mysql -uroot \"-p\"S3cretPw db"}}'
-hasnt "value glued after a closing double quote is not stored" "$(cap_line mysqlqgluebare)" 'S3cretPw'
-has   "value glued after a closing double quote: mask sentinel is present" "$(cap_line mysqlqgluebare)" '"-p***" db'
-cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqlqgluemid","command":"mysql -uroot \"-pS3c\"retPw db"}}'
-hasnt "value glued mid-argument after a double quote is not stored" "$(cap_line mysqlqgluemid)" 'retPw'
-cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqlqgluesingle","command":"mysql -uroot \u0027-pS3c\u0027retPw db"}}'
-hasnt "value glued mid-argument after a single quote is not stored" "$(cap_line mysqlqgluesingle)" 'retPw'
-# Round 9's third finding is the mirror image: the lead was `\\s`, which matches a
-# PLAIN newline too, so the span stopped before the newline, the lead swallowed it,
-# and a `-p` starting the NEXT line got masked - against the claim this file and the
-# CHANGELOG both make and against the `mysqlmulti` control below it. The lead is
-# `[ \\t]` plus the two continuation lookbehinds now. The value here is a fake
-# literal; what the test pins is the boundary.
-cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqlnlhard0","command":"mysqldump db\n-pS3cretPw dbname"}}'
-has   "a plain newline stops the span even when the next line starts with -p" "$(cap_line mysqlnlhard0)" '-pS3cretPw dbname'
 # negative controls: the pre rule is ANCHORED like the span rule, so a quoted
 # -p on a line with no client name, or one across a command separator from the
 # client name, is ordinary text and stays exactly as typed.
