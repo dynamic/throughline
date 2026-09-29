@@ -28,6 +28,12 @@ All notable changes to throughline are documented here. Format loosely follows
   merge or rename row must carry its inbound links so the delete it proposes
   never outruns its own approval. Carries the `#anchor` across and flags
   carried anchors for review.
+  Three rule gaps closed in the same entry: a plain delete of a *Stale* file now
+  resolves every inbound link first (unlink to plain text, repoint, or block the
+  delete; all or nothing per row);
+  the shared-original delete check runs on the memory directory path as Phase 1
+  found it, not on an already-resolved path where `pwd -P` and `pwd -L` agree;
+  and `MEMORY.md` is never given a frontmatter block by the missing-`name:` rule.
 - **`consolidate-memory` scan edge cases** (issue #82): alias and anchor forms
   resolve to their target (`[[slug|display]]`, `[[slug#heading]]`), an
   extension-carrying `[[slug.md]]` is reduced to a stem that every later lookup
