@@ -682,7 +682,7 @@ tl_jq_redact_defs() {
   # where $esc is regex text (two backslashes), so `"\(.pre)***" + $esc` emitted an
   # extra backslash where the input had one.
   def _mysql_pw_quoted($q; $esc):
-    gsub(_mysql_anchor(_mysql_pw_lead + $esc + $q + "-p)(?<pw>" + _mysql_pw_body($q) + ")(?<close>" + $esc + $q + ")" + _mysql_pw_glue); "\(.pre)***\(.close)");
+    gsub(_mysql_anchor(_mysql_pw_lead + $esc + $q + "-p)(?<pw>" + _mysql_pw_body($q) + ")(?:" + $esc + $q + ")" + _mysql_pw_glue); "\(.pre)***" + $q);
   def _mysql_pw_pre:
     _mysql_pw_quoted("\""; "") | _mysql_pw_quoted("'"; "")
     | _mysql_pw_quoted("\""; "\\\\") | _mysql_pw_quoted("'"; "\\\\");
