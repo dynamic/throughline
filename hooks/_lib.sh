@@ -647,7 +647,7 @@ tl_jq_redact_defs() {
   # the CHANGELOG both make and `mysqlmulti` pins. A bare newline now stops the
   # rule; only a continuation the span actually stepped over carries across.
   def _mysql_pw_lead:
-    "(?:[ \\t]|(?<=\\\\\\n)|(?<=\\\\\\r\\n))";
+    "[ \\t]";
   # Value body inside a whole-argument quoted value, parameterised because the
   # two quote styles genuinely differ: a double-quoted shell string can carry an
   # escaped quote, so the body must step over `\\.` or the mask stops at the
