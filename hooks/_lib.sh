@@ -656,7 +656,7 @@ tl_jq_redact_defs() {
   # escapes at all, so `[^']*` is exactly right there and an escape-aware body
   # would only add a backtracking path that can never fire.
   def _mysql_pw_body($q):
-    if $q == "\"" then "(?:[^\"\\\\]|\\\\.)*" else "[^']*" end;
+    if $q == "\"" then "[^\"]*" else "[^']*" end;
   # The compound value run, shared by both rules because the same run glues onto
   # both shapes of password: `-p'abc'def` (span rule) and `"-p"S3cretPw` (pre-rule)
   # are each ONE shell argument, and a mask that stops at the quote leaves the bare
