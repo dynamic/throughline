@@ -668,7 +668,7 @@ tl_jq_redact_defs() {
   # `ssh prod "mysqldump -p\"S3cret Pw\" app"` consume the whole quoted value
   # instead of stopping at the space inside it.
   def _mysql_pw_glue:
-    "(?:\\\\\"(?:[^\"\\\\]|\\\\.)*\\\\\"|\\$\\([^)]*\\)|`[^`]*`|'[^']*'|\"[^\"]*\"|\\\\[^\\r\\n]|[^\\s'\\\"\\\\])*";
+    "(?:\\$\\([^)]*\\)|`[^`]*`|'[^']*'|\"[^\"]*\"|\\\\[^\\r\\n]|[^\\s'\\\"\\\\])*";
   # The whole-argument quoted shape, parameterised on the quote character AND on
   # whether that quote is escaped (review round 9): the container-entrypoint form
   # `mysql -uroot "-p<pw>" db` writes the quote bare, while the SAME argument
