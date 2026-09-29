@@ -5,6 +5,76 @@ All notable changes to throughline are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Added
+- **`consolidate-memory` fifth scan: dangling wikilinks** (issue #82): a
+  `[[target]]` in any memory file is now resolved against the set of frontmatter
+  `name:` values in the memory directory, with the links themselves collected
+  from every `*.md` including `MEMORY.md` - the four
+  existing scans all look at files and the index, so a pass that split an
+  oversized file and deleted the original left inbound `[[original-name]]` links
+  dangling with every scan reporting clean. Added as a post-operation re-scan
+  after any merge or delete performed in the same pass (this skill's own phases
+  split and rename no file - the only rename it performs is a frontmatter
+  `name:` value from an approved `Duplicate name:` row, which is itself a
+  re-scan trigger), plus a Phase 4 step that repoints every link an approved
+  Phase 3 row names - the dead links, plus the inbound links a `Duplicate
+  name:` rename carries (healthy before and after the rename, so a rule worded
+  as "each dead link" silently drops the approved repoint) and the inbound
+  links of an approved merge - written as that file's `name:`: to the canonical
+  file on a merge, to the half the operator named on a split (always a
+  pre-existing dangle here), or listed for the operator when that is
+  ambiguous. A repoint only ever applies a target the operator approved; a
+  link whose approved row names no target is listed, not guessed, and every
+  merge or rename row must carry its inbound links so the delete it proposes
+  never outruns its own approval. Carries the `#anchor` across and flags
+  carried anchors for review.
+  Three rule gaps closed in the same entry: a plain delete of a *Stale* file now
+  resolves every inbound link first (unlink to plain text, repoint, or block the
+  delete; all or nothing per row);
+  the shared-original delete check runs on the memory directory path as Phase 1
+  found it, not on an already-resolved path where `pwd -P` and `pwd -L` agree;
+  and `MEMORY.md` is never given a frontmatter block by the missing-`name:` rule.
+- **`consolidate-memory` scan edge cases** (issue #82): alias and anchor forms
+  resolve to their target (`[[slug|display]]`, `[[slug#heading]]`), an
+  extension-carrying `[[slug.md]]` is reduced to a stem that every later lookup
+  uses - the name-set re-test, the filename inventory and the uniqueness rule -
+  so a link that reaches an existing `name:` only through that strip is
+  rewritten to the extension-less name whether or not a file of that basename
+  exists (when the stem is two files' `name:` it is listed, not guessed), a
+  table-escaped pipe and its trailing backslash are stripped and preserved on
+  rewrite, same-file `[[#Heading]]` anchors and links inside fenced, inline or
+  indented code are skipped, fences close by the CommonMark rule (same
+  character, at least as long, no info string) and the 4-space indented-code
+  threshold is measured from the enclosing list item's content column rather
+  than from column 0, targets match only against the inventoried basenames and
+  `name:` values (never a path built from a target, never a filesystem test, so
+  a case-insensitive volume cannot hide a broken link), the filename rules only
+  ever run on targets the name-set lookup already missed, a target file with no
+  usable `name:` is reported as missing `name:` rather than repointed, only the
+  top-level `name:` key counts and a quoted scalar is unquoted when collected,
+  duplicated `name:` values are reported with their own proposal row, and every
+  `name:` a pass proposes to add or rename to has to be unique across that pass
+  so two independently written rows cannot mint a fresh duplicate. A `missing
+  name:` row carries the rewrite for any inbound link whose text is not the name
+  being added, so the post-operation re-scan does not hand the operator the same
+  link twice. Obsidian resolves wikilinks by filename rather than by `name:`,
+  so a directory opened as a vault needs the operator to pick which convention a
+  repoint should follow.
+- **`consolidate-memory` safety guidelines** (issue #82): resolve a symlinked
+  edit target with `readlink -f` before editing, since the agent harness's Edit
+  tool may refuse to write through a symbolic link and memory files are
+  routinely symlinked into shared config repos - and note that repointing a
+  link in such a shared file can break it in every other project that links the
+  same original; before a delete, test the file with `[ -L ]` and compare the
+  directory's physical and logical paths from inside it (`pwd -P` against
+  `pwd -L`), so a symlinked directory or a symlinked parent is never mistaken
+  for a real one (in that case every file in it is the shared original), with a
+  failed `cd`, an empty capture or an unexpanded `~` in the path all routed to
+  the same approval rather than read as "a real directory"; and treat link
+  targets as data - compared in process, passed after `--` to tools with a
+  fixed-string flag, never substituted into a command string and never used to
+  build a path.
+
 ### Fixed
 - **Capture-buffer credential misses** (issue #81): two real captures in one
   project's buffers got through the capture-time filter - a production MySQL

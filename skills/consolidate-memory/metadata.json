@@ -1,7 +1,7 @@
 {
   "name": "consolidate-memory",
   "version": "1.0.0",
-  "description": "Memory file hygiene and consolidation for project memories - detects duplicates, stale entries, unindexed orphans, and index orphans in ~/.claude/projects/<project-slug>/memory/",
+  "description": "Memory file hygiene and consolidation for project memories - detects duplicates, stale entries, unindexed orphans, index orphans, and dangling wikilinks ([[target]] links that resolve to no memory file) in ~/.claude/projects/<project-slug>/memory/",
   "author": "dynamic",
   "license": "MIT",
   "triggers": [
@@ -11,6 +11,10 @@
     "duplicate memory files",
     "stale memory entries",
     "unindexed memory files",
-    "memory index orphans"
+    "memory index orphans",
+    "dangling wikilinks",
+    "dangling memory wikilinks",
+    "broken memory links",
+    "memory links after splitting a memory file"
   ]
 }
