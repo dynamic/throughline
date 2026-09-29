@@ -14,29 +14,39 @@ All notable changes to throughline are documented here. Format loosely follows
   oversized file and deleted the original left inbound `[[original-name]]` links
   dangling with every scan reporting clean. Added as a post-operation re-scan
   after any merge or delete performed in the same pass (this skill's own phases
-  split and rename nothing, so a split or rename reaches it as a pre-existing
-  dangle), plus a Phase 4 step that repoints dead links to the file that now
-  carries the content, written as that file's `name:` - to the canonical file on
-  a merge, to the half that holds the content on a split, or listed for the
-  operator when that is ambiguous. A repoint only ever applies a target the
-  operator approved; a link whose approved row names no target is listed, not
-  guessed, and every merge or rename row must carry its inbound links so the
-  delete it proposes never outruns its own approval. Carries the `#anchor`
-  across and flags carried anchors for review.
+  split and rename no file - the only rename it performs is a frontmatter
+  `name:` value from an approved `Duplicate name:` row, which is itself a
+  re-scan trigger), plus a Phase 4 step that repoints every link an approved
+  Phase 3 row names - the dead links, plus the inbound links a `Duplicate
+  name:` rename carries (healthy before and after the rename, so a rule worded
+  as "each dead link" silently drops the approved repoint) and the inbound
+  links of an approved merge - written as that file's `name:`: to the canonical
+  file on a merge, to the half the operator named on a split (always a
+  pre-existing dangle here), or listed for the operator when that is
+  ambiguous. A repoint only ever applies a target the operator approved; a
+  link whose approved row names no target is listed, not guessed, and every
+  merge or rename row must carry its inbound links so the delete it proposes
+  never outruns its own approval. Carries the `#anchor` across and flags
+  carried anchors for review.
 - **`consolidate-memory` scan edge cases** (issue #82): alias and anchor forms
   resolve to their target (`[[slug|display]]`, `[[slug#heading]]`), an
-  extension-carrying `[[slug.md]]` is stripped before the filename lookup, a
-  table-escaped pipe and its trailing backslash are stripped and preserved on
-  rewrite, same-file `[[#Heading]]` anchors and links inside fenced, inline or
-  indented code are skipped, fences close by the CommonMark rule (same
-  character, at least as long, no info string), targets match only against the
+  extension-carrying `[[slug.md]]` is stripped before the filename lookup and a
+  link that reaches an existing `name:` only through that strip is rewritten to
+  the extension-less name, a table-escaped pipe and its trailing backslash are
+  stripped and preserved on rewrite, same-file `[[#Heading]]` anchors and links
+  inside fenced, inline or indented code are skipped, fences close by the
+  CommonMark rule (same character, at least as long, no info string) and the
+  4-space indented-code threshold is measured from the enclosing list item's
+  content column rather than column 0, targets match only against the
   inventoried basenames and `name:` values (never a path built from a target,
   never a filesystem test, so a case-insensitive volume cannot hide a broken
   link), the filename rules only ever run on targets the name-set lookup
   already missed, a target file with no usable `name:` is reported as missing
   `name:` rather than repointed, only the top-level `name:` key counts and a
-  quoted scalar is unquoted when collected, and duplicated `name:` values are
-  reported with their own proposal row. Obsidian resolves wikilinks by filename
+  quoted scalar is unquoted when collected, duplicated `name:` values are
+  reported with their own proposal row, and every `name:` a pass proposes to
+  add or rename to has to be unique across that pass so two independently
+  written rows cannot mint a fresh duplicate. Obsidian resolves wikilinks by filename
   rather than by `name:`, so a directory opened as a vault needs the operator to
   pick which convention a repoint should follow.
 - **`consolidate-memory` safety guidelines** (issue #82): resolve a symlinked
@@ -46,7 +56,8 @@ All notable changes to throughline are documented here. Format loosely follows
   shared file can break it in every other project that links the same original;
   before a delete, test the file with `[ -L ]` and the directory separately, so a
   symlinked directory is never mistaken for a symlinked file (in that case every
-  file in it is the shared original); and treat link targets as data - compared
+  file in it is the shared original, so the delete needs shared-original
+  approval); and treat link targets as data - compared
   in process, passed after `--` to tools, never substituted into a command
   string and never used to build a path.
 
