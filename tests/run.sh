@@ -1538,6 +1538,26 @@ printf -- '- `t` **bash** third - `c`\n' >> "$BUF/session-C.md"
 precompact '{"session_id":"C","trigger":"auto"}'
 eq "precompact: boundary after a post-boundary action stamps again" "$(grep -c '^<!-- compaction-boundary' "$BUF/session-C.md")" "3"
 
+# --- jq program size (Windows command-line cap) ---------------------------------
+# session-capture.sh hands jq ONE argument: the redaction defs plus the capture
+# filter. Windows caps a whole command line at 32,767 characters, and a jq call
+# that exceeds it fails outright, dropping every captured event (the 33,071-char
+# argument at the #81 review round 9 head did exactly that on the Windows CI leg).
+# Full-line comments are stripped from the emitted defs so doc-comments cost
+# nothing; this pins that, and pins a byte budget with wide headroom.
+(
+  . "$ROOT/hooks/_lib.sh"
+  defs=$(tl_jq_redact_defs)
+  if printf '%s\n' "$defs" | grep -qE '^[[:space:]]*#'; then
+    echo "comment-line"
+  else
+    echo "no-comment-line"
+  fi > "$WORK/defs-comments.txt"
+  printf '%s' "${#defs}" > "$WORK/defs-len.txt"
+)
+eq "jq defs: no full-line comment reaches jq" "$(cat "$WORK/defs-comments.txt")" "no-comment-line"
+[ "$(cat "$WORK/defs-len.txt")" -lt 20000 ] && ok "jq defs: emitted text is under 20000 chars (Windows argv cap is 32767 for defs + filter)" || bad "jq defs: emitted text is $(cat "$WORK/defs-len.txt") chars, over the 20000 budget"
+
 echo "----------------------"
 printf 'passed: %s   failed: %s\n' "$PASS" "$FAIL"
 [ "$SKIPPED_WINDOWS" -eq 0 ] || printf '  (%s permission-based assertion(s) skipped on Windows/NTFS - see is_windows() above)\n' "$SKIPPED_WINDOWS"

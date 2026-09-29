@@ -445,8 +445,18 @@ tl_append_line() {
 # tl_resolve_sid, which exists because a hand-duplicated derivation already
 # caused one real desync bug. Quoted heredoc: the def text passes through
 # with no shell expansion of its backslashes or quotes.
+#
+# The def text reaches jq as part of ONE command-line argument
+# (`jq -r "$(tl_jq_redact_defs)..."` in session-capture.sh), and Windows caps a
+# whole command line at 32,767 characters. The explanatory `#` comments inside
+# the heredoc below are most of its bytes, and they had grown the argument to
+# 33,071 characters - past the cap, so on Windows the capture hook's jq call
+# failed outright and every event was dropped. Full-line comments are stripped on
+# the way out so the doc-comments can keep growing without a size budget; the
+# def text stays readable here, and only the argument jq receives is small.
+# (Trailing `# ...` after code on the same line is left alone.)
 tl_jq_redact_defs() {
-  cat <<'TL_JQ_DEFS'
+  cat <<'TL_JQ_DEFS' | sed '/^[[:space:]]*#/d'
   # Mask common secret shapes so raw credentials never sit in the buffer. The
   # buffer is gitignored, and even HANDOFF.md/logs/ are local-only by default
   # now (see README "Local by default") - but a project can opt in to tracking

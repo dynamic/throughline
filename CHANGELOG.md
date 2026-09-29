@@ -76,6 +76,12 @@ All notable changes to throughline are documented here. Format loosely follows
   build a path.
 
 ### Fixed
+- **Capture hook dropped every event on Windows** (issue #81 review): the jq program
+  is one command-line argument (`redaction defs + capture filter`) and Windows caps a
+  command line at 32,767 characters; the explanatory comments inside the defs had grown
+  that argument to 33,071. Full-line comments are now stripped as the defs are emitted
+  (about 28,000 characters down to about 3,000), so the doc-comments carry no size cost,
+  and two tests pin it.
 - **Capture-buffer credential misses** (issue #81): two real captures in one
   project's buffers got through the capture-time filter - a production MySQL
   password attached to the bare `-p` flag, and a third-party API key whose
