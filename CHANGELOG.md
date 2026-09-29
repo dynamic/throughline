@@ -30,15 +30,18 @@ All notable changes to throughline are documented here. Format loosely follows
   carried anchors for review.
 - **`consolidate-memory` scan edge cases** (issue #82): alias and anchor forms
   resolve to their target (`[[slug|display]]`, `[[slug#heading]]`), an
-  extension-carrying `[[slug.md]]` is stripped before the filename lookup and a
-  link that reaches an existing `name:` only through that strip is rewritten to
-  the extension-less name, a table-escaped pipe and its trailing backslash are
+  extension-carrying `[[slug.md]]` is reduced to a stem that every later lookup
+  uses - the name-set re-test, the filename inventory and the uniqueness rule -
+  so a link that reaches an existing `name:` only through that strip is
+  rewritten to the extension-less name whether or not a file of that basename
+  exists (when the stem is two files' `name:` it is listed, not guessed), a table-escaped pipe and its trailing backslash are
   stripped and preserved on rewrite, same-file `[[#Heading]]` anchors and links
   inside fenced, inline or indented code are skipped, fences close by the
   CommonMark rule (same character, at least as long, no info string) and the
   4-space indented-code threshold is measured from the enclosing list item's
   content column rather than column 0, targets match only against the
   inventoried basenames and `name:` values (never a path built from a target,
+  never a filesystem test, so a case-insensitive volume cannot hide a broken
   never a filesystem test, so a case-insensitive volume cannot hide a broken
   link), the filename rules only ever run on targets the name-set lookup
   already missed, a target file with no usable `name:` is reported as missing
