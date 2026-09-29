@@ -34,37 +34,40 @@ All notable changes to throughline are documented here. Format loosely follows
   uses - the name-set re-test, the filename inventory and the uniqueness rule -
   so a link that reaches an existing `name:` only through that strip is
   rewritten to the extension-less name whether or not a file of that basename
-  exists (when the stem is two files' `name:` it is listed, not guessed), a table-escaped pipe and its trailing backslash are
-  stripped and preserved on rewrite, same-file `[[#Heading]]` anchors and links
-  inside fenced, inline or indented code are skipped, fences close by the
-  CommonMark rule (same character, at least as long, no info string) and the
-  4-space indented-code threshold is measured from the enclosing list item's
-  content column rather than column 0, targets match only against the
-  inventoried basenames and `name:` values (never a path built from a target,
-  never a filesystem test, so a case-insensitive volume cannot hide a broken
-  never a filesystem test, so a case-insensitive volume cannot hide a broken
-  link), the filename rules only ever run on targets the name-set lookup
-  already missed, a target file with no usable `name:` is reported as missing
-  `name:` rather than repointed, only the top-level `name:` key counts and a
-  quoted scalar is unquoted when collected, duplicated `name:` values are
-  reported with their own proposal row, and every `name:` a pass proposes to
-  add or rename to has to be unique across that pass so two independently
-  written rows cannot mint a fresh duplicate. A `missing name:` row carries the
-  rewrite for any inbound link whose text is not the name being added, so the
-  post-operation re-scan does not hand the operator the same link twice. Obsidian resolves wikilinks by filename
-  rather than by `name:`, so a directory opened as a vault needs the operator to
-  pick which convention a repoint should follow.
+  exists (when the stem is two files' `name:` it is listed, not guessed), a
+  table-escaped pipe and its trailing backslash are stripped and preserved on
+  rewrite, same-file `[[#Heading]]` anchors and links inside fenced, inline or
+  indented code are skipped, fences close by the CommonMark rule (same
+  character, at least as long, no info string) and the 4-space indented-code
+  threshold is measured from the enclosing list item's content column rather
+  than from column 0, targets match only against the inventoried basenames and
+  `name:` values (never a path built from a target, never a filesystem test, so
+  a case-insensitive volume cannot hide a broken link), the filename rules only
+  ever run on targets the name-set lookup already missed, a target file with no
+  usable `name:` is reported as missing `name:` rather than repointed, only the
+  top-level `name:` key counts and a quoted scalar is unquoted when collected,
+  duplicated `name:` values are reported with their own proposal row, and every
+  `name:` a pass proposes to add or rename to has to be unique across that pass
+  so two independently written rows cannot mint a fresh duplicate. A `missing
+  name:` row carries the rewrite for any inbound link whose text is not the name
+  being added, so the post-operation re-scan does not hand the operator the same
+  link twice. Obsidian resolves wikilinks by filename rather than by `name:`,
+  so a directory opened as a vault needs the operator to pick which convention a
+  repoint should follow.
 - **`consolidate-memory` safety guidelines** (issue #82): resolve a symlinked
   edit target with `readlink -f` before editing, since the agent harness's Edit
-  tool may refuse to write through a symbolic link and memory files are routinely
-  symlinked into shared config repos - and note that repointing a link in such a
-  shared file can break it in every other project that links the same original;
-  before a delete, test the file with `[ -L ]` and compare the directory's
-  physical and logical paths from inside it (`pwd -P` against `pwd -L`), so a
-  symlinked directory or a symlinked parent is never mistaken for a real one (in
-  that case every file in it is the shared original); and treat link targets as
-  data - compared in process, passed after `--` to tools with a fixed-string
-  flag, never substituted into a command string and never used to build a path.
+  tool may refuse to write through a symbolic link and memory files are
+  routinely symlinked into shared config repos - and note that repointing a
+  link in such a shared file can break it in every other project that links the
+  same original; before a delete, test the file with `[ -L ]` and compare the
+  directory's physical and logical paths from inside it (`pwd -P` against
+  `pwd -L`), so a symlinked directory or a symlinked parent is never mistaken
+  for a real one (in that case every file in it is the shared original), with a
+  failed `cd`, an empty capture or an unexpanded `~` in the path all routed to
+  the same approval rather than read as "a real directory"; and treat link
+  targets as data - compared in process, passed after `--` to tools with a
+  fixed-string flag, never substituted into a command string and never used to
+  build a path.
 
 ## [0.16.0]
 
