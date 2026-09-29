@@ -46,7 +46,9 @@ All notable changes to throughline are documented here. Format loosely follows
   quoted scalar is unquoted when collected, duplicated `name:` values are
   reported with their own proposal row, and every `name:` a pass proposes to
   add or rename to has to be unique across that pass so two independently
-  written rows cannot mint a fresh duplicate. Obsidian resolves wikilinks by filename
+  written rows cannot mint a fresh duplicate. A `missing name:` row carries the
+  rewrite for any inbound link whose text is not the name being added, so the
+  post-operation re-scan does not hand the operator the same link twice. Obsidian resolves wikilinks by filename
   rather than by `name:`, so a directory opened as a vault needs the operator to
   pick which convention a repoint should follow.
 - **`consolidate-memory` safety guidelines** (issue #82): resolve a symlinked
@@ -54,12 +56,12 @@ All notable changes to throughline are documented here. Format loosely follows
   tool may refuse to write through a symbolic link and memory files are routinely
   symlinked into shared config repos - and note that repointing a link in such a
   shared file can break it in every other project that links the same original;
-  before a delete, test the file with `[ -L ]` and the directory separately, so a
-  symlinked directory is never mistaken for a symlinked file (in that case every
-  file in it is the shared original, so the delete needs shared-original
-  approval); and treat link targets as data - compared
-  in process, passed after `--` to tools, never substituted into a command
-  string and never used to build a path.
+  before a delete, test the file with `[ -L ]` and compare the directory's
+  physical and logical paths from inside it (`pwd -P` against `pwd -L`), so a
+  symlinked directory or a symlinked parent is never mistaken for a real one (in
+  that case every file in it is the shared original); and treat link targets as
+  data - compared in process, passed after `--` to tools with a fixed-string
+  flag, never substituted into a command string and never used to build a path.
 
 ## [0.16.0]
 
