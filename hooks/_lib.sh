@@ -553,11 +553,7 @@ tl_jq_redact_defs() {
   # pattern rather than two literal names - mariadb-check and mariadb-import take
   # the flag too). A client name that is not a standalone word is a miss by
   # design: the leading \b is what stops `notmysql -pX` from anchoring, and the
-  # same \b is what stops a versioned name (mysql5.7) from anchoring. (`mariadb`
-  # is the asymmetric case: `mariadb-10.6` DOES anchor, because the hyphen after
-  # `mariadb` is itself a word boundary and the `mariadb(?:-[a-z]+)?` branch
-  # matches the bare prefix - over-redaction on the safe side, noted here so the
-  # \b claim above is not read as covering it.)
+  # same \b is what stops a versioned name (mysql5.7) from anchoring.
   # A bare `-p` followed by whitespace is MySQL's "ask me for the password"
   # prompt, so the word after it is a database name and is deliberately NOT
   # masked: every value alternative requires non-whitespace content touching `-p`.
@@ -620,72 +616,14 @@ tl_jq_redact_defs() {
   # "-pavz" src dst` and `echo "-pfoo"`, none of which is a MySQL client, and
   # that over-match was never one of the false positives this rule carries.
   # Pinned by tests.
-  # Known miss, stated rather than left to be rediscovered (issue #81 review
-  # round 8): a DOUBLE-quoted value that contains an UNESCAPED inner quote - a
-  # nested substitution like `"-p$(echo "S3cret")"` - masks only up to that inner
-  # quote, so the tail after it stays in cleartext. Letting the value body step
-  # over one nested `"..."` run does mask it, but measured the opposite failure:
-  # `mysql -uroot "-pS3cret" db "other" x` then swallowed `db "other"` out of the
-  # captured line, i.e. it corrupts ordinary entrypoint commands to catch a
-  # contrived one. The handoff skill's re-scan is the second barrier here.
   # Known miss, stated rather than left to be rediscovered: an UNTERMINATED
   # whole-argument quote (`mysql -uroot "-pS3cret db`) is not masked here, because
   # the closing quote is what bounds the value and a rule that fell through to
   # end-of-line would mask an ordinary `"phrase` after any mention of a client.
-  # Whitespace that may sit between the span and the flag. A plain `\s` is not
-  # enough: a shell line continuation is `\` NEWLINE and the span consumes BOTH
-  # as one step, so a continuation line that starts at column 0 (`mysqldump -u
-  # root \` NL `-p<pw> db` - valid, the space before the backslash is the
-  # argument separator) leaves no whitespace for the tail to match and the
-  # password went through in cleartext (issue #81 review round 8). The two
-  # fixed-length lookbehinds say "the span just stepped over a backslash-newline
-  # (or backslash-CR-LF)" without needing the variable-length `(?<=\\\r?\n)`,
-  # which Oniguruma rejects. It is `[ \t]` and not `\s` on purpose (review round
-  # 9): `\s` includes the newline itself, which let the lead swallow a plain
-  # newline and mask a `-p` starting the NEXT line - the opposite of the
-  # "a newline that does not continue the line is a hard stop" claim this file and
-  # the CHANGELOG both make and `mysqlmulti` pins. A bare newline now stops the
-  # rule; only a continuation the span actually stepped over carries across.
-  def _mysql_pw_lead:
-    "(?:[ \\t]|(?<=\\\\\\n)|(?<=\\\\\\r\\n))";
-  # Value body inside a whole-argument quoted value, parameterised because the
-  # two quote styles genuinely differ: a double-quoted shell string can carry an
-  # escaped quote, so the body must step over `\\.` or the mask stops at the
-  # first `\"` and the rest of the password is stored in cleartext
-  # (`"-pSE\"CRET"` masked to `"-p***"CRET`). A single-quoted shell string has no
-  # escapes at all, so `[^']*` is exactly right there and an escape-aware body
-  # would only add a backtracking path that can never fire.
-  def _mysql_pw_body($q):
-    if $q == "\"" then "(?:[^\"\\\\]|\\\\.)*" else "[^']*" end;
-  # The compound value run, shared by both rules because the same run glues onto
-  # both shapes of password: `-p'abc'def` (span rule) and `"-p"S3cretPw` (pre-rule)
-  # are each ONE shell argument, and a mask that stops at the quote leaves the bare
-  # part sitting in cleartext right after the `***` - which is worse than an
-  # unmasked line, because the `***` makes the line look redacted (review round 9,
-  # measured `mysql -uroot "-p"S3cretPw db` -> `"-p***"S3cretPw db`). Listed longest
-  # alternative first: an escaped-quoted run must win the `\` before the generic
-  # escaped-character step can eat it, which is what makes
-  # `ssh prod "mysqldump -p\"S3cret Pw\" app"` consume the whole quoted value
-  # instead of stopping at the space inside it.
-  def _mysql_pw_glue:
-    "(?:\\\\\"(?:[^\"\\\\]|\\\\.)*\\\\\"|\\$\\([^)]*\\)|`[^`]*`|'[^']*'|\"[^\"]*\"|\\\\[^\\r\\n]|[^\\s'\\\"\\\\])*";
-  # The whole-argument quoted shape, parameterised on the quote character AND on
-  # whether that quote is escaped (review round 9): the container-entrypoint form
-  # `mysql -uroot "-p<pw>" db` writes the quote bare, while the SAME argument
-  # inside an outer double-quoted command - `ssh prod "mysqldump -uroot
-  # \"-p<pw>\" app"`, `docker exec db sh -c "mysql -uroot \"-p<pw>\" app"` - writes
-  # it as `\"` on BOTH sides, and a pattern that only accepted the bare form
-  # matched neither: the two shapes this PR calls important combined into nothing.
-  # $esc is the regex text for the opening/closing quote's backslash, empty for the
-  # unescaped form. The closer is captured as `close` and echoed back through the
-  # replacement rather than rebuilt from $esc: a replacement string is literal text,
-  # where $esc is regex text (two backslashes), so `"\(.pre)***" + $esc` emitted an
-  # extra backslash where the input had one.
-  def _mysql_pw_quoted($q; $esc):
-    gsub(_mysql_anchor(_mysql_pw_lead + $esc + $q + "-p)(?<pw>" + _mysql_pw_body($q) + ")(?<close>" + $esc + $q + ")" + _mysql_pw_glue); "\(.pre)***\(.close)");
+  def _mysql_pw_quoted($q):
+    gsub(_mysql_anchor("\\s" + $q + "-p)(?<pw>[^" + $q + "]*)" + $q); "\(.pre)***" + $q);
   def _mysql_pw_pre:
-    _mysql_pw_quoted("\""; "") | _mysql_pw_quoted("'"; "")
-    | _mysql_pw_quoted("\""; "\\\\") | _mysql_pw_quoted("'"; "\\\\");
+    _mysql_pw_quoted("\"") | _mysql_pw_quoted("'");
   # Main span rule — the span group is ATOMIC (?> … ) to prevent catastrophic
   # backtracking when many `N>&M` redirects appear without a `-p` (issue #81
   # review: the digits around `>&` can each be taken either by the redirect
@@ -696,7 +634,7 @@ tl_jq_redact_defs() {
   # the line. Atomic grouping commits each span step and makes the span linear in
   # the line length.)
   def _mysql_pw:
-    gsub(_mysql_anchor(_mysql_pw_lead + "-p)(?<pw>(?=\\S)" + _mysql_pw_glue + "(?:'[^\\r\\n]*|\"[^\\r\\n]*)?)"); "\(.pre)***");
+    gsub(_mysql_anchor("\\s-p)(?<pw>(?=\\S)(?:\\$\\([^)]*\\)|`[^`]*`|'[^']*'|\"[^\"]*\"|\\\\[^\\r\\n]|[^\\s'\"\\\\])*(?:'[^\\r\\n]*|\"[^\\r\\n]*)?)"); "\(.pre)***");
   def _mysql_pw_all:
     _mysql_pw_pre | _mysql_pw;
   def _unmask: gsub("\(M)"; "***");
