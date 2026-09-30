@@ -636,20 +636,16 @@ const ENGINE_SPELLINGS: readonly { ts: string; jq: string; why: string }[] = [
     why: 'JS . also refuses CR, U+2028 and U+2029; jq . refuses only LF, so a backslash-CR inside a quoted argument would stop the TS span and leak the password behind it',
   },
   {
-    ts: String.raw`(?=[^ \t\n\v\f\r\u00A0\u2028\u2029])`,
+    ts: String.raw`(?=[^ \t\n\v\f\r\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000])`,
     jq: String.raw`(?=\S)`,
-    why: 'JS \\s also matches U+FEFF, which Oniguruma does not, so a BOM inside a password would end the value run early here and mask only its head',
+    why: 'JS \s matches U+FEFF and misses U+0085; Oniguruma reads both the other way round, so the code points are listed rather than trusted to an escape',
   },
   {
-    ts: String.raw`[^ \t\n\v\f\r\u00A0\u2028\u2029'\"\\]`,
+    ts: String.raw`[^ \t\n\v\f\r\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000'\"\\]`,
     jq: String.raw`[^\s'\"\\]`,
-    why: 'same set, spelled out for the glue run',
+    why: 'the same code-point list, for the glue run',
   },
-  {
-    ts: String.raw`(?<![A-Za-z0-9_])SG\.`,
-    jq: String.raw`\bSG\.`,
-    why: 'Oniguruma reads \\b as Unicode-aware and JS does not, so the lookbehind states Oniguruma meaning rather than approximating it',
-  },
+
 ];
 
 /** Fold the deliberate JS spellings back into jq's before comparing pattern text. */
@@ -968,16 +964,39 @@ describe('regex-engine parity with jq (issue #90 review round 1)', () => {
     // quoted -e used to stop the span and leave the password in cleartext.
     ['mysql -e "select \\\r\n 1" -pS3cretPw db', 'mysql -e "select \\\r\n 1" -p*** db'],
     // JS `\s` matches U+FEFF, Oniguruma's does not: the value run must walk over a
-    // BOM inside a password the way jq's does, not mask only its head.
+    // BOM inside a password the way jq's does, not stop at its head.
     ['mysql -pab\ufeffcd x', 'mysql -p*** x'],
-    // Whitespace that BOTH engines agree on, as controls for the two above.
+    // Whitespace, code point by code point rather than trusted to an escape: every
+    // code point Oniguruma reads as whitespace (verified one at a time against jq
+    // 1.7.1) plus the two the engines disagree about - U+0085 is whitespace to jq
+    // and not to JS, U+FEFF is the reverse. Each pair is '-p<space>x y', which
+    // neither engine masks because the value has to touch -p, and 'ab<space>cd'
+    // mid-value, which both mask up to the space and no further.
+    ['mysql -p\u0085x y', 'mysql -p\u0085x y'],
+    ['mysql -pab\u0085cd x', 'mysql -p***\u0085cd x'],
     ['mysql -p\u00a0x y', 'mysql -p\u00a0x y'],
+    ['mysql -pab\u00a0cd x', 'mysql -p***\u00a0cd x'],
+    ['mysql -p\u1680x y', 'mysql -p\u1680x y'],
+    ['mysql -pab\u1680cd x', 'mysql -p***\u1680cd x'],
+    ['mysql -p\u2000x y', 'mysql -p\u2000x y'],
+    ['mysql -pab\u2000cd x', 'mysql -p***\u2000cd x'],
+    ['mysql -p\u200ax y', 'mysql -p\u200ax y'],
+    ['mysql -pab\u200acd x', 'mysql -p***\u200acd x'],
     ['mysql -p\u2028x y', 'mysql -p\u2028x y'],
+    ['mysql -pab\u2028cd x', 'mysql -p***\u2028cd x'],
     ['mysql -p\u2029x y', 'mysql -p\u2029x y'],
-    // U+FEFF is whitespace to neither engine, so this masks on both sides - pinned
-    // so a future tidy-up of the not-whitespace class that drops it cannot quietly
-    // change behaviour on either side.
-    ['mysql -p dbname', 'mysql -p dbname'],
+    ['mysql -pab\u2029cd x', 'mysql -p***\u2029cd x'],
+    ['mysql -p\u202fx y', 'mysql -p\u202fx y'],
+    ['mysql -pab\u202fcd x', 'mysql -p***\u202fcd x'],
+    ['mysql -p\u205fx y', 'mysql -p\u205fx y'],
+    ['mysql -pab\u205fcd x', 'mysql -p***\u205fcd x'],
+    ['mysql -p\u3000x y', 'mysql -p\u3000x y'],
+    ['mysql -pab\u3000cd x', 'mysql -p***\u3000cd x'],
+    // U+FEFF, the reverse case: whitespace to neither engine, so a -p followed
+    // directly by a BOM masks on both sides and a BOM inside a value is walked
+    // over by both. Written as an escape so it cannot be silently stripped.
+    ['mysql -p\ufeffdbname', 'mysql -p***'],
+    ['mysql -p\ufeffx y', 'mysql -p*** y'],
   ];
 
   for (const [input, expected] of engineCases) {

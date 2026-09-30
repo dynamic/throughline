@@ -96,14 +96,15 @@ export const TOKEN_PREFIX_RULES: readonly RedactionRule[] = [
   { name: "glpat", pattern: /(?<![A-Za-z0-9_])glpat-[A-Za-z0-9_-]{20,}/g, replacement: "glpat-***" },
   { name: "npm", pattern: /(?<![A-Za-z0-9_])npm_[A-Za-z0-9]{30,}/g, replacement: "npm_***" },
   {
-    // jq writes `\bSG\.`; Oniguruma's \b is Unicode-aware, so a word character
-    // outside ASCII (an accented letter, an ideograph) still counts as "word" and
-    // stops the anchor. `\b` in JS is narrower, so the same input anchors here and
-    // not there. The lookbehind spells Oniguruma's meaning directly: "not preceded
-    // by a word character or an underscore", the same rule the four prefixes above
-    // it already use.
+    // jq's own text, kept verbatim. Note what that does NOT buy: Oniguruma reads
+    // `\b` as Unicode-aware and JS reads it as ASCII-only, so a non-ASCII word
+    // character before `SG.` anchors here and not there (over-redaction; jq leaves
+    // such a token in cleartext). Rewriting it as a lookbehind would not fix that
+    // either - `S` is itself an ASCII word character, so `(?<![A-Za-z0-9_])` means
+    // exactly what `\b` means in JS. Pinned as a divergence by ENGINE_DIVERGENCES
+    // in redaction.test.ts rather than papered over.
     name: "sendgrid",
-    pattern: /(?<![A-Za-z0-9_])SG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}/g,
+    pattern: /\bSG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}/g,
     replacement: "SG.***",
   },
 ];
@@ -150,23 +151,21 @@ const DQ = '"';
 /** Regex TEXT matching one literal backslash, for the alternative that steps over `\"`. */
 const RE_BS = String.raw`\\`;
 /**
- * NOT-whitespace, spelled out to match Oniguruma rather than JS. JS's `\s`
- * additionally matches U+FEFF, which Oniguruma's does not, so a value run written
- * as `[^\s'\"\\]` stops short at a BOM inside a password and masks only its head
- * while jq masks the whole thing - the "looks redacted but is not" failure this
- * file keeps calling out. U+00A0, U+2028 and U+2029 ARE whitespace to Oniguruma
- * (verified against jq 1.7.1), so they stay excluded. Rather than leave this
- * stricter than jq anywhere, the differential test in `redaction.test.ts` pins
- * that a `-p` followed directly by U+FEFF, U+00A0, U+2028 or U+2029 comes out the
- * same on both sides.
+ * The whitespace characters Oniguruma's `\s` matches, verified one code point at a
+ * time against jq 1.7.1: ASCII whitespace, U+0085, U+00A0, U+1680, U+2000-U+200A,
+ * U+2028, U+2029, U+202F, U+205F, U+3000 - and NOT U+FEFF, which JS's `\s` DOES
+ * match. Writing `\s` here would therefore stop a value run at a BOM inside a
+ * password and mask only its head while jq masks the whole thing, and would keep
+ * running through nothing else; this spelling is the set jq actually uses, so the
+ * differential test in redaction.test.ts has no whitespace divergence left to miss.
  *
- * Braces are deliberately NOT used (`\u{00A0}`): outside the `u` flag JS reads
+ * Braces are deliberately not used (`\u{00a0}`): outside the `u` flag JS reads
  * `\u{41}` as the character set {u,4,1}, which would put letters and digits in the
  * class and turn the rule into a sledgehammer.
  */
-const JS_NOT_WS = String.raw`[^ \t\n\v\f\r\u00A0\u2028\u2029]`;
+const JS_NOT_WS = String.raw`[^ \t\n\v\f\r\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]`;
 /** The same set as a class body, for the glue's ordinary-char alternative. */
-const JS_WS_CHARS = String.raw` \t\n\v\f\r\u00A0\u2028\u2029`;
+const JS_WS_CHARS = String.raw` \t\n\v\f\r\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000`;
 
 /**
  * Client-name anchor. jq: the head of `_mysql_anchor`. A client name that is not a
