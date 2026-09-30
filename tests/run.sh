@@ -1556,7 +1556,11 @@ eq "precompact: boundary after a post-boundary action stamps again" "$(grep -c '
   printf '%s' "${#defs}" > "$WORK/defs-len.txt"
 )
 eq "jq defs: no full-line comment reaches jq" "$(cat "$WORK/defs-comments.txt")" "no-comment-line"
-[ "$(cat "$WORK/defs-len.txt")" -lt 20000 ] && ok "jq defs: emitted text is under 20000 chars (Windows argv cap is 32767 for defs + filter)" || bad "jq defs: emitted text is $(cat "$WORK/defs-len.txt") chars, over the 20000 budget"
+if [ "$(cat "$WORK/defs-len.txt")" -lt 20000 ]; then
+  ok "jq defs: emitted text is under 20000 chars (Windows argv cap is 32767 for defs + filter)"
+else
+  bad "jq defs: emitted text is $(cat "$WORK/defs-len.txt") chars, over the 20000 budget"
+fi
 
 echo "----------------------"
 printf 'passed: %s   failed: %s\n' "$PASS" "$FAIL"
