@@ -197,7 +197,11 @@ function redactUrlUserinfo(str: string): string {
   // rather than the cosmetic one: a BOM anywhere inside the userinfo or the password
   // ends the match in JS, the rule does not fire at all, and the password is stored
   // in cleartext - whereas jq masks it.
-  const regex = new RegExp("(\\/\\/" + jsNotWs(":@/") + "+):(" + jsNotWs("@/") + "+)@", "g");
+  // jq's `_url` anchors on `://`, not `//`, and this port had `//` since before this
+  // branch existed - it masked `//user:pw@host`, which jq leaves alone. Over-redaction
+  // only, and now closed: the colon is part of the pattern, so a scheme-relative URL is
+  // left verbatim here exactly as jq leaves it.
+  const regex = new RegExp("(:\\/\\/" + jsNotWs(":@/") + "+):(" + jsNotWs("@/") + "+)@", "g");
   return str.replace(regex, `$1:${REDACT_SENTINEL}@`);
 }
 
@@ -558,10 +562,20 @@ export function redact(str: string): string {
   // `\\w` is re-spelled as TWO passes rather than one widened rule, and the order is
   // the whole point of the shape:
   //   pass 6a - JS's own ASCII `\\w*` affixes, which is jq's text verbatim;
-  //   pass 6b - the same rule with Oniguruma's word set over-approximated
-  //             (`JS_WORD_STAR`), so `password\u00e9=S3cret`, where jq's `\\w*` walks over
-  //             the accent but JS's stops, the separator alternatives cannot match a
-  //             letter and the rule never fires at all, is masked here too.
+  //   pass 6b - the same rule with Oniguruma's word set over-approximated on the
+  //             SUFFIX only (`JS_WORD_STAR`), so `password\u00e9=S3cret`, where jq's `\\w*`
+  //             walks over the accent but JS's stops, the separator alternatives cannot
+  //             match a letter and the rule never fires at all, is masked here too.
+  //             The LEADING affix stays ASCII, and that is a latency decision, not an
+  //             oversight: a star that matches any non-ASCII non-whitespace character on
+  //             both sides of the keyword costs O(run length) work at every position
+  //             inside a run of such text, which is quadratic on the CJK prose that has
+  //             no spaces - measured at 5.6 s for a 3 KB command where `main` takes 1 ms,
+  //             and `redact()` runs in-process on the full unclamped bash command. The
+  //             leading affix only moves where a match starts, and whatever it matches is
+  //             written back verbatim by the replacement, so dropping it costs no mask:
+  //             `\u4e2dAPI_KEY\u4e2d  S3cretPw` is still masked, the match just starts at the
+  //             keyword instead of at the character before it.
   // Widening the single rule instead was shorter and WRONG, found by the seeded fuzz
   // test in redaction.test.ts rather than by reasoning: a keyword group that runs
   // longer also MATCHES EARLIER, and an earlier match can consume the keyword a later
@@ -574,8 +588,8 @@ export function redact(str: string): string {
   // The `\\b` of the OTHER rules is a different class of difference: there even an
   // over-approximation can land on the leaking side, so those stay pinned as
   // divergences - see ENGINE_DIVERGENCES in redaction.test.ts.
-  const keywordPattern = (affix: string) =>
-    "(" + affix + "(?:" + KEYWORD_ALTERNATION + ")" + affix + ")" +
+  const keywordPattern = (lead: string, suffix: string) =>
+    "(" + lead + "(?:" + KEYWORD_ALTERNATION + ")" + suffix + ")" +
       "(" + JS_WS + "*[:=]" + JS_WS + "*|" + JS_WS + "+(?:" + SEPARATOR_ALTERNATION + ")" + JS_WS + "+|" + JS_WS + "+)" +
       "(\"[^\"]*\"|" + REDACT_SENTINEL + "|\"[^\\r\\n]*|" + jsNotWs("\"") + "+)";
   const keywordReplacement = (_match: string, keyword: string, sep: string, value: string) => {
@@ -587,8 +601,8 @@ export function redact(str: string): string {
     return `${keyword}${sep}***`;
   };
 
-  result = result.replace(new RegExp(keywordPattern("\\w*"), "gi"), keywordReplacement);
-  result = result.replace(new RegExp(keywordPattern(JS_WORD_STAR), "gi"), keywordReplacement);
+  result = result.replace(new RegExp(keywordPattern("\\w*", "\\w*"), "gi"), keywordReplacement);
+  result = result.replace(new RegExp(keywordPattern("\\w*", JS_WORD_STAR), "gi"), keywordReplacement);
 
   // 7. Unmask sentinel
   result = unmaskSentinel(result);

@@ -117,7 +117,16 @@ All notable changes to throughline are documented here. Format loosely follows
   position of every literal and requires the two engines to agree exactly. The prompt
   path is now differentially tested too (`redact_prompt` over the same seeded 400-input
   corpus, which the previous rounds could only have checked by hand-written
-  expectations): it matches jq exactly on that corpus. (`.omp-plugin` never
+  expectations): it matches jq exactly on that corpus. Two more differences fell out of
+  that review. The URL userinfo rule was anchored on `//` where jq's `_url` anchors on
+  `://`, so a scheme-relative reference like `//user:pw@host` was masked here and left
+  verbatim by jq; the colon is now in the pattern, which means this port masks slightly
+  less text than it did (the masked string was never a secret jq recognised, and a real
+  `://` URL is unaffected). And over-approximating `\w` on both sides of the keyword made
+  `redact()` quadratic in the length of a run of non-ASCII text - 5.6 s for a 3 KB command
+  where the released code takes 1 ms, on a path that runs in-process against the full
+  unclamped bash command - so the over-approximation is on the suffix only, which costs no
+  mask because a leading affix is written back verbatim, with a latency test pinning it. (`.omp-plugin` never
   had this gap: its shim shells out to the same `hooks/*.sh` scripts.)
 - **Capture hook dropped every event on Windows** (issue #81 review): the jq program
   is one command-line argument (`redaction defs + capture filter`) and Windows caps a

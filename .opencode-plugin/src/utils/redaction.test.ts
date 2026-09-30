@@ -1169,6 +1169,11 @@ describe('regex-engine parity with jq (issue #90 review round 1)', () => {
     ['access\u212aey: S3cret', 'access\u212aey: ***'],
     // URL userinfo: a BOM inside the userinfo used to end the match, so the rule did
     // not fire and the password was never masked at all.
+    // URL userinfo: the port anchored on `//` where jq anchors on `://`, so a
+    // scheme-relative URL was masked here and left verbatim by jq. Over-redaction, and
+    // it predates this branch; pinned so it cannot quietly come back.
+    ['//user:pw@host', '//user:pw@host'],
+    ['x//user:pw@host', 'x//user:pw@host'],
     ['https://user\ufeffname:pass\ufeffword@host', 'https://user\ufeffname:***@host'],
     ['https://user\u0085name:pass\u0085word@host', 'https://user\u0085name:pass\u0085word@host'],
   ];
@@ -1231,6 +1236,8 @@ describe('regex-engine parity with jq (issue #90 review round 1)', () => {
       'echo fooxapp-1-A01B2C3D4E5F-1234567890abcdef',
       'echo mynpm_AbCdEfGh1234567890AbCdEfGh123456',
       'https://user:password@example.com/path',
+      '//user:pw@host',
+      'token\u4e2d'.repeat(3) + ' 5>&1',
       'config: password="open sesame',
       'ghp_AbcDefGhiJklMnoPqrStuVwxYzaBcDefGhiJ',
       'The bearer of good news',
@@ -1479,5 +1486,28 @@ describe('regex-engine parity with jq (issue #90 review round 1)', () => {
     }
     console.log(`NOTE: case-fold mutation sweep - ${cases} inputs, ${failures.length} divergence(s) from jq`);
     assert.deepStrictEqual(failures, [], `${failures.length} case-fold input(s) diverge from jq`);
+  });
+
+  /**
+   * Latency guard for the word pass. Over-approximating `\w` on BOTH sides of the keyword
+   * made this quadratic in the length of a run of non-ASCII non-whitespace text - 5.6 s
+   * for a 3 KB command on a build where `main` takes 1 ms - and `redact()` runs
+   * in-process on the full unclamped bash command, so that is a frozen plugin, not a slow
+   * one. CJK prose has no spaces, so such a run is ordinary input rather than a crafted
+   * one. The over-approximation now sits on the suffix only and this stays in the
+   * milliseconds; the bound is loose (observed single-digit ms) and exists to fail a
+   * future change that puts a star back on the leading side.
+   */
+  it('stays linear on a long run of non-ASCII text, which the leading word affix used to break', () => {
+    // The mask is asserted on a trailing keyword rather than inside the run: inside the
+    // run nothing is maskable (no separator follows the non-ASCII character), which is
+    // exactly why the quadratic scan cost nothing in output and everything in time.
+    const input = 'token\u6f22'.repeat(500) + ' password=x';
+    const started = Date.now();
+    const out = redact(input);
+    const elapsed = Date.now() - started;
+    assert.ok(out.includes('***'), 'nothing was masked, so the timing proves nothing');
+    assert.ok(!out.includes('password=x'), `the trailing secret survived: ${JSON.stringify(out.slice(-40))}`);
+    assert.ok(elapsed < 2000, `redact() took ${elapsed}ms on a ${input.length}-character command; the leading word affix has gone quadratic again`);
   });
 });
