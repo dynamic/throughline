@@ -15,8 +15,11 @@
  * `redaction.test.ts` parses `hooks/_lib.sh` and fails if a rule is added,
  * removed, reordered or edited on the jq side without being ported here. That
  * test, not this comment, is what keeps the two in step — the drift it exists
- * to catch is exactly what happened with the issue #81 rules, which landed on
- * the jq side and sat unported here for a whole release.
+ * to catch is exactly what happened with the issue #81 rules: they landed on the
+ * jq side and were not ported here at the same time, so for as long as both are
+ * unreleased the two files disagree. (They are still both inside [Unreleased], so
+ * no shipped release ever had the jq rule without the port - the drift is a real
+ * maintenance hazard, not a user-visible leak.)
  *
  * Oniguruma-to-JS differences the port has to work around (both noted at the
  * rule that needs them, so the tables stay comparable line by line):

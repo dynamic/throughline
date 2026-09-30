@@ -383,8 +383,8 @@ MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQC7AwHKqnhQV2Kh
  * reordered or re-tuned on the jq side turns this suite red instead of quietly
  * leaving OpenCode users without it. That is the point of issue #90: the issue #81
  * rules (the client-anchored MySQL `-p<password>` set and the `xapp-`, `sk_live_`,
- * `rk_test_`, `glpat-`, `npm_`, `SG.` prefixes) sat unported for a release because
- * nothing mechanical was checking.
+ * `rk_test_`, `glpat-`, `npm_`, `SG.` prefixes) were added on the jq side and not
+ * ported here at the same time, because nothing mechanical was checking.
  */
 
 function repoLibPath(): string {
@@ -655,15 +655,6 @@ function tsTextToJqText(source: string): string {
     out = out.split(row.ts).join(row.jq);
   }
   return out;
-}
-
-function jqIsAvailable(): boolean {
-  try {
-    execFileSync('jq', ['--version'], { stdio: 'pipe' });
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 type JqRule = { name: string; pattern: string; replacement: string };

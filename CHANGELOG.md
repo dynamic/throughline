@@ -76,15 +76,16 @@ All notable changes to throughline are documented here. Format loosely follows
   build a path.
 
 ### Fixed
-- **OpenCode plugin was missing the issue #81 redaction rules** (issue #90): the
-  OpenCode plugin carries its own TypeScript port of the jq redaction defs, and the
-  rules added for issue #81 had never been ported - an OpenCode session running
-  `mysql -h db -u app -pS3cretPw dbname` still wrote the plaintext password to its
-  buffer, and `xapp-`, `sk_live_`/`rk_test_`, `glpat-`, `npm_` and `SG.x.y` tokens
-  were stored verbatim. Both rule sets are now single tables in
-  `.opencode-plugin/src/utils/redaction.ts`, and `redaction.test.ts` parses
-  `hooks/_lib.sh`, composes the jq defs the way jq does, and fails on any rule added,
-  removed, reordered or re-tuned on the shell side but not ported - so the two
+- **OpenCode plugin port of the issue #81 rules, plus a parity test** (issue #90):
+  the OpenCode plugin carries its own TypeScript port of the jq redaction defs, and
+  the rules added for issue #81 above were not ported at the same time - so with both
+  still unreleased, an OpenCode session running `mysql -h db -u app -pS3cretPw dbname`
+  masks nothing while the Claude Code hooks do, and `xapp-`, `sk_live_`/`rk_test_`,
+  `glpat-`, `npm_` and `SG.x.y` tokens are stored verbatim. Both rule sets are now
+  single tables in `.opencode-plugin/src/utils/redaction.ts`, ported rule for rule
+  including the regex-spelling differences Oniguruma and JS read differently (see
+  `JS_NOT_WS`), and `redaction.test.ts` parses `hooks/_lib.sh`, composes the jq defs
+  the way jq does and compares behaviour against `jq` itself, so the two
   implementations cannot drift silently again. (`.omp-plugin` never had this gap: its
   shim shells out to the same `hooks/*.sh` scripts.)
 - **Capture hook dropped every event on Windows** (issue #81 review): the jq program
