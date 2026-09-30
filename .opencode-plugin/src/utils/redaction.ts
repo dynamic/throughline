@@ -38,6 +38,39 @@
 /** Sentinel for URL userinfo redaction (prevents generic rules from over-masking) */
 const REDACT_SENTINEL = "TLREDACTSENTINEL";
 
+/**
+ * The whitespace characters Oniguruma's `\s` matches. Verified one code point at a
+ * time against jq 1.7.1 by sweeping EVERY non-surrogate code point (`test("[\\s]")`
+ * over U+0000-U+10FFFF): the set is 25 code points - ASCII whitespace, U+0085, U+00A0,
+ * U+1680, U+2000-U+200A, U+2028, U+2029, U+202F, U+205F and U+3000 - and it does NOT
+ * include U+FEFF, which JS's `\s` DOES match.
+ *
+ * This is a class BODY, and it is what every `\s` in this file is re-spelled into,
+ * including the rules that predate issue #90. JS's `\s` and Oniguruma's disagree in
+ * BOTH directions - JS has U+FEFF and lacks U+0085 - and each half of that difference
+ * is a leak, not a cosmetic drift:
+ *   - in a VALUE class, JS stops the run at a BOM inside a secret and masks only its
+ *     head (`password=abc<U+FEFF>S3cret` -> `password=***<U+FEFF>S3cret` here, while
+ *     jq masks the whole value);
+ *   - in a SEPARATOR class, JS refuses to walk over a U+0085, so the rule never fires
+ *     at all and the secret is not masked even in part (`bearer<U+0085>AbCd...` and
+ *     `password<U+0085>=S3cret` are left verbatim here, masked by jq).
+ * No ASCII-only test input can see either case.
+ *
+ * Braces are deliberately not used (`\u{00a0}`): outside the `u` flag JS reads
+ * `\u{41}` as the character set {u,4,1}, which would put letters and digits in the
+ * class and turn the rule into a sledgehammer.
+ */
+const JS_WS_CHARS = String.raw` \t\n\v\f\r\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000`;
+/** A class matching exactly Oniguruma's `\s`. */
+const JS_WS = "[" + JS_WS_CHARS + "]";
+/** A class matching exactly Oniguruma's `\S`. */
+const JS_NOT_WS = "[^" + JS_WS_CHARS + "]";
+/** `[^$extras<Oniguruma \s>]` - a negated class that also excludes `$extras`. */
+function jsNotWs(extras: string): string {
+  return "[^" + extras + JS_WS_CHARS + "]";
+}
+
 // --- Structural patterns (safe for both command and prompt paths) ---
 
 /**
@@ -51,7 +84,12 @@ const PEM_INCOMPLETE_REGEX = /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*/g;
  * Sets sentinel to prevent generic rules from consuming past the @.
  */
 function redactUrlUserinfo(str: string): string {
-  return str.replace(/(\/\/[^:@/\s]+):([^@/\s]+)@/g, `$1:${REDACT_SENTINEL}@`);
+  // jq: `_url`, re-spelled for Oniguruma's `\s`. This one is the leak direction
+  // rather than the cosmetic one: a BOM anywhere inside the userinfo or the password
+  // ends the match in JS, the rule does not fire at all, and the password is stored
+  // in cleartext - whereas jq masks it.
+  const regex = new RegExp("(\\/\\/" + jsNotWs(":@/") + "+):(" + jsNotWs("@/") + "+)@", "g");
+  return str.replace(regex, `$1:${REDACT_SENTINEL}@`);
 }
 
 /**
@@ -154,21 +192,9 @@ const DQ = '"';
 /** Regex TEXT matching one literal backslash, for the alternative that steps over `\"`. */
 const RE_BS = String.raw`\\`;
 /**
- * The whitespace characters Oniguruma's `\s` matches, verified one code point at a
- * time against jq 1.7.1: ASCII whitespace, U+0085, U+00A0, U+1680, U+2000-U+200A,
- * U+2028, U+2029, U+202F, U+205F, U+3000 - and NOT U+FEFF, which JS's `\s` DOES
- * match. Writing `\s` here would therefore stop a value run at a BOM inside a
- * password and mask only its head while jq masks the whole thing, and would keep
- * running through nothing else; this spelling is the set jq actually uses, so the
- * differential test in redaction.test.ts has no whitespace divergence left to miss.
- *
- * Braces are deliberately not used (`\u{00a0}`): outside the `u` flag JS reads
- * `\u{41}` as the character set {u,4,1}, which would put letters and digits in the
- * class and turn the rule into a sledgehammer.
+ * The whitespace set Oniguruma reads `\s` as, spelled out in `JS_WS_CHARS` at the top
+ * of this file; `JS_NOT_WS` is its negation, used where jq writes `(?=\S)`.
  */
-const JS_NOT_WS = String.raw`[^ \t\n\v\f\r\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]`;
-/** The same set as a class body, for the glue's ordinary-char alternative. */
-const JS_WS_CHARS = String.raw` \t\n\v\f\r\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000`;
 
 /**
  * Client-name anchor. jq: the head of `_mysql_anchor`. A client name that is not a
@@ -321,7 +347,10 @@ function unmaskSentinel(str: string): string {
  * Bearer scheme redaction (command path, min length 1).
  */
 function redactBearerScheme(str: string, minLen: number): string {
-  const regex = new RegExp(`bearer\\s+([A-Za-z0-9._-]{${minLen},})`, "gi");
+  // jq: `_bearer_scheme($min)`. `\\s` re-spelled for Oniguruma's: a U+0085 between the
+  // scheme and the token means the JS rule never fires and the token is stored
+  // verbatim, while jq masks the whole thing - the leak direction.
+  const regex = new RegExp(`bearer${JS_WS}+([A-Za-z0-9._-]{${minLen},})`, "gi");
   return str.replace(regex, "Bearer ***");
 }
 
@@ -329,7 +358,7 @@ function redactBearerScheme(str: string, minLen: number): string {
  * Basic scheme redaction (command path, min length 8).
  */
 function redactBasicScheme(str: string, minLen: number): string {
-  const regex = new RegExp(`\\bbasic\\s+[A-Za-z0-9+/=]{${minLen},}`, "gi");
+  const regex = new RegExp(`\\bbasic${JS_WS}+[A-Za-z0-9+/=]{${minLen},}`, "gi");
   return str.replace(regex, "Basic ***");
 }
 
@@ -337,7 +366,8 @@ function redactBasicScheme(str: string, minLen: number): string {
  * Token scheme redaction (command path).
  */
 function redactTokenScheme(str: string): string {
-  return str.replace(/\btoken\s+([A-Za-z0-9._-]+)/gi, "Token ***");
+  // jq: the bare `\\btoken\\s+...` gsub in `redact`, command path, no length floor.
+  return str.replace(new RegExp(`\\btoken${JS_WS}+([A-Za-z0-9._-]+)`, "gi"), "Token ***");
 }
 
 /**
@@ -356,7 +386,7 @@ function redactAuthSchemes(str: string): string {
 function redactAuthSchemesProse(str: string): string {
   let result = str;
   result = redactBearerScheme(result, 16);
-  result = result.replace(/\btoken\s+([A-Za-z0-9._-]{16,})/gi, "Token ***");
+  result = result.replace(new RegExp(`\\btoken${JS_WS}+([A-Za-z0-9._-]{16,})`, "gi"), "Token ***");
   result = redactBasicScheme(result, 16);
   return result;
 }
@@ -377,9 +407,11 @@ function redactAuthSchemesProse(str: string): string {
  * 6. Generic keyword=value (catch-all)
  * 7. Unmask sentinel
  *
- * Steps 1-7 mirror jq's `redact` pipeline in order; the parity test checks the
- * two rule tables inside it, and the ordering comment above is part of what it
- * checks structurally by assertion on this function's output.
+ * Steps 1-7 mirror jq's `redact` pipeline in order. The parity test asserts that
+ * order by reading jq's own def bodies: `runs the MySQL rules in the command chain
+ * only, exactly as jq does` parses `redact` / `redact_prompt` out of `hooks/_lib.sh`
+ * and pins that `_mysql_pw_all` runs after `_prefix_tokens` and that no `_mysql*`
+ * def reaches the prompt path, then checks this function's output mirrors it.
  */
 export function redact(str: string): string {
   let result = str;
@@ -407,8 +439,18 @@ export function redact(str: string): string {
   // Matches: token, secret, password, passwd, api_key, access_key, credential, auth, authorization, client_id
   // With separators: :, =, " is ", " was ", " are ", or whitespace
   // Values: balanced quotes, sentinel, unterminated quotes, or bare unquoted
-  const keywordRegex =
-    /(\w*(?:token|secret|password|passwd|api[_-]?key|access[_-]?key|credential|auth(?:orization)?|client[_-]?id)\w*)(\s*[:=]\s*|\s+(?:is|was|are)\s+|\s+)("[^"]*"|TLREDACTSENTINEL|"[^\r\n]*|[^\s"]+)/gi;
+  // jq: the generic gsub at the end of `redact`. BOTH `\\s` sites are re-spelled for
+  // Oniguruma's set: the separator class decides whether the rule fires at all and
+  // the value class decides how far the mask reaches, so each is a leak in one of the
+  // two directions. `\\w` and the `\\b` of the other rules are a different class of
+  // difference (Unicode-aware vs ASCII) and are documented as divergences instead -
+  // see ENGINE_DIVERGENCES in redaction.test.ts for why they cannot be spelled out.
+  const keywordRegex = new RegExp(
+    "(\\w*(?:token|secret|password|passwd|api[_-]?key|access[_-]?key|credential|auth(?:orization)?|client[_-]?id)\\w*)" +
+      "(" + JS_WS + "*[:=]" + JS_WS + "*|" + JS_WS + "+(?:is|was|are)" + JS_WS + "+|" + JS_WS + "+)" +
+      "(\"[^\"]*\"|" + REDACT_SENTINEL + "|\"[^\\r\\n]*|" + jsNotWs("\"") + "+)",
+    "gi",
+  );
 
   result = result.replace(keywordRegex, (match, keyword, sep, value) => {
     // If value is the sentinel, keep it as-is (will be unmasked later)

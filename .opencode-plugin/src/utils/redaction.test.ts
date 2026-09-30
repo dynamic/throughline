@@ -923,18 +923,65 @@ describe('issue #81 rules, ported to the OpenCode plugin', () => {
  * its differential test is what stops the text-normalization mapping from being
  * used to paper over a real behavioural drift.
  */
-const ENGINE_DIVERGENCES: readonly { input: string; note: string }[] = [
+/**
+ * Places where the two implementations still behave differently, each with its
+ * DIRECTION pinned, because the direction is not uniform and cannot be made so.
+ *
+ * JS reads `\b` / `\w` as ASCII-only and Oniguruma reads them as Unicode, and that
+ * difference cannot be spelled out the way `\s` was. Measured, not assumed: the
+ * closest Unicode-property class JS offers, `[\p{L}\p{N}\p{M}_]`, disagrees with
+ * Oniguruma's word set on 583 of the 19,979 code points probed against jq 1.7.1 (and
+ * `[\p{L}\p{N}_]` on 2,179), so a lookbehind written with property escapes would move
+ * the divergence rather than close it - and it would land on the side that leaks, in
+ * rules whose `\S`-spelled classes use identity escapes the `u` flag rejects.
+ *
+ * So each row below says which engine masks more, and the differential test asserts
+ * that row rather than assuming a direction. `over` = the port masks a command jq
+ * leaves visible (no secret escapes). `under` = jq masks a secret the port leaves in
+ * cleartext: a LEAK, with both outputs pinned verbatim so it cannot grow quietly, in
+ * shape or in count. A later round that closes one must DELETE its row, not soften it.
+ */
+const ENGINE_DIVERGENCES: readonly {
+  input: string;
+  direction: 'over' | 'under';
+  note: string;
+  /** `under` rows only: the two outputs, pinned. */
+  jq?: string;
+  ts?: string;
+}[] = [
   {
     input: 'mysql\u00e9 -pS3cretPw db',
-    note: 'jq does not anchor after a non-ASCII word character (Unicode-aware \\b), the TS port does: over-redaction of a captured command, no leak',
+    direction: 'over',
+    note: 'jq does not anchor after a non-ASCII word character (Unicode-aware \\b), the TS port does',
   },
   {
     input: '\u00e9mysql -pS3cretPw db',
+    direction: 'over',
     note: 'same, on the leading \\b of the client-name anchor',
   },
   {
     input: 'mail --key \u00e9SG.abcdefghijklmnopqrst.ABCDEFGHIJKLMNOPQRST',
+    direction: 'over',
     note: 'jq leaves this SendGrid-shaped token in cleartext (its \\b does not fire after \u00e9); the port masks it. Over-redaction here is a gap on the jq side, not a leak here.',
+  },
+  {
+    // The over-match above is not harmless in the general case, because an early rule
+    // that masks MORE than jq can consume the keyword a LATER rule needed, and the
+    // secret that rule would have masked survives. Both of these are the port's own
+    // `\b` firing after \u00e9; the difference from the three rows above is only what
+    // the extra mask swallows.
+    input: '\u00e9SG.abcdefghijklmnopqrst.ABCDEFGHIJKLMNOPQRSTpassword=S3cret',
+    direction: 'under',
+    jq: '\u00e9SG.abcdefghijklmnopqrst.ABCDEFGHIJKLMNOPQRSTpassword=***',
+    ts: '\u00e9SG.***=S3cret',
+    note: 'LEAK: the port anchors on \u00e9 and the SendGrid token class swallows the following `password`, so the generic keyword rule never fires and `S3cret` survives. jq anchors nowhere and masks `password=S3cret` instead.',
+  },
+  {
+    input: '\u00e9mysql -pxtoken abcS3cret',
+    direction: 'under',
+    jq: '\u00e9mysql -pxtoken ***',
+    ts: '\u00e9mysql -p*** abcS3cret',
+    note: 'LEAK: the port anchors on \u00e9 and the MySQL span eats `token`, so the token-word rule never fires and `abcS3cret` survives. Same mechanism as the row above, different rule order.',
   },
 ];
 
@@ -988,6 +1035,34 @@ describe('regex-engine parity with jq (issue #90 review round 1)', () => {
     // over by both. Written as an escape so it cannot be silently stripped.
     ['mysql -p\ufeffdbname', 'mysql -p***'],
     ['mysql -p\ufeffx y', 'mysql -p*** y'],
+    // The generic keyword=value rule, the auth-scheme separators and the URL
+    // userinfo class all used a raw `\s`, and JS's `\s` and Oniguruma's differ in
+    // BOTH directions. U+FEFF: JS stops the value run at the BOM and masks only its
+    // head, leaving the tail of the password in cleartext - the leak the review
+    // reported, in rules that predate the issue #81 port.
+    ['password=abc\ufeffS3cret rest', 'password=*** rest'],
+    ['export API_TOKEN=abc\ufeffS3cret', 'export API_TOKEN=***'],
+    // U+0085, the reverse: whitespace to Oniguruma and not to JS. Here the value run
+    // STOPS at the U+0085 in both engines once the class is spelled out, so the tail
+    // stays visible in both - jq leaks it too, and matching that is the point of the
+    // port. What the JS-only `\s` did instead was mask through it, which is the
+    // over-redaction half of the same missing code point.
+    ['password=abc\u0085S3cret rest', 'password=***\u0085S3cret rest'],
+    // And the separators, where the difference is whether the rule fires AT ALL: with
+    // a JS `\s` a U+0085 separator matches nothing, so the secret is stored whole.
+    ['bearer\u0085AbCdEfGhIjKlMnOp', 'Bearer ***'],
+    ['basic\u0085YWJjZGVmZ2hpamts', 'Basic ***'],
+    ['token\u0085AbCdEf.mn_op', 'Token ***'],
+    ['password\u0085=S3cret', 'password\u0085=***'],
+    ['password\u0085is S3cret', 'password\u0085is ***'],
+    // The BOM side of the same separator: not whitespace to jq, so jq leaves these
+    // alone while a JS `\s` masked them.
+    ['bearer\ufeffAbCdEfGhIjKlMnOp', 'bearer\ufeffAbCdEfGhIjKlMnOp'],
+    ['password\ufeff=S3cret', 'password\ufeff=S3cret'],
+    // URL userinfo: a BOM inside the userinfo used to end the match, so the rule did
+    // not fire and the password was never masked at all.
+    ['https://user\ufeffname:pass\ufeffword@host', 'https://user\ufeffname:***@host'],
+    ['https://user\u0085name:pass\u0085word@host', 'https://user\u0085name:pass\u0085word@host'],
   ];
 
   for (const [input, expected] of engineCases) {
@@ -1068,9 +1143,21 @@ describe('regex-engine parity with jq (issue #90 review round 1)', () => {
         unexplained.push(`UNEXPLAINED ${JSON.stringify(input)}\n    jq: ${JSON.stringify(jqOut)}\n    ts: ${JSON.stringify(tsOut)}`);
         continue;
       }
-      // A documented divergence must stay in the safe direction: the port masks a
-      // secret that jq leaves visible. If it ever flips, it is a leak, not a
-      // divergence, and this fails.
+      if (documented.direction === 'under') {
+        // A pinned leak: both outputs are recorded verbatim, so a row cannot grow,
+        // shrink or change shape without failing here.
+        if (jqOut !== documented.jq || tsOut !== documented.ts) {
+          unexplained.push(
+            `PINNED LEAK CHANGED SHAPE ${JSON.stringify(input)}\n    jq: ${JSON.stringify(jqOut)} (pinned ${JSON.stringify(documented.jq)})\n    ts: ${JSON.stringify(tsOut)} (pinned ${JSON.stringify(documented.ts)})`,
+          );
+          continue;
+        }
+        seenDivergences.add(documented.input);
+        continue;
+      }
+      // An `over` divergence must stay in that direction: the port masks a secret that
+      // jq leaves visible. If it ever flips, it is a leak, not a divergence, and this
+      // fails.
       if (jqOut.includes('***') || !tsOut.includes('***')) {
         unexplained.push(`DIRECTION FLIPPED ${JSON.stringify(input)}\n    jq: ${JSON.stringify(jqOut)}\n    ts: ${JSON.stringify(tsOut)}`);
         continue;

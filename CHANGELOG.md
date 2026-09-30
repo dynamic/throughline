@@ -85,9 +85,15 @@ All notable changes to throughline are documented here. Format loosely follows
   single tables in `.opencode-plugin/src/utils/redaction.ts`, ported rule for rule
   including the regex-spelling differences Oniguruma and JS read differently (see
   `JS_NOT_WS`), and `redaction.test.ts` parses `hooks/_lib.sh`, composes the jq defs
-  the way jq does and compares behaviour against `jq` itself, so the two
-  implementations cannot drift silently again. (`.omp-plugin` never had this gap: its
-  shim shells out to the same `hooks/*.sh` scripts.)
+  the way jq does and compares behaviour against `jq` itself, so a drift between the
+  two fails the suite on any input in that corpus - which now carries every code point
+  the two engines' `\s` disagree about, both as a separator and inside a value. The
+  word-boundary difference between Oniguruma's Unicode-aware `\b` and JS's ASCII-only
+  one cannot be spelled out that way and is left as a divergence, each input pinned
+  with its direction: three where this port masks a command jq leaves visible, and two
+  contrived ones where an over-match swallows a keyword the next rule needed and a
+  secret survives, pinned as leaks so they cannot grow quietly. (`.omp-plugin` never
+  had this gap: its shim shells out to the same `hooks/*.sh` scripts.)
 - **Capture hook dropped every event on Windows** (issue #81 review): the jq program
   is one command-line argument (`redaction defs + capture filter`) and Windows caps a
   command line at 32,767 characters; the explanatory comments inside the defs had grown
