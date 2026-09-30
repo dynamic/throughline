@@ -87,12 +87,25 @@ All notable changes to throughline are documented here. Format loosely follows
   `JS_NOT_WS`), and `redaction.test.ts` parses `hooks/_lib.sh`, composes the jq defs
   the way jq does and compares behaviour against `jq` itself, so a drift between the
   two fails the suite on any input in that corpus - which now carries every code point
-  the two engines' `\s` disagree about, both as a separator and inside a value. The
-  word-boundary difference between Oniguruma's Unicode-aware `\b` and JS's ASCII-only
-  one cannot be spelled out that way and is left as a divergence, each input pinned
-  with its direction: three where this port masks a command jq leaves visible, and two
-  contrived ones where an over-match swallows a keyword the next rule needed and a
-  secret survives, pinned as leaks so they cannot grow quietly. (`.omp-plugin` never
+  the two engines' `\s` disagree about, both as a separator and inside a value, plus a
+  seeded 400-input random-composition pass over the pieces the rules are built of,
+  asserting one property: the port never leaves in cleartext a secret the jq hooks
+  mask. Two word-class differences needed more than a re-spelling, and they are not the
+  same case. Oniguruma's Unicode-aware `\w` walks over an accented letter where JS's
+  stops, and that does not merely shift a boundary - it makes the separator
+  alternatives unmatchable, so the generic keyword rule never fires at all and
+  `passwordé=S3cret` (that `é` is a literal e-acute) was stored in cleartext here while
+  jq masked it. The port now runs that rule twice, jq's own ASCII affixes first and an
+  over-approximated word class last, so it fires wherever jq fires and the residue of
+  the approximation can only ever extend a mask; widened into the single rule instead,
+  the fuzz pass found it leaking, because a longer keyword group also matches earlier
+  and eats a keyword the next match needed. The word-BOUNDARY difference (`\b`,
+  Unicode-aware in Oniguruma, ASCII-only in JS) is the case that cannot be approximated
+  either way without putting a mask on the leaking side, so it stays a divergence with
+  each input pinned by direction: three where this port masks a command jq leaves
+  visible, and two contrived ones where an over-match swallows a keyword the next rule
+  needed and a secret survives, pinned as leaks so they cannot grow quietly.
+  (`.omp-plugin` never
   had this gap: its shim shells out to the same `hooks/*.sh` scripts.)
 - **Capture hook dropped every event on Windows** (issue #81 review): the jq program
   is one command-line argument (`redaction defs + capture filter`) and Windows caps a

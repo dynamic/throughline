@@ -927,13 +927,23 @@ describe('issue #81 rules, ported to the OpenCode plugin', () => {
  * Places where the two implementations still behave differently, each with its
  * DIRECTION pinned, because the direction is not uniform and cannot be made so.
  *
- * JS reads `\b` / `\w` as ASCII-only and Oniguruma reads them as Unicode, and that
- * difference cannot be spelled out the way `\s` was. Measured, not assumed: the
- * closest Unicode-property class JS offers, `[\p{L}\p{N}\p{M}_]`, disagrees with
- * Oniguruma's word set on 583 of the 19,979 code points probed against jq 1.7.1 (and
+ * JS reads `\b` as ASCII-only and Oniguruma reads it as Unicode, and THAT difference
+ * cannot be spelled out the way `\s` was. Measured, not assumed: the closest
+ * Unicode-property class JS offers, `[\p{L}\p{N}\p{M}_]`, disagrees with Oniguruma's
+ * word set on 583 of the 19,979 code points probed against jq 1.7.1 (and
  * `[\p{L}\p{N}_]` on 2,179), so a lookbehind written with property escapes would move
  * the divergence rather than close it - and it would land on the side that leaks, in
  * rules whose `\S`-spelled classes use identity escapes the `u` flag rejects.
+ *
+ * `\w` is a different case and was fixed rather than pinned: in the generic keyword
+ * rule an affix that stops early does not merely shift a boundary, it makes the
+ * separator alternatives unmatchable so the rule never fires and the secret is stored
+ * whole. There the port over-approximates Oniguruma's word set (`JS_WORD_STAR`), which
+ * fires wherever jq fires and leaves a residue only on the masking side - safe because
+ * that rule is the last masking step, so a longer keyword group cannot eat a keyword a
+ * later rule needed. The `over` rows below are that residue: a non-ASCII character
+ * jq's `\w` refuses and the port's over-approximation accepts. `under` rows are all
+ * `\b`-anchored.
  *
  * So each row below says which engine masks more, and the differential test asserts
  * that row rather than assuming a direction. `over` = the port masks a command jq
@@ -982,6 +992,68 @@ const ENGINE_DIVERGENCES: readonly {
     jq: '\u00e9mysql -pxtoken ***',
     ts: '\u00e9mysql -p*** abcS3cret',
     note: 'LEAK: the port anchors on \u00e9 and the MySQL span eats `token`, so the token-word rule never fires and `abcS3cret` survives. Same mechanism as the row above, different rule order.',
+  },
+  // The `over` rows below are the residue of over-approximating Oniguruma's `\w` in the
+  // generic keyword rule (`JS_WORD_STAR`): jq's `\w` refuses a non-ASCII PUNCTUATION,
+  // SYMBOL or FORMAT character, so its affix stops there, the separator alternatives
+  // cannot match it, and jq leaves the secret in cleartext - the port fires and masks.
+  // One row per Unicode general category the residue spans, so the shape is pinned
+  // without pinning 45 near-identical inputs; the seeded fuzz test below sweeps the
+  // separators around them and asserts the direction on each.
+  {
+    input: 'password\u00a9=S3cret',
+    direction: 'over',
+    note: 'So (symbol other): jq does not treat \u00a9 as a word character, so its keyword affix stops and `=` is unreachable as a separator; the port masks.',
+  },
+  {
+    input: 'password\u00ad=S3cret',
+    direction: 'over',
+    note: 'Cf (format, soft hyphen): same shape, and the character is invisible in most renderings, which is what makes a pinned row worth having.',
+  },
+  {
+    input: 'password\ufeff=S3cret',
+    direction: 'over',
+    note: 'Cf (BOM): jq leaves `password<BOM>=S3cret` verbatim because its `\\w` refuses U+FEFF and a JS `\\s` used to accept it; the port now masks it for the opposite reason. This is the one residue case the hand-written corpus already carried.',
+  },
+  {
+    input: 'password\u200b=S3cret',
+    direction: 'over',
+    note: 'Cf (zero-width space): zero-width characters are exactly what a copy-paste from a web page leaves between a keyword and its `=`.',
+  },
+  {
+    input: 'password\u180e=S3cret',
+    direction: 'over',
+    note: 'Cf (Mongolian vowel separator): the category is what matters, not the character.',
+  },
+  {
+    input: 'password\u2011=S3cret',
+    direction: 'over',
+    note: 'Pd (dash): a non-breaking hyphen in `password\u2011=S3cret`; jq leaks, the port masks.',
+  },
+  {
+    input: 'password\u201c=S3cret',
+    direction: 'over',
+    note: 'Pi (initial punctuation quote): a curly quote glued to the keyword. Checked rather than assumed: the quoted form `password\u201c"S3cret"` is left verbatim by BOTH engines, so only the bare value diverges - the quote alternative masks it on neither side.',
+  },
+  {
+    input: 'password\u20ac=S3cret',
+    direction: 'over',
+    note: 'Sc (currency symbol).',
+  },
+  {
+    input: 'password\u3001=S3cret',
+    direction: 'over',
+    note: 'Po (CJK punctuation, ideographic comma).',
+  },
+  {
+    input: 'password\u{1f600}=S3cret',
+    direction: 'over',
+    note: 'So outside the BMP, seen here as a UTF-16 surrogate pair: without the `u` flag this file matches code units, and a surrogate is neither ASCII nor whitespace, so it counts as a word character. jq sees one code point and refuses it.',
+  },
+  {
+    input: 'password\ue000=S3cret',
+    direction: 'over',
+    note: 'Co (private use): no Unicode property resolves this one either way, which is the honest limit of any attempt to spell the Oniguruma word set out in JS.',
   },
 ];
 
@@ -1055,10 +1127,25 @@ describe('regex-engine parity with jq (issue #90 review round 1)', () => {
     ['token\u0085AbCdEf.mn_op', 'Token ***'],
     ['password\u0085=S3cret', 'password\u0085=***'],
     ['password\u0085is S3cret', 'password\u0085is ***'],
-    // The BOM side of the same separator: not whitespace to jq, so jq leaves these
-    // alone while a JS `\s` masked them.
+    // The BOM side of the same separator: not whitespace to jq, so jq does not fire on
+    // the separator at all. `bearer` is not a keyword so that input stays verbatim;
+    // `password<BOM>=` is masked by the port now, because the keyword affix
+    // over-approximates Oniguruma's `\w` and counts the BOM - an OVER-redaction, pinned
+    // as an `over` row above rather than quietly asserted away here.
     ['bearer\ufeffAbCdEfGhIjKlMnOp', 'bearer\ufeffAbCdEfGhIjKlMnOp'],
-    ['password\ufeff=S3cret', 'password\ufeff=S3cret'],
+    ['password\ufeff=S3cret', 'password\ufeff=***'],
+    // The `\w` affixes of the generic keyword rule (issue #90 review round 3, the
+    // finding at head ef21e30): Oniguruma's `\w*` walks over a non-ASCII letter, JS's
+    // stops there, the separator alternatives cannot match a letter, and the rule never
+    // fires at all - the secret was stored whole. These are the review's minimal repros
+    // with jq's own outputs; the affixes are now `JS_WORD_STAR`, which fires wherever
+    // jq does. Note the last two: one accented letter after the keyword, no other rule
+    // involved, and the previous round's record claimed no such leak existed.
+    ['password\u00e9=S3cret', 'password\u00e9=***'],
+    ['export DB_PASSWORD_\u00c9=S3cret', 'export DB_PASSWORD_\u00c9=***'],
+    ['secret\u0663=S3cret', 'secret\u0663=***'],
+    ['api_key\u00aa: S3cret', 'api_key\u00aa: ***'],
+    ['token\u00fc abcS3cret', 'token\u00fc ***'],
     // URL userinfo: a BOM inside the userinfo used to end the match, so the rule did
     // not fire and the password was never masked at all.
     ['https://user\ufeffname:pass\ufeffword@host', 'https://user\ufeffname:***@host'],
@@ -1172,5 +1259,104 @@ describe('regex-engine parity with jq (issue #90 review round 1)', () => {
     if (stale.length > 0) {
       console.log(`NOTE: ${stale.length} documented engine divergence(s) did not reproduce on this run: ${JSON.stringify(stale)}`);
     }
+  });
+
+  /**
+   * Deterministic PRNG (mulberry32). A fuzz corpus that differs between runs is a corpus
+   * that cannot be debugged, so this is seeded with a fixed constant below: every run,
+   * and every machine with `jq` on PATH, sees the same 400 inputs in the same order.
+   */
+  function mulberry32(seed: number): () => number {
+    let a = seed >>> 0;
+    return () => {
+      a = (a + 0x6d2b79f5) >>> 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  /**
+   * Every round of review on this port found a class the hand-written corpus did not
+   * contain: round 1 the `.` and `\s` spellings, round 2 the whitespace set itself,
+   * round 3 the `\w` affixes - in each case an input shape nobody had typed out by hand,
+   * and in each case the corpus was the reason the previous round could claim parity.
+   * So the corpus is composed mechanically here, from the pieces the rules are built of.
+   *
+   * Exactly one property is asserted: the port must never leave in cleartext a secret
+   * that the jq hooks mask. Over-redaction is counted and printed, not asserted - a
+   * pinned count would fail the test for the safe direction, and the `over` rows above
+   * pin the shapes that matter by name.
+   */
+  it('leaves in cleartext no secret the jq hooks mask, over 400 seeded random inputs', {
+    skip: JQ_PRESENT ? false : 'jq is not on PATH on this machine',
+  }, () => {
+    const defs = jqDefs();
+    const keywords = ['token', 'secret', 'password', 'passwd', 'api_key', 'API_KEY', 'api-key', 'access_key', 'credential', 'auth', 'authorization', 'client_id'];
+    // Affixes glued to the keyword: ASCII word characters, non-ASCII characters that
+    // ARE word characters in both engines, and the categories that are word characters
+    // to Oniguruma's `\w` but not to JS's - the exact seam this port leaks on.
+    const affixes = ['', 'x', '_', 'my', '\u00e9', '\u00fc', '\u00c9', '\u0663', '\u00aa', '\u4e2d', '\u2000x', '\u00a9', '\u2011', '\ufeff', '\u200b', '\u201c'];
+    // Separators: the ones both engines read, the ones only one reads, and the word
+    // separators the `is|was|are` alternative exists for.
+    const separators = ['=', ':', ' = ', ' : ', ' ', '\u0085', '\u00a0', '\u2000', '\u2028', '\u202f', '\u3000', '\ufeff', '\u200b', '\u180e', ' is ', ' was ', ' are '];
+    // Each value carries one of the SECRET strings below, so "was it masked?" is
+    // answerable by looking for that string rather than by comparing shapes.
+    const values = ['S3cretPw', 'AbCd.mn_op', 'hunter2', '"pa ss"', '"open sesame', 'YWJjZGVmZ2hpamts', 'ghp_AbcDefGhiJklMnoPqrSt', 'sk_live_AbCdEfGh1234567890', 'glpat-ABCDEFGHIJKLMNOPQRST', 'SG.abcdefghijklmnopqrst.ABCDEFGHIJKLMNOPQRST', 'xapp-1-A01B2C3D4E5F-1234567890abcdef'];
+    const secrets = ['S3cretPw', 'AbCd.mn_op', 'hunter2', 'pa ss', 'open sesame', 'YWJjZGVmZ2hpamts', 'ghp_AbcDefGhiJklMnoPqrSt', 'sk_live_AbCdEfGh1234567890', 'glpat-ABCDEFGHIJKLMNOPQRST', 'SG.abcdefghijklmnopqrst.ABCDEFGHIJKLMNOPQRST', 'A01B2C3D4E5F-1234567890abcdef', 'Sup3rS3cret'];
+    const clients = ['mysql', 'mysqldump', 'mysqladmin', 'mariadb-dump', 'mysql -u app', 'mysqldump -uroot', 'ssh host "mysqldump'];
+    const pwArgs = ['-pS3cretPw', '-p"pa ss"', "\"-pS3cretPw\"", "'-pS3cret Pw'", '-p\u00e9S3cretPw', '-p\ufeffS3cretPw', '-p\u200bS3cretPw', '-p S3cretPw'];
+    // Tails never contain a SECRET string, so a secret found in the output is the value,
+    // not a copy that was sitting in the tail.
+    const tails = ['', ' db', ' dbname', ' rest', ' 2>&1', ' x=1', '\nnext line', ' db | ssh -p2222 host', ' && cp -pr a b', ' -p3306:3306'];
+    // URL userinfo goes through the sentinel round-trip (`redactUrlUserinfo` writes it,
+    // `unmaskSentinel` writes it back) and through the keyword rule's sentinel
+    // alternative, so it is the one shape where the keyword rule's replacement is NOT
+    // `***` - the second word pass runs on text that already carries a sentinel.
+    const urlValues = ['https://user:Sup3rS3cret@example.com/p', 'https://u\u00e9:p\u00e9@example.com', 'http://\u00e9:Sup3rS3cret@h', 'password=https://u:Sup3rS3cret@h', 'password\u00e9=https://u:Sup3rS3cret@h'];
+    const pick = <T,>(rand: () => number, xs: readonly T[]): T => xs[Math.floor(rand() * xs.length)];
+
+    const rand = mulberry32(0x5eed1a3b);
+    const corpus: string[] = [];
+    for (let i = 0; i < 400; i++) {
+      const tail = pick(rand, tails);
+      switch (i % 5) {
+        case 0:
+          corpus.push(`${pick(rand, affixes)}${pick(rand, keywords)}${pick(rand, affixes)}${pick(rand, separators)}${pick(rand, values)}${tail}`);
+          break;
+        case 1:
+          corpus.push(`${pick(rand, clients)} ${pick(rand, pwArgs)}${tail}`);
+          break;
+        case 2:
+          corpus.push(`${pick(rand, keywords)}${pick(rand, separators)}${pick(rand, values)}${tail} ${pick(rand, keywords)}${pick(rand, separators)}${pick(rand, values)}`);
+          break;
+        case 3:
+          corpus.push(`echo ${pick(rand, values)} ${pick(rand, separators)} ${pick(rand, keywords)}${pick(rand, affixes)}${tail}`);
+          break;
+        default:
+          corpus.push(`${pick(rand, affixes)}${pick(rand, urlValues)}${tail} ${pick(rand, keywords)}${pick(rand, separators)}${pick(rand, values)}`);
+      }
+    }
+
+    const leaks: string[] = [];
+    let overs = 0;
+    let diffs = 0;
+    for (const input of corpus) {
+      const jqOut = execFileSync('jq', ['-nr', '--arg', 's', input, defs + ' $s | redact'], { encoding: 'utf8' }).replace(/\n$/, '');
+      const tsOut = redact(input);
+      if (jqOut === tsOut) continue;
+      diffs++;
+      for (const secret of secrets) {
+        if (tsOut.includes(secret) && !jqOut.includes(secret)) {
+          leaks.push(`LEAK of ${JSON.stringify(secret)} ${JSON.stringify(input)}\n    jq: ${JSON.stringify(jqOut)}\n    ts: ${JSON.stringify(tsOut)}`);
+        }
+      }
+      if (secrets.some((secret) => jqOut.includes(secret) && !tsOut.includes(secret))) overs++;
+    }
+    // `diffs` counts every difference, including ones no SECRET string can see (a value
+    // masked twice over, say). Only the leak direction fails the test; see the docstring
+    // above for why pinning the other two counts would be a trap.
+    console.log(`NOTE: seeded fuzz corpus - ${corpus.length} inputs, ${diffs} difference(s) from jq, ${overs} secret-level over-redaction(s), ${leaks.length} leak(s)`);
+    assert.deepStrictEqual(leaks, [], `${leaks.length} input(s) leave in cleartext a secret the jq hooks mask`);
   });
 });

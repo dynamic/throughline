@@ -71,6 +71,27 @@ function jsNotWs(extras: string): string {
   return "[^" + extras + JS_WS_CHARS + "]";
 }
 
+/**
+ * Oniguruma's `\w`, OVER-approximated, ready to quantify. JS reads `\w` as
+ * `[0-9A-Za-z_]` and Oniguruma reads it as Unicode word characters, and unlike `\s`
+ * that difference cannot be spelled out exactly: measured over 19,979 code points
+ * against jq 1.7.1, the closest JS Unicode-property class (`[\p{L}\p{N}\p{M}_]`,
+ * which needs the `u` flag this file's identity escapes cannot use) still disagrees on
+ * 583 of them. So this matches an ASCII word character, or ANY non-ASCII
+ * non-whitespace character - which fires wherever jq's `\w` fires, plus a residue on
+ * the other side.
+ *
+ * The residue is deliberately on the masking side, and here, unlike the `\b` sites,
+ * that is provable rather than hoped: the rules that use this class run as the LAST
+ * masking step of `redact` (pass 6b, after the ASCII pass), so nothing runs after a
+ * longer keyword group and it can only ever extend a mask. It cannot consume text a
+ * later rule needed, which is the mechanism behind the two `under` rows in
+ * `ENGINE_DIVERGENCES` (those are earlier rules whose over-match eats a later rule's
+ * keyword). The residue cases are pinned as `over` rows in that table, so a future
+ * change that turns one into a leak fails.
+ */
+const JS_WORD_STAR = "(?:\\w|[^\\x00-\\x7f" + JS_WS_CHARS + "])*";
+
 // --- Structural patterns (safe for both command and prompt paths) ---
 
 /**
@@ -442,24 +463,42 @@ export function redact(str: string): string {
   // jq: the generic gsub at the end of `redact`. BOTH `\\s` sites are re-spelled for
   // Oniguruma's set: the separator class decides whether the rule fires at all and
   // the value class decides how far the mask reaches, so each is a leak in one of the
-  // two directions. `\\w` and the `\\b` of the other rules are a different class of
-  // difference (Unicode-aware vs ASCII) and are documented as divergences instead -
-  // see ENGINE_DIVERGENCES in redaction.test.ts for why they cannot be spelled out.
-  const keywordRegex = new RegExp(
-    "(\\w*(?:token|secret|password|passwd|api[_-]?key|access[_-]?key|credential|auth(?:orization)?|client[_-]?id)\\w*)" +
+  // two directions.
+  //
+  // `\\w` is re-spelled as TWO passes rather than one widened rule, and the order is
+  // the whole point of the shape:
+  //   pass 6a - JS's own ASCII `\\w*` affixes, which is jq's text verbatim;
+  //   pass 6b - the same rule with Oniguruma's word set over-approximated
+  //             (`JS_WORD_STAR`), so `password\u00e9=S3cret`, where jq's `\\w*` walks over
+  //             the accent but JS's stops, the separator alternatives cannot match a
+  //             letter and the rule never fires at all, is masked here too.
+  // Widening the single rule instead was shorter and WRONG, found by the seeded fuzz
+  // test in redaction.test.ts rather than by reasoning: a keyword group that runs
+  // longer also MATCHES EARLIER, and an earlier match can consume the keyword a later
+  // match needed - the same mechanism as the `under` rows in ENGINE_DIVERGENCES. As one
+  // widened rule this port leaked `api-key<U+180E>YWJjZGVmZ2hpamts api_key "pa ss"`,
+  // masking `api_key` as the first keyword's value and leaving the quoted password in
+  // cleartext while jq masks the quoted value. As the LAST masking pass the
+  // over-approximation has no later rule to starve, so its residue sits on the masking
+  // side - which is what lets that fuzz test assert zero leaks instead of pinning any.
+  // The `\\b` of the OTHER rules is a different class of difference: there even an
+  // over-approximation can land on the leaking side, so those stay pinned as
+  // divergences - see ENGINE_DIVERGENCES in redaction.test.ts.
+  const keywordPattern = (affix: string) =>
+    "(" + affix + "(?:token|secret|password|passwd|api[_-]?key|access[_-]?key|credential|auth(?:orization)?|client[_-]?id)" + affix + ")" +
       "(" + JS_WS + "*[:=]" + JS_WS + "*|" + JS_WS + "+(?:is|was|are)" + JS_WS + "+|" + JS_WS + "+)" +
-      "(\"[^\"]*\"|" + REDACT_SENTINEL + "|\"[^\\r\\n]*|" + jsNotWs("\"") + "+)",
-    "gi",
-  );
-
-  result = result.replace(keywordRegex, (match, keyword, sep, value) => {
+      "(\"[^\"]*\"|" + REDACT_SENTINEL + "|\"[^\\r\\n]*|" + jsNotWs("\"") + "+)";
+  const keywordReplacement = (_match: string, keyword: string, sep: string, value: string) => {
     // If value is the sentinel, keep it as-is (will be unmasked later)
     if (value === REDACT_SENTINEL) {
       return `${keyword}${sep}${value}`;
     }
     // Otherwise, replace with ***
     return `${keyword}${sep}***`;
-  });
+  };
+
+  result = result.replace(new RegExp(keywordPattern("\\w*"), "gi"), keywordReplacement);
+  result = result.replace(new RegExp(keywordPattern(JS_WORD_STAR), "gi"), keywordReplacement);
 
   // 7. Unmask sentinel
   result = unmaskSentinel(result);
