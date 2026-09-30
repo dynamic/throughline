@@ -445,8 +445,18 @@ tl_append_line() {
 # tl_resolve_sid, which exists because a hand-duplicated derivation already
 # caused one real desync bug. Quoted heredoc: the def text passes through
 # with no shell expansion of its backslashes or quotes.
+#
+# The def text reaches jq as part of ONE command-line argument
+# (`jq -r "$(tl_jq_redact_defs)..."` in session-capture.sh), and Windows caps a
+# whole command line at 32,767 characters. The explanatory `#` comments inside
+# the heredoc below are most of its bytes, and they had grown the argument to
+# 33,071 characters - past the cap, so on Windows the capture hook's jq call
+# failed outright and every event was dropped. Full-line comments are stripped on
+# the way out so the doc-comments can keep growing without a size budget; the
+# def text stays readable here, and only the argument jq receives is small.
+# (Trailing `# ...` after code on the same line is left alone.)
 tl_jq_redact_defs() {
-  cat <<'TL_JQ_DEFS'
+  cat <<'TL_JQ_DEFS' | sed '/^[[:space:]]*#/d'
   # Mask common secret shapes so raw credentials never sit in the buffer. The
   # buffer is gitignored, and even HANDOFF.md/logs/ are local-only by default
   # now (see README "Local by default") - but a project can opt in to tracking
@@ -456,10 +466,18 @@ tl_jq_redact_defs() {
   # bare opaque token with no recognizable shape or keyword will not be caught.
   # Known gap, not fixable here without a high false-positive cost: a
   # credential attached to a bare single-letter CLI flag with no keyword at all
-  # (mysql -p<password>, curl -u user:pass) has no keyword for this rule to
-  # anchor on, and flags like -u/-p are too overloaded across tools (docker run
-  # -u uid:gid, ssh -p <port>) to redact generically. The handoff skill re-scan
-  # is the second barrier for exactly this shape.
+  # (curl -u user:pass, a bare psql/pg_dump connection string with no keyword)
+  # has no keyword for this rule to anchor on, and flags like -u/-p are too
+  # overloaded across tools (docker run -u uid:gid, ssh -p <port>) to redact
+  # generically.
+  # The one exception closed by issue #81 is the MySQL/MariaDB family: `-p` is
+  # still overloaded, but it IS unambiguous when a known client binary name
+  # appears earlier on the same line, so `_mysql_pw` below redacts that
+  # anchored shape - with documented false positives, all pinned by tests. The
+  # only thing it over-matches is a line
+  # that merely mentions a client name and then carries an unrelated attached
+  # `-p` (see the false-positive note on `_mysql_pw`); remaining bare-flag gaps
+  # (notably `curl -u user:pass`) are still the handoff skill re-scan's job.
   #
   # Internal sentinel for one specific hand-off: the URL-userinfo rule below is
   # the only shape rule whose replacement abuts a non-whitespace character (the
@@ -489,14 +507,208 @@ tl_jq_redact_defs() {
     | gsub("-----BEGIN [A-Z ]*PRIVATE KEY-----[\\s\\S]*"; "***private-key-redacted***");
   def _url:
     gsub("(?<pfx>://[^:@/\\s]+):(?<pw>[^@/\\s]+)@"; "\(.pfx):\(M)@");
+  # Vendor prefixes are a maintained allowlist: add a rule when a real capture
+  # shows a shape this set misses (issue #81). Keep every floor long enough
+  # that an ordinary word/identifier cannot match it - these run over prompt
+  # prose as well as commands, so a prefix whose short form could be ordinary
+  # English would corrupt the very intent prompt capture exists to preserve.
+  # The prefixes added for issue #81 are also LEFT-ANCHORED, because a length
+  # floor alone still matches inside a longer identifier: `disk_test_` contains
+  # `rk_test_`, and an unanchored rule masked it. `\b` is the wrong tool for
+  # these (underscore is a word character, so there is no boundary between
+  # `disk` and `_test_`), hence the explicit "not preceded by a word character
+  # or an underscore" lookbehind on each. `SG.` is the one that can use `\b`,
+  # since it starts with letters and a dot: that is what stops
+  # `MSG.errorMessageTemplate.userNotFoundError` from reading as a key.
   def _prefix_tokens:
     gsub("ghp_[A-Za-z0-9]{10,}"; "ghp_***")
     | gsub("github_pat_[A-Za-z0-9_]{10,}"; "github_pat_***")
     | gsub("gh[oprsu]_[A-Za-z0-9]{10,}"; "gh_***")
     | gsub("xox[baprs]-[A-Za-z0-9-]{6,}"; "xox-***")
+    | gsub("(?<![A-Za-z0-9_])xapp-[0-9]{1,2}-[A-Za-z0-9-]{10,}"; "xapp-***")
     | gsub("sk-[A-Za-z0-9_-]{10,}"; "sk-***")
+    | gsub("(?<t>(?<![A-Za-z0-9_])(?:sk|rk)_(?:live|test)_)[A-Za-z0-9]{16,}"; "\(.t)***")
     | gsub("AKIA[0-9A-Z]{12,}"; "AKIA***")
-    | gsub("AIza[0-9A-Za-z_\\-]{35}"; "AIza***");
+    | gsub("AIza[0-9A-Za-z_\\-]{35}"; "AIza***")
+    | gsub("(?<![A-Za-z0-9_])glpat-[A-Za-z0-9_-]{20,}"; "glpat-***")
+    | gsub("(?<![A-Za-z0-9_])npm_[A-Za-z0-9]{30,}"; "npm_***")
+    | gsub("\\bSG\\.[A-Za-z0-9_-]{16,}\\.[A-Za-z0-9_-]{16,}"; "SG.***");
+  # MySQL/MariaDB client-anchored `-p<password>` (issue #81). The flag itself is
+  # far too overloaded to redact generically, so the anchor is the CLIENT NAME:
+  # the rule only fires when a known client binary appears earlier on the same
+  # line, and the client-name-to-flag span may not cross an UNQUOTED shell
+  # command separator (| ; & LF CR) - which is precisely what keeps a bare
+  # `ssh -p 2222` and an `-p` on the far side of a pipe untouched. The span is
+  # quote-aware rather than separator-blind: it consumes `'...'`/`"..."` whole,
+  # so `mysql -e "show databases;" -pS3cret` (an idiomatic trailing semicolon in
+  # the SQL, not a command separator) is still redacted, and because the span
+  # can only stop OUTSIDE a quoted run, the first `-p` it can reach is the real
+  # option and not some `-pfoo` sitting inside the SQL string. Three things that
+  # look like separators but are not, and are crossed: a backslash-newline
+  # continuation (a `mysqldump \` / `-u root \` / `-p<pw>` chain is ONE command,
+  # and capture sees the newlines before `clean` turns them into spaces), a
+  # file-descriptor redirect such as `2>&1` sitting between the client name and
+  # the flag, bash's combined `&>`/`&>>` redirect (`mysqldump db &>>log
+  # -p<pw>`) - the last one is why the span allows a `&` only when a `>` follows
+  # it, so a backgrounded command and `&&` stay hard stops - and a
+  # backslash-escaped character, which is how an escaped quote inside `-e "..."`
+  # gets through (a quoted run may contain `\"`, and an escaped separator such as
+  # `\;` is a literal argument rather than a boundary). An ordinary newline
+  # is still a hard stop, so a `-p` on the next
+  # line of a multi-line captured command is not swallowed by an anchor above it.
+  # Client coverage is the whole family, not just the two names the first report
+  # happened to contain: every MySQL/MariaDB client that takes `-p<password>` is
+  # listed (mysql/dump/admin/import/check/show/pump/binlog/slap/sh/_upgrade and
+  # any `mariadb-<suffix>` form, which is why the mariadb branch is a prefix
+  # pattern rather than two literal names - mariadb-check and mariadb-import take
+  # the flag too). A client name that is not a standalone word is a miss by
+  # design: the leading \b is what stops `notmysql -pX` from anchoring, and the
+  # same \b is what stops a versioned name (mysql5.7) from anchoring. (`mariadb`
+  # is the asymmetric case: `mariadb-10.6` DOES anchor, because the hyphen after
+  # `mariadb` is itself a word boundary and the `mariadb(?:-[a-z]+)?` branch
+  # matches the bare prefix - over-redaction on the safe side, noted here so the
+  # \b claim above is not read as covering it.)
+  # A bare `-p` followed by whitespace is MySQL's "ask me for the password"
+  # prompt, so the word after it is a database name and is deliberately NOT
+  # masked: every value alternative requires non-whitespace content touching `-p`.
+  # Value group is ONE compound run, not an alternation of whole-value
+  # shapes: it consumes any mix of `'...'`, `"..."`, `$(...)`, a backtick run and
+  # a backslash-escaped character, and may then finish with an unterminated
+  # quote (rest of line). A run rather than an alternation matters, because the
+  # shapes glue together in real shells: `-p'abc'def`, `-p"pa ss"word` and
+  # `-p$(cat f)tail` are each a single argument that concatenates a quoted part
+  # with a bare part, and an alternation that matched the quoted part first left
+  # the bare tail - part of the password - sitting in cleartext right after the
+  # mask. The `(?=\S)` guard is what keeps `mysql -p <db>` out: at least one
+  # non-whitespace character has to touch the -p for anything to be consumed.
+  # Command path ONLY (not redact_prompt): prompts are natural language, where a
+  # span like this would happily swallow ordinary words after any sentence that
+  # happens to mention "mysql".
+  # KNOWN FALSE POSITIVE, pinned by a test rather than left to be rediscovered:
+  # the anchor is a word, not a parse position, so a line that merely mentions a
+  # MySQL client/path and then carries an unrelated attached `-p` gets that -p
+  # masked too - `find /var/lib/mysql -name x.ibd -print` becomes `-p***`, and so
+  # does `docker run --name mysql -p3306:3306 mysql:8`. Over-redaction of captured
+  # command text is the safe side of this trade (the buffer is a memory, not a
+  # script you re-run), and the alternatives that would avoid it are worse:
+  # anchoring on command position needs a real shell parse, and exempting
+  # port-shaped values (`\d+:\d+`) would leak a password that happens to look
+  # like a port mapping.
+  # Known miss, stated rather than left to be rediscovered: only the FIRST
+  # reachable -p<password> of a client-anchored segment is masked, so a second
+  # one in the same segment leaks; the single all-occurrences rule that would fix
+  # it needs variable-length lookbehind, which jq's regex engine rejects outright
+  # ("invalid pattern in look-behind", verified on jq 1.7.1). The handoff skill
+  # re-scan backstops it.
+  # Deliberate gap, also stated: case variants (MYSQL, MariaDB) are not covered
+  # by the client anchor - the leading \b word boundary is case-sensitive. Not a
+  # leak in practice, since MySQL client names are conventionally lowercase.
+  # Escaped quotes inside a span ARE covered (issue #81 review round 7): the span
+  # has a backslash-escape step and a double-quoted run may contain \" and \'.
+  # Without them `-e "select \"it's\"" -p<pw>` leaked, because the quoted run
+  # ended at the escaped quote and the stray apostrophe could then only be read
+  # as opening a run that never closes.
+  # Shared regex PREFIX for both MySQL-family rules: the client-name anchor plus
+  # the client-to-flag span, stopping just before the flag itself. Built as a
+  # string def so the two rules cannot drift apart - the same reason
+  # `_bearer_scheme` is parameterised: a hand-duplicated span is one tightening
+  # away from being honoured by one rule and not the other. $tail is the regex
+  # text that follows the span, and closing the `pre` group is $tail's job.
+  def _mysql_anchor($tail):
+    "(?<pre>\\b(?:mysql(?:dump|admin|import|check|show|pump|binlog|slap|sh|_upgrade)?|mariadb(?:-[a-z]+)?)\\b(?>\\\\\r?\\n|(?<!&)&>>?|[0-9]*>&[0-9]*|\\\\.|[^|;&\\r\\n'\"]|'[^']*'|\"(?:[^\"\\\\]|\\\\.)*\")*?" + $tail;
+  # Pre-rule: a WHOLE-ARGUMENT quoted `-p<value>` - the container-entrypoint
+  # shape `mysql -uroot "-pS3cret" db`. The span rule cannot reach inside it: the
+  # span consumes `'...'`/`"..."` whole, so a quoted run that contains the -p is
+  # never entered. This is a different shape from `-p'val'` (quote AFTER the
+  # flag), whose value the span's own value group already consumes; here the
+  # quote sits BEFORE `-p`, and a quoted value holding spaces (`"-pS3cret
+  # word"`) is the same case. Parameterised on the quote character so both quote
+  # styles share the one anchor above.
+  # This rule is ANCHORED exactly like the span rule - same client name, same
+  # no-unquoted-separator span. It is deliberately not a general `"-p<value>"`
+  # rule: an unanchored version of it masked `grep "-pattern" f`, `rsync
+  # "-pavz" src dst` and `echo "-pfoo"`, none of which is a MySQL client, and
+  # that over-match was never one of the false positives this rule carries.
+  # Pinned by tests.
+  # Known miss, stated rather than left to be rediscovered (issue #81 review
+  # round 8): a DOUBLE-quoted value that contains an UNESCAPED inner quote - a
+  # nested substitution like `"-p$(echo "S3cret")"` - masks only up to that inner
+  # quote, so the tail after it stays in cleartext. Letting the value body step
+  # over one nested `"..."` run does mask it, but measured the opposite failure:
+  # `mysql -uroot "-pS3cret" db "other" x` then swallowed `db "other"` out of the
+  # captured line, i.e. it corrupts ordinary entrypoint commands to catch a
+  # contrived one. The handoff skill's re-scan is the second barrier here.
+  # Known miss, stated rather than left to be rediscovered: an UNTERMINATED
+  # whole-argument quote (`mysql -uroot "-pS3cret db`) is not masked here, because
+  # the closing quote is what bounds the value and a rule that fell through to
+  # end-of-line would mask an ordinary `"phrase` after any mention of a client.
+  # Whitespace that may sit between the span and the flag. A plain `\s` is not
+  # enough: a shell line continuation is `\` NEWLINE and the span consumes BOTH
+  # as one step, so a continuation line that starts at column 0 (`mysqldump -u
+  # root \` NL `-p<pw> db` - valid, the space before the backslash is the
+  # argument separator) leaves no whitespace for the tail to match and the
+  # password went through in cleartext (issue #81 review round 8). The two
+  # fixed-length lookbehinds say "the span just stepped over a backslash-newline
+  # (or backslash-CR-LF)" without needing the variable-length `(?<=\\\r?\n)`,
+  # which Oniguruma rejects. It is `[ \t]` and not `\s` on purpose (review round
+  # 9): `\s` includes the newline itself, which let the lead swallow a plain
+  # newline and mask a `-p` starting the NEXT line - the opposite of the
+  # "a newline that does not continue the line is a hard stop" claim this file and
+  # the CHANGELOG both make and `mysqlmulti` pins. A bare newline now stops the
+  # rule; only a continuation the span actually stepped over carries across.
+  def _mysql_pw_lead:
+    "(?:[ \\t]|(?<=\\\\\\n)|(?<=\\\\\\r\\n))";
+  # Value body inside a whole-argument quoted value, parameterised because the
+  # two quote styles genuinely differ: a double-quoted shell string can carry an
+  # escaped quote, so the body must step over `\\.` or the mask stops at the
+  # first `\"` and the rest of the password is stored in cleartext
+  # (`"-pSE\"CRET"` masked to `"-p***"CRET`). A single-quoted shell string has no
+  # escapes at all, so `[^']*` is exactly right there and an escape-aware body
+  # would only add a backtracking path that can never fire.
+  def _mysql_pw_body($q):
+    if $q == "\"" then "(?:[^\"\\\\]|\\\\.)*" else "[^']*" end;
+  # The compound value run, shared by both rules because the same run glues onto
+  # both shapes of password: `-p'abc'def` (span rule) and `"-p"S3cretPw` (pre-rule)
+  # are each ONE shell argument, and a mask that stops at the quote leaves the bare
+  # part sitting in cleartext right after the `***` - which is worse than an
+  # unmasked line, because the `***` makes the line look redacted (review round 9,
+  # measured `mysql -uroot "-p"S3cretPw db` -> `"-p***"S3cretPw db`). Listed longest
+  # alternative first: an escaped-quoted run must win the `\` before the generic
+  # escaped-character step can eat it, which is what makes
+  # `ssh prod "mysqldump -p\"S3cret Pw\" app"` consume the whole quoted value
+  # instead of stopping at the space inside it.
+  def _mysql_pw_glue:
+    "(?:\\\\\"(?:[^\"\\\\]|\\\\.)*\\\\\"|\\$\\([^)]*\\)|`[^`]*`|'[^']*'|\"[^\"]*\"|\\\\[^\\r\\n]|[^\\s'\\\"\\\\])*";
+  # The whole-argument quoted shape, parameterised on the quote character AND on
+  # whether that quote is escaped (review round 9): the container-entrypoint form
+  # `mysql -uroot "-p<pw>" db` writes the quote bare, while the SAME argument
+  # inside an outer double-quoted command - `ssh prod "mysqldump -uroot
+  # \"-p<pw>\" app"`, `docker exec db sh -c "mysql -uroot \"-p<pw>\" app"` - writes
+  # it as `\"` on BOTH sides, and a pattern that only accepted the bare form
+  # matched neither: the two shapes this PR calls important combined into nothing.
+  # $esc is the regex text for the opening/closing quote's backslash, empty for the
+  # unescaped form. The closer is captured as `close` and echoed back through the
+  # replacement rather than rebuilt from $esc: a replacement string is literal text,
+  # where $esc is regex text (two backslashes), so `"\(.pre)***" + $esc` emitted an
+  # extra backslash where the input had one.
+  def _mysql_pw_quoted($q; $esc):
+    gsub(_mysql_anchor(_mysql_pw_lead + $esc + $q + "-p)(?<pw>" + _mysql_pw_body($q) + ")(?<close>" + $esc + $q + ")" + _mysql_pw_glue); "\(.pre)***\(.close)");
+  def _mysql_pw_pre:
+    _mysql_pw_quoted("\""; "") | _mysql_pw_quoted("'"; "")
+    | _mysql_pw_quoted("\""; "\\\\") | _mysql_pw_quoted("'"; "\\\\");
+  # Main span rule — the span group is ATOMIC (?> … ) to prevent catastrophic
+  # backtracking when many `N>&M` redirects appear without a `-p` (issue #81
+  # review: the digits around `>&` can each be taken either by the redirect
+  # alternative or by the plain char class, so every `N>&M` token has about four
+  # parses and the total is EXPONENTIAL in the number of redirects, not
+  # quadratic; when no `-p` follows - the common case - Oniguruma tries them all
+  # and hits its retry limit at 12+ such tokens, so jq fails instead of returning
+  # the line. Atomic grouping commits each span step and makes the span linear in
+  # the line length.)
+  def _mysql_pw:
+    gsub(_mysql_anchor(_mysql_pw_lead + "-p)(?<pw>(?=\\S)" + _mysql_pw_glue + "(?:'[^\\r\\n]*|\"[^\\r\\n]*)?)"); "\(.pre)***");
+  def _mysql_pw_all:
+    _mysql_pw_pre | _mysql_pw;
   def _unmask: gsub("\(M)"; "***");
   # Bearer/Basic scheme-value matchers, parameterized on the length floor
   # (issue #16): `_auth_scheme` and `_auth_scheme_prose` below used to spell
@@ -593,6 +805,7 @@ tl_jq_redact_defs() {
     | gsub("(?i)\\btoken\\s+(?<t>[A-Za-z0-9._\\-]+)"; "Token ***")
     | _url
     | _prefix_tokens
+    | _mysql_pw_all
     | gsub("(?i)(?<k>\\w*(?:token|secret|password|passwd|api[_-]?key|access[_-]?key|credential|auth(?:orization)?|client[_-]?id)\\w*)(?<s>\\s*[:=]\\s*|\\s+(?:is|was|are)\\s+|\\s+)(?<v>\"[^\"]*\"|\(M)|\"[^\\r\\n]*|[^\\s\"]+)"; "\(.k)\(.s)***")
     | _unmask;
   # Prose-safe redaction for user prompts (issue #5), and for the WebSearch

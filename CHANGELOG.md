@@ -75,6 +75,59 @@ All notable changes to throughline are documented here. Format loosely follows
   fixed-string flag, never substituted into a command string and never used to
   build a path.
 
+### Fixed
+- **Capture hook dropped every event on Windows** (issue #81 review): the jq program
+  is one command-line argument (`redaction defs + capture filter`) and Windows caps a
+  command line at 32,767 characters; the explanatory comments inside the defs had grown
+  that argument to 33,071. Full-line comments are now stripped as the defs are emitted
+  (about 28,000 characters down to about 3,000), so the doc-comments carry no size cost,
+  and two tests pin it.
+- **Capture-buffer credential misses** (issue #81): two real captures in one
+  project's buffers got through the capture-time filter - a production MySQL
+  password attached to the bare `-p` flag, and a third-party API key whose
+  vendor prefix was not in the allowlist. `_lib.sh` now redacts `-p<password>`
+  when a known MySQL/MariaDB client name appears earlier on the same line and
+  no unquoted shell command separator (`|`, `;`, `&`) sits between them. The
+  client list is the whole family (`mysql`, `mysqldump`, `mysqladmin`,
+  `mysqlimport`, `mysqlcheck`, `mysqlshow`, `mysqlpump`, `mysqlbinlog`,
+  `mysqlslap`, `mysqlsh`, `mysql_upgrade`, and any `mariadb-*` client), the
+  span is quote-aware so an idiomatic `mysql -e "show databases;" -p<pw>` is
+  still caught, and the value is consumed whole through the shell shapes a
+  password can legitimately be wrapped in (quotes, `$(...)`, escaped spaces) -
+  including the container-entrypoint form where the WHOLE argument is quoted
+  (`mysql -uroot "-p<pw>" db`, in either quote style and with spaces in the
+  value), which that span cannot step into. That quoted-argument rule is
+  anchored to the same client name as the span, so `grep "-pattern" f` and
+  `rsync "-pavz" src dst` are left alone. The span crosses the things that look
+  like command separators but are not - a backslash-newline continuation, a
+  `2>&1` file-descriptor redirect and bash's `&>`/`&>>` redirect - and stops at
+  the ones that are: a bare `&`, `&&`, `|`, `;` and a newline that does not
+  continue the line - including a continuation line that starts at column 0, so
+  there is no whitespace left between the joined backslash-newline and the flag.
+  An escaped quote is stepped over wherever a real shell would step over it: inside
+  `-e "..."` (`mysql -uroot -e "select \"it's\"" -p<pw>`), inside a quoted `-p`
+  value (`"-pSE\"CRET"`), and on both sides of a whole-argument quoted `-p` that
+  sits inside an outer double-quoted command (`ssh prod "mysqldump -uroot
+  \"-p<pw>\" app"`, `docker exec db sh -c "mysql -uroot \"-p<pw>\" app"`). A value
+  glued on after a closing quote is consumed as part of the same argument
+  (`"-p"S3cretPw`, `"-pS3c"retPw`), so the mask never leaves a bare tail looking
+  like a redacted line. One shape stays a known miss: a double-quoted `-p`
+  value holding an *unescaped* inner quote (`"-p$(echo "S3cret")"`) masks only up
+  to that inner quote, because letting the value span a nested `"..."` run instead
+  swallows unrelated quoted text from ordinary commands.
+  `ssh -p 2222`, `docker run -u 1000:1000` and the interactive `mysql -p <db>`
+  form are untouched. The known cost is over-redaction: a line that only
+  mentions a mysql path or name and then carries an unrelated attached `-p` gets
+  that `-p` masked too (`find /var/lib/mysql ... -print`, `docker run --name mysql
+  -p3306:3306 ...`); both are pinned by tests as a documented trade.
+- **Vendor token prefixes** (issue #81): `_prefix_tokens` gains `glpat-`,
+  `sk_live_`/`rk_test_`, `xapp-`, `npm_` and `SG.x.y`. Because they live in the
+  shared def they protect prompts as well as commands, and each is word-anchored
+  and length-floored so identifiers that merely end in a prefix (`MSG.etc`,
+  `xapp-config-generator`) are not masked. Remaining bare-flag gaps (e.g.
+  `curl -u user:pass`) are unchanged and still rely on the handoff skill's
+  re-scan.
+
 ## [0.16.0]
 
 ### Added
