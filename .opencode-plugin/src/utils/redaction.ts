@@ -95,7 +95,17 @@ export const TOKEN_PREFIX_RULES: readonly RedactionRule[] = [
   { name: "aiza", pattern: /AIza[0-9A-Za-z_\-]{35}/g, replacement: "AIza***" },
   { name: "glpat", pattern: /(?<![A-Za-z0-9_])glpat-[A-Za-z0-9_-]{20,}/g, replacement: "glpat-***" },
   { name: "npm", pattern: /(?<![A-Za-z0-9_])npm_[A-Za-z0-9]{30,}/g, replacement: "npm_***" },
-  { name: "sendgrid", pattern: /\bSG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}/g, replacement: "SG.***" },
+  {
+    // jq writes `\bSG\.`; Oniguruma's \b is Unicode-aware, so a word character
+    // outside ASCII (an accented letter, an ideograph) still counts as "word" and
+    // stops the anchor. `\b` in JS is narrower, so the same input anchors here and
+    // not there. The lookbehind spells Oniguruma's meaning directly: "not preceded
+    // by a word character or an underscore", the same rule the four prefixes above
+    // it already use.
+    name: "sendgrid",
+    pattern: /(?<![A-Za-z0-9_])SG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}/g,
+    replacement: "SG.***",
+  },
 ];
 
 /**
@@ -139,6 +149,24 @@ const DQ = '"';
 
 /** Regex TEXT matching one literal backslash, for the alternative that steps over `\"`. */
 const RE_BS = String.raw`\\`;
+/**
+ * NOT-whitespace, spelled out to match Oniguruma rather than JS. JS's `\s`
+ * additionally matches U+FEFF, which Oniguruma's does not, so a value run written
+ * as `[^\s'\"\\]` stops short at a BOM inside a password and masks only its head
+ * while jq masks the whole thing - the "looks redacted but is not" failure this
+ * file keeps calling out. U+00A0, U+2028 and U+2029 ARE whitespace to Oniguruma
+ * (verified against jq 1.7.1), so they stay excluded. Rather than leave this
+ * stricter than jq anywhere, the differential test in `redaction.test.ts` pins
+ * that a `-p` followed directly by U+FEFF, U+00A0, U+2028 or U+2029 comes out the
+ * same on both sides.
+ *
+ * Braces are deliberately NOT used (`\u{00A0}`): outside the `u` flag JS reads
+ * `\u{41}` as the character set {u,4,1}, which would put letters and digits in the
+ * class and turn the rule into a sledgehammer.
+ */
+const JS_NOT_WS = String.raw`[^ \t\n\v\f\r\u00A0\u2028\u2029]`;
+/** The same set as a class body, for the glue's ordinary-char alternative. */
+const JS_WS_CHARS = String.raw` \t\n\v\f\r\u00A0\u2028\u2029`;
 
 /**
  * Client-name anchor. jq: the head of `_mysql_anchor`. A client name that is not a
@@ -164,10 +192,10 @@ const MYSQL_SPAN_STEPS: readonly string[] = [
   String.raw`\\\r?\n`,
   String.raw`(?<!&)&>>?`,
   String.raw`[0-9]*>&[0-9]*`,
-  String.raw`\\.`,
+  String.raw`\\[^\n]`, // JS '.' also refuses CR/U+2028/U+2029; jq's '.' refuses only LF
   String.raw`[^|;&\r\n'"]`,
   String.raw`'[^']*'`,
-  String.raw`"(?:[^"\\]|\\.)*"`,
+  String.raw`"(?:[^"\\]|\\[^\n])*"`,
 ];
 const MYSQL_SPAN_STEP = MYSQL_SPAN_STEPS.join("|");
 
@@ -208,18 +236,18 @@ const MYSQL_LEAD = String.raw`(?:[ \t]|(?<=\\\n)|(?<=\\\r\n))`;
  * line look handled. jq: `_mysql_pw_glue`.
  */
 const MYSQL_GLUE_ALTS: readonly string[] = [
-  RE_BS + DQ + String.raw`(?:[^"\\]|\\.)*` + RE_BS + DQ,
+  RE_BS + DQ + String.raw`(?:[^"\\]|\\[^\n])*` + RE_BS + DQ,
   String.raw`\$\([^)]*\)`,
   BT + String.raw`[^` + BT + String.raw`]*` + BT,
   String.raw`'[^']*'`,
   String.raw`"[^"]*"`,
   String.raw`\\[^\r\n]`,
-  String.raw`[^\s'\"\\]`,
+  String.raw`[^` + JS_WS_CHARS + String.raw`'\"\\]`,
 ];
 const MYSQL_GLUE = "(?:" + MYSQL_GLUE_ALTS.join("|") + ")*";
 
 /** Value body inside a whole-argument quoted value. jq: `_mysql_pw_body($q)`. */
-const MYSQL_BODY_DOUBLE = String.raw`(?:[^"\\]|\\.)*`;
+const MYSQL_BODY_DOUBLE = String.raw`(?:[^"\\]|\\[^\n])*`;
 const MYSQL_BODY_SINGLE = String.raw`[^']*`;
 
 /** jq `_mysql_pw_quoted($q; $esc)`, built for one quote char + quote-escaping pair. */
@@ -258,7 +286,7 @@ export const MYSQL_PW_RULES: readonly RedactionRule[] = [
     pattern: new RegExp(
       MYSQL_ANCHOR +
         MYSQL_LEAD +
-        "-p)(?<pw>(?=\\S)" +
+        "-p)(?<pw>(?=" + JS_NOT_WS + ")" +
         MYSQL_GLUE +
         String.raw`(?:'[^\r\n]*|"[^\r\n]*)?` + String.raw`)`, // the trailing ) closes the `pre` group opened by MYSQL_ANCHOR, same as jq's $tail
       "g",

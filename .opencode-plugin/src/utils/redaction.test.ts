@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { execFileSync } from 'node:child_process';
 
 import { redact, redactPrompt, clean, clamp, redactCleanClamp } from './redaction.js';
 import * as redactionModule from './redaction.js';
@@ -619,6 +620,56 @@ function denormalizeJsAtomicEmulation(text: string): string {
   return text.slice(0, a) + '(?>' + text.slice(a + OPEN.length, b) + text.slice(b + CLOSE.length);
 }
 
+/**
+ * Places where the TypeScript writes DIFFERENT regex text on purpose because JS and
+ * Oniguruma read identical text differently. Each row says what the TS spells, what
+ * jq spells, and why - the MySQL/prefix parity assertions below fold these back
+ * before comparing text, and the differential test at the bottom of this file is
+ * what stops the mapping from being used to hide a real divergence: text equality
+ * proves the tables line up, behavioural equality against jq proves they mean the
+ * same thing.
+ */
+const ENGINE_SPELLINGS: readonly { ts: string; jq: string; why: string }[] = [
+  {
+    ts: String.raw`\\[^\n]`,
+    jq: String.raw`\\.`,
+    why: 'JS . also refuses CR, U+2028 and U+2029; jq . refuses only LF, so a backslash-CR inside a quoted argument would stop the TS span and leak the password behind it',
+  },
+  {
+    ts: String.raw`(?=[^ \t\n\v\f\r\u00A0\u2028\u2029])`,
+    jq: String.raw`(?=\S)`,
+    why: 'JS \\s also matches U+FEFF, which Oniguruma does not, so a BOM inside a password would end the value run early here and mask only its head',
+  },
+  {
+    ts: String.raw`[^ \t\n\v\f\r\u00A0\u2028\u2029'\"\\]`,
+    jq: String.raw`[^\s'\"\\]`,
+    why: 'same set, spelled out for the glue run',
+  },
+  {
+    ts: String.raw`(?<![A-Za-z0-9_])SG\.`,
+    jq: String.raw`\bSG\.`,
+    why: 'Oniguruma reads \\b as Unicode-aware and JS does not, so the lookbehind states Oniguruma meaning rather than approximating it',
+  },
+];
+
+/** Fold the deliberate JS spellings back into jq's before comparing pattern text. */
+function tsTextToJqText(source: string): string {
+  let out = source;
+  for (const row of ENGINE_SPELLINGS) {
+    out = out.split(row.ts).join(row.jq);
+  }
+  return out;
+}
+
+function jqIsAvailable(): boolean {
+  try {
+    execFileSync('jq', ['--version'], { stdio: 'pipe' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 type JqRule = { name: string; pattern: string; replacement: string };
 
 function jqPrefixRules(): JqRule[] {
@@ -731,7 +782,11 @@ describe('jq parity with hooks/_lib.sh (issue #90)', () => {
     );
     jqRules.forEach((jq, i) => {
       const ts = tsRules[i];
-      assert.strictEqual(ts.pattern.source, normalizeJqRegexText(jq.pattern), `prefix rule ${i} diverged from jq (${jq.pattern})`);
+      assert.strictEqual(
+        tsTextToJqText(ts.pattern.source),
+        normalizeJqRegexText(jq.pattern),
+        `prefix rule ${i} diverged from jq (${jq.pattern})`,
+      );
       assert.strictEqual(ts.replacement, toJsReplacement(jq.replacement), `prefix rule ${i} replacement diverged from jq`);
     });
   });
@@ -744,7 +799,7 @@ describe('jq parity with hooks/_lib.sh (issue #90)', () => {
     jqRules.forEach((jq, i) => {
       const ts = tsRules[i];
       assert.strictEqual(
-        denormalizeJsAtomicEmulation(ts.pattern.source),
+        denormalizeJsAtomicEmulation(tsTextToJqText(ts.pattern.source)),
         normalizeJqRegexText(jq.pattern),
         `MySQL rule ${i} (${jq.name}) diverged from hooks/_lib.sh`,
       );
@@ -864,5 +919,161 @@ describe('issue #81 rules, ported to the OpenCode plugin', () => {
     const elapsed = Date.now() - started;
     assert.strictEqual(result, input);
     assert.ok(elapsed < 5000, `redacting ${JSON.stringify(input)} took ${elapsed}ms - the span is backtracking again`);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Regex-ENGINE parity, not just rule-text parity (issue #90, review round 1)
+// ---------------------------------------------------------------------------
+
+/**
+ * The parity suite above compares pattern TEXT, which cannot see the case that
+ * matters most: JS and Oniguruma read the *same* text differently. JS `.` also
+ * refuses CR, JS `\s` additionally matches U+FEFF, and JS `\b` is not
+ * Unicode-aware. The first two are fixed by spelling the rule out (see
+ * `JS_NOT_WS` / the `[ ^\n]` step in `redaction.ts` and `ENGINE_SPELLINGS` here);
+ * the third is left as a documented divergence. This suite pins all of it, and
+ * its differential test is what stops the text-normalization mapping from being
+ * used to paper over a real behavioural drift.
+ */
+const ENGINE_DIVERGENCES: readonly { input: string; note: string }[] = [
+  {
+    input: 'mysql\u00e9 -pS3cretPw db',
+    note: 'jq does not anchor after a non-ASCII word character (Unicode-aware \\b), the TS port does: over-redaction of a captured command, no leak',
+  },
+  {
+    input: '\u00e9mysql -pS3cretPw db',
+    note: 'same, on the leading \\b of the client-name anchor',
+  },
+  {
+    input: 'mail --key \u00e9SG.abcdefghijklmnopqrst.ABCDEFGHIJKLMNOPQRST',
+    note: 'jq leaves this SendGrid-shaped token in cleartext (its \\b does not fire after \u00e9); the port masks it. Over-redaction here is a gap on the jq side, not a leak here.',
+  },
+];
+
+function jqIsUsable(): boolean {
+  try {
+    execFileSync('jq', ['--version'], { stdio: 'pipe' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const JQ_PRESENT = jqIsUsable();
+
+describe('regex-engine parity with jq (issue #90 review round 1)', () => {
+  const engineCases: readonly [string, string][] = [
+    // JS `.` refuses CR, Oniguruma's does not: a CRLF line continuation inside a
+    // quoted -e used to stop the span and leave the password in cleartext.
+    ['mysql -e "select \\\r\n 1" -pS3cretPw db', 'mysql -e "select \\\r\n 1" -p*** db'],
+    // JS `\s` matches U+FEFF, Oniguruma's does not: the value run must walk over a
+    // BOM inside a password the way jq's does, not mask only its head.
+    ['mysql -pab\ufeffcd x', 'mysql -p*** x'],
+    // Whitespace that BOTH engines agree on, as controls for the two above.
+    ['mysql -p\u00a0x y', 'mysql -p\u00a0x y'],
+    ['mysql -p\u2028x y', 'mysql -p\u2028x y'],
+    ['mysql -p\u2029x y', 'mysql -p\u2029x y'],
+    // U+FEFF is whitespace to neither engine, so this masks on both sides - pinned
+    // so a future tidy-up of the not-whitespace class that drops it cannot quietly
+    // change behaviour on either side.
+    ['mysql -p dbname', 'mysql -p dbname'],
+  ];
+
+  for (const [input, expected] of engineCases) {
+    it(`masks ${JSON.stringify(input)} the way the jq hooks do`, () => {
+      assert.strictEqual(redact(input), expected);
+    });
+  }
+
+  it('masks the password behind a CRLF continuation, which the pre-fix span leaked', () => {
+    const input = 'mysql -e "select \\\r\n 1" -pS3cretPw db';
+    assert.ok(!redact(input).includes('S3cretPw'), `password survived: ${JSON.stringify(redact(input))}`);
+  });
+
+  it('runs every corpus input through jq and matches, except the documented set', {
+    skip: JQ_PRESENT ? false : 'jq is not on PATH on this machine',
+  }, () => {
+    const defs = jqDefs();
+    const corpus: string[] = [
+      'mysql -h db -u app -pS3cretPw dbname',
+      'ssh host "mysqldump -u x -pS3cretPw dbname"',
+      'mysqladmin -h1 -pS3cretPw status',
+      'mariadb-dump --single-transaction -pS3cretPw dbname',
+      'mysql -u app -p"pa ss" dbname',
+      'mysql -uroot "-pS3cretPw" db',
+      "mysql -uroot '-pS3cret Pw' db",
+      'mysql -uroot "-p"S3cretPw db',
+      'mysql -uroot -p"abc"def db',
+      'mysql -u root -p$(cat pwfile) dbname',
+      'mysqldump db \\\n-pS3cretPw dbname',
+      'mysql -h h 2>&1 -pS3cretPw db',
+      'mysqladmin ping &>/dev/null -pS3cretPw',
+      'mysql -h db -u root -e "show databases;" -pS3cretPw',
+      "mysql -e 'a|b' -pS3cretPw dbname",
+      'mysql -e "select -pfoo from t" -pS3cretPw dbname',
+      'find /var/lib/mysql -name x.ibd -print',
+      'docker run --name mysql -p3306:3306 mysql:8',
+      'ssh -p 2222 host true',
+      'mysql -p dbname',
+      'mysql -u app db | ssh -p2222 host',
+      'mysql db; tar -pczf x.tgz d',
+      'mysqldump db && cp -pr a b',
+      'mysqldump db & ssh -p2222 host',
+      'mysql -uroot && rsync "-pavz" src dst',
+      'mysql -e "select 1" \n scp -p file host:',
+      'ls -p /tmp',
+      'notmysql -pX',
+      'mysqldump ' + Array(20).fill('2>&1').join(' ') + ' db',
+      'glab api -H "X: glpat-ABCDEFGHIJKLMNOPQRST"',
+      'deploy --key sk_live_AbCdEfGh1234567890',
+      'deploy --key rk_test_AbCdEfGh1234567890',
+      'echo xapp-1-A01B2C3D4E5F-1234567890abcdef-abcdef1234',
+      'echo npm_AbCdEfGh1234567890AbCdEfGh1234',
+      'mail --key SG.abcdefghijklmnopqrst.ABCDEFGHIJKLMNOPQRST',
+      'echo glpat-ABCDEFGHIJKLMNOPQRS',
+      'cat MSG.errorMessageTemplate.userNotFoundError',
+      'ls xapp-config-generator',
+      'echo disk_test_AbCdEfGh1234567890',
+      'echo fooxapp-1-A01B2C3D4E5F-1234567890abcdef',
+      'echo mynpm_AbCdEfGh1234567890AbCdEfGh123456',
+      'https://user:password@example.com/path',
+      'config: password="open sesame',
+      'ghp_AbcDefGhiJklMnoPqrStuVwxYzaBcDefGhiJ',
+      'The bearer of good news',
+      'token refresh flow',
+      'password: hunter2',
+    ];
+    for (const engineCase of engineCases) corpus.push(engineCase[0]);
+    for (const divergence of ENGINE_DIVERGENCES) corpus.push(divergence.input);
+
+    const unexplained: string[] = [];
+    const seenDivergences = new Set<string>();
+    for (const input of corpus) {
+      const jqOut = execFileSync('jq', ['-nr', '--arg', 's', input, defs + ' $s | redact'], { encoding: 'utf8' }).replace(/\n$/, '');
+      const tsOut = redact(input);
+      if (jqOut === tsOut) continue;
+      const documented = ENGINE_DIVERGENCES.find((d) => d.input === input);
+      if (!documented) {
+        unexplained.push(`UNEXPLAINED ${JSON.stringify(input)}\n    jq: ${JSON.stringify(jqOut)}\n    ts: ${JSON.stringify(tsOut)}`);
+        continue;
+      }
+      // A documented divergence must stay in the safe direction: the port masks a
+      // secret that jq leaves visible. If it ever flips, it is a leak, not a
+      // divergence, and this fails.
+      if (jqOut.includes('***') || !tsOut.includes('***')) {
+        unexplained.push(`DIRECTION FLIPPED ${JSON.stringify(input)}\n    jq: ${JSON.stringify(jqOut)}\n    ts: ${JSON.stringify(tsOut)}`);
+        continue;
+      }
+      seenDivergences.add(documented.input);
+    }
+    assert.deepStrictEqual(unexplained, [], `${unexplained.length} input(s) diverge from jq without a documented, safe-direction reason`);
+    // A documented divergence that has quietly stopped happening is stale
+    // documentation, not a failure - but say so, so it gets removed rather than
+    // left to mislead the next port.
+    const stale = ENGINE_DIVERGENCES.map((d) => d.input).filter((input) => !seenDivergences.has(input));
+    if (stale.length > 0) {
+      console.log(`NOTE: ${stale.length} documented engine divergence(s) did not reproduce on this run: ${JSON.stringify(stale)}`);
+    }
   });
 });
