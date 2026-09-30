@@ -21,13 +21,28 @@
  * no shipped release ever had the jq rule without the port - the drift is a real
  * maintenance hazard, not a user-visible leak.)
  *
- * Oniguruma-to-JS differences the port has to work around (both noted at the
- * rule that needs them, so the tables stay comparable line by line):
+ * Oniguruma-to-JS differences the port has to work around. Each is noted again at the
+ * rule that needs it, so the tables stay comparable line by line, and each is pinned by
+ * a test rather than by this list:
  *   - JS has no atomic group `(?>…)`. The MySQL span emulates one with the
  *     standard `(?=(?<name>X))\k<name>` lookahead-and-backreference form, which
  *     commits each span step the same way and keeps a long run of `N>&M`
  *     redirects linear instead of exponential.
  *   - jq's `\(.name)` replacement interpolation is JS's `$<name>`.
+ *   - `.` is not `.`: JS's also refuses CR, U+2028 and U+2029, so a span jq writes as
+ *     `\.` is written `[^\n]` here. This one was a live leak, not a cosmetic one.
+ *   - `\s` is not `\s`, in BOTH directions (JS has U+FEFF, JS lacks U+0085), so every
+ *     whitespace class in this file is spelled out as `JS_WS_CHARS` / `JS_NOT_WS`.
+ *   - `\w` is not `\w`: Oniguruma's is Unicode-aware and JS's is ASCII, which does not
+ *     shift a boundary, it stops the generic keyword rule firing at all. Over-
+ *     approximated as `JS_WORD_STAR`, run as the LAST masking pass so the residue of
+ *     the approximation can only ever extend a mask.
+ *   - `(?i)` is not `i`: Oniguruma folds U+017F onto `s`, U+212A onto `k` and U+00DF /
+ *     U+1E9E onto `ss`, JS folds none of them, so the literals are spelled through
+ *     `foldSpelled`.
+ *   - `\b` IS left as a difference, not fixed: Oniguruma's is Unicode-aware and no
+ *     approximation of it lands on the safe side, so each input where the two disagree
+ *     is pinned by direction in `ENGINE_DIVERGENCES` in `redaction.test.ts`.
  *
  * `.omp-plugin` is NOT affected by any of this: its shim shells out to the same
  * `hooks/*.sh` scripts, so it inherits the jq rules directly.
@@ -91,6 +106,79 @@ function jsNotWs(extras: string): string {
  * change that turns one into a leak fails.
  */
 const JS_WORD_STAR = "(?:\\w|[^\\x00-\\x7f" + JS_WS_CHARS + "])*";
+
+/**
+ * Oniguruma's case folding, spelled out, because `(?i)` in jq and the `i` flag in JS
+ * are not the same fold. Measured over EVERY non-surrogate code point (1,112,064 probes
+ * per pass, jq 1.7.1) against two pattern sets built from the literals these rules
+ * match: the single characters, and every two-character substring of
+ * `token/secret/password/passwd/api_key/access_key/credential/auth/authorization/client_id/is/was/are/bearer/basic`.
+ * The single-character pass returns exactly two hits outside ASCII - U+017F (long s)
+ * onto `s` and U+212A (Kelvin sign) onto `k`. The two-character pass, which is what a
+ * one-to-two full-folding expansion needs to show up in, returns exactly two - U+00DF
+ * and U+1E9E (sharp s, lower and upper), both onto `ss`. Nothing else in Unicode folds
+ * onto a letter these keywords are spelled with, and no ligature (\u{fb00}-\u{fb06})
+ * appears because no keyword contains `ff`, `fi`, `fl`, `ffi`, `ffl`, `fst` or `ft`.
+ *
+ * JS's `i` flag folds none of the four. A keyword written as plain ASCII therefore
+ * never fires on them where jq does: `pa\u00dfword=S3cret`, `pa\u017f\u017fword=S3cret` and
+ * `to\u212aen=abcdef` are each masked by the jq hooks and stored in cleartext here - the
+ * "rule never fires" direction, the same class of leak as `\s` and `\w`, and invisible
+ * to an ASCII-only test corpus.
+ *
+ * The value classes carry the two SINGLE-character partners only. `bearer \u00dfecret`
+ * is left verbatim by jq as well, because a one-to-two expansion is not something a
+ * bracket class matches, so spelling sharp s in there would over-match where jq does
+ * not fire.
+ */
+const FOLD_S = "[s\\u017f]";
+const FOLD_K = "[k\\u212a]";
+/** A doubled `ss` in a keyword, which jq also matches as one sharp s in either case. */
+const FOLD_SS = "(?:[s\\u017f][s\\u017f]|\\u00df|\\u1e9e)";
+/** `A-Za-z0-9` plus the single-character fold partners, for jq's `(?i)` value classes. */
+const FOLD_ALNUM = "A-Za-z\\u017f\\u212a0-9";
+
+/**
+ * Spell one keyword literal so JS's `i` flag matches exactly what jq's `(?i)` matches:
+ * a lone `s` becomes `[s\u017f]`, a `k` becomes `[k\u212a]`, and a doubled `ss` additionally
+ * becomes one sharp s in either case. Characters that are not `s` or `k` pass through
+ * untouched, which is what lets the regex syntax inside these literals
+ * (`api[_-]?key`, `auth(?:orization)?`, `client[_-]?id`) ride along - none of that syntax
+ * contains an `s` or a `k`, so nothing structural gets folded.
+ *
+ * Built from the plain-ASCII words rather than hand-spelling each alternation branch,
+ * for the mundane reason that hand-spelling is where a dropped letter hides: the
+ * differential test in redaction.test.ts re-derives these same words, strips the fold
+ * classes back out, and asserts the result is the ASCII set jq's def is spelled with.
+ */
+function foldSpelled(word: string): string {
+  let out = "";
+  for (let i = 0; i < word.length; i++) {
+    const ch = word[i];
+    const next = i + 1 < word.length ? word[i + 1] : "";
+    if (ch === "s" && next === "s") {
+      out += FOLD_SS;
+      i++;
+    } else if (ch === "s") {
+      out += FOLD_S;
+    } else if (ch === "k") {
+      out += FOLD_K;
+    } else {
+      out += ch;
+    }
+  }
+  return out;
+}
+
+/** jq's generic keyword list, verbatim, before any fold spelling is applied.
+ * Exported so redaction.test.ts can assert it against the alternation parsed out of
+ * `hooks/_lib.sh` - the fold spelling below is applied to this list, so a word dropped
+ * here is a keyword that stops being masked on both paths. */
+export const KEYWORD_WORDS = ["token", "secret", "password", "passwd", "api[_-]?key", "access[_-]?key", "credential", "auth(?:orization)?", "client[_-]?id"];
+/** jq's `is|was|are` separator words, verbatim. Exported for the same reason. */
+export const SEPARATOR_WORDS = ["is", "was", "are"];
+const KEYWORD_ALTERNATION = KEYWORD_WORDS.map(foldSpelled).join("|");
+const SEPARATOR_ALTERNATION = SEPARATOR_WORDS.map(foldSpelled).join("|");
 
 // --- Structural patterns (safe for both command and prompt paths) ---
 
@@ -370,8 +458,10 @@ function unmaskSentinel(str: string): string {
 function redactBearerScheme(str: string, minLen: number): string {
   // jq: `_bearer_scheme($min)`. `\\s` re-spelled for Oniguruma's: a U+0085 between the
   // scheme and the token means the JS rule never fires and the token is stored
-  // verbatim, while jq masks the whole thing - the leak direction.
-  const regex = new RegExp(`bearer${JS_WS}+([A-Za-z0-9._-]{${minLen},})`, "gi");
+  // verbatim, while jq masks the whole thing - the leak direction. The value class
+  // carries the case-fold partners: jq's `(?i)[A-Za-z0-9._-]` matches a long s or a
+  // Kelvin sign, JS's does not, so `bearer AbCd\u017fEfGh` used to mask only its head here.
+  const regex = new RegExp(`${foldSpelled("bearer")}${JS_WS}+([${FOLD_ALNUM}._-]{${minLen},})`, "gi");
   return str.replace(regex, "Bearer ***");
 }
 
@@ -379,7 +469,7 @@ function redactBearerScheme(str: string, minLen: number): string {
  * Basic scheme redaction (command path, min length 8).
  */
 function redactBasicScheme(str: string, minLen: number): string {
-  const regex = new RegExp(`\\bbasic${JS_WS}+[A-Za-z0-9+/=]{${minLen},}`, "gi");
+  const regex = new RegExp(`\\b${foldSpelled("basic")}${JS_WS}+[${FOLD_ALNUM}+/=]{${minLen},}`, "gi");
   return str.replace(regex, "Basic ***");
 }
 
@@ -388,7 +478,7 @@ function redactBasicScheme(str: string, minLen: number): string {
  */
 function redactTokenScheme(str: string): string {
   // jq: the bare `\\btoken\\s+...` gsub in `redact`, command path, no length floor.
-  return str.replace(new RegExp(`\\btoken${JS_WS}+([A-Za-z0-9._-]+)`, "gi"), "Token ***");
+  return str.replace(new RegExp(`\\b${foldSpelled("token")}${JS_WS}+([${FOLD_ALNUM}._-]+)`, "gi"), "Token ***");
 }
 
 /**
@@ -407,7 +497,7 @@ function redactAuthSchemes(str: string): string {
 function redactAuthSchemesProse(str: string): string {
   let result = str;
   result = redactBearerScheme(result, 16);
-  result = result.replace(new RegExp(`\\btoken${JS_WS}+([A-Za-z0-9._-]{16,})`, "gi"), "Token ***");
+  result = result.replace(new RegExp(`\\b${foldSpelled("token")}${JS_WS}+([${FOLD_ALNUM}._-]{16,})`, "gi"), "Token ***");
   result = redactBasicScheme(result, 16);
   return result;
 }
@@ -485,8 +575,8 @@ export function redact(str: string): string {
   // over-approximation can land on the leaking side, so those stay pinned as
   // divergences - see ENGINE_DIVERGENCES in redaction.test.ts.
   const keywordPattern = (affix: string) =>
-    "(" + affix + "(?:token|secret|password|passwd|api[_-]?key|access[_-]?key|credential|auth(?:orization)?|client[_-]?id)" + affix + ")" +
-      "(" + JS_WS + "*[:=]" + JS_WS + "*|" + JS_WS + "+(?:is|was|are)" + JS_WS + "+|" + JS_WS + "+)" +
+    "(" + affix + "(?:" + KEYWORD_ALTERNATION + ")" + affix + ")" +
+      "(" + JS_WS + "*[:=]" + JS_WS + "*|" + JS_WS + "+(?:" + SEPARATOR_ALTERNATION + ")" + JS_WS + "+|" + JS_WS + "+)" +
       "(\"[^\"]*\"|" + REDACT_SENTINEL + "|\"[^\\r\\n]*|" + jsNotWs("\"") + "+)";
   const keywordReplacement = (_match: string, keyword: string, sep: string, value: string) => {
     // If value is the sentinel, keep it as-is (will be unmasked later)

@@ -1146,6 +1146,27 @@ describe('regex-engine parity with jq (issue #90 review round 1)', () => {
     ['secret\u0663=S3cret', 'secret\u0663=***'],
     ['api_key\u00aa: S3cret', 'api_key\u00aa: ***'],
     ['token\u00fc abcS3cret', 'token\u00fc ***'],
+    // The case fold, same shape of finding one round later (the review at head
+    // ef21e30): Oniguruma's `(?i)` folds U+017F onto `s`, U+212A onto `k` and U+00DF /
+    // U+1E9E onto the two-character `ss`; JS's `i` flag folds none of them, so the
+    // keyword literal did not match and the rule never fired. Written with escapes on
+    // purpose - an earlier round's U+FEFF case lost its BOM to an editor and was
+    // quietly asserting on a plain space.
+    ['pa\u00dfword=S3cret', 'pa\u00dfword=***'],
+    ['pa\u1e9eword=S3cret', 'pa\u1e9eword=***'],
+    ['pa\u017f\u017fword=S3cret', 'pa\u017f\u017fword=***'],
+    ['pas\u017fword=S3cret', 'pas\u017fword=***'],
+    ['\u017fecret: hunter2', '\u017fecret: ***'],
+    ['to\u212aen=AbCdEfGhIjKl', 'to\u212aen=***'],
+    ['to\u212aen AbCdEfGhIjKlMn', 'Token ***'],
+    ['ba\u017fic QWxhZGRpbjpvcGVu', 'Basic ***'],
+    ['password i\u017f S3cret', 'password i\u017f ***'],
+    ['api\u212aey=S3cret', 'api\u212aey=***'],
+    // A fold partner inside the VALUE, where the question is not whether the rule fires
+    // but how far the mask reaches: jq's `(?i)[A-Za-z0-9._-]` walks over the long s, JS's
+    // stopped in front of it and masked only the head.
+    ['bearer AbCd\u017fEfGh', 'Bearer ***'],
+    ['access\u212aey: S3cret', 'access\u212aey: ***'],
     // URL userinfo: a BOM inside the userinfo used to end the match, so the rule did
     // not fire and the password was never masked at all.
     ['https://user\ufeffname:pass\ufeffword@host', 'https://user\ufeffname:***@host'],
@@ -1279,31 +1300,42 @@ describe('regex-engine parity with jq (issue #90 review round 1)', () => {
   /**
    * Every round of review on this port found a class the hand-written corpus did not
    * contain: round 1 the `.` and `\s` spellings, round 2 the whitespace set itself,
-   * round 3 the `\w` affixes - in each case an input shape nobody had typed out by hand,
-   * and in each case the corpus was the reason the previous round could claim parity.
-   * So the corpus is composed mechanically here, from the pieces the rules are built of.
+   * round 3 the `\w` affixes, round 4 the `(?i)` case fold - in each case an input shape
+   * nobody had typed out by hand, and in each case the corpus was the reason the
+   * previous round could claim parity. So the corpus is composed mechanically here, from
+   * the pieces the rules are built of, and both redaction paths are run through it.
    *
-   * Exactly one property is asserted: the port must never leave in cleartext a secret
-   * that the jq hooks mask. Over-redaction is counted and printed, not asserted - a
-   * pinned count would fail the test for the safe direction, and the `over` rows above
+   * Exactly one property is asserted per path: the port must never leave in cleartext a
+   * secret that the jq hooks mask. Over-redaction is counted and printed, not asserted -
+   * a pinned count would fail the test for the safe direction, and the `over` rows above
    * pin the shapes that matter by name.
    */
-  it('leaves in cleartext no secret the jq hooks mask, over 400 seeded random inputs', {
-    skip: JQ_PRESENT ? false : 'jq is not on PATH on this machine',
-  }, () => {
-    const defs = jqDefs();
+  const FUZZ_SECRETS: readonly string[] = ['S3cretPw', 'AbCd.mn_op', 'hunter2', 'pa ss', 'open sesame', 'YWJjZGVmZ2hpamts', 'ghp_AbcDefGhiJklMnoPqrSt', 'sk_live_AbCdEfGh1234567890', 'glpat-ABCDEFGHIJKLMNOPQRST', 'SG.abcdefghijklmnopqrst.ABCDEFGHIJKLMNOPQRST', 'A01B2C3D4E5F-1234567890abcdef', 'Sup3rS3cret', 'ſup3rS3cret'];
+
+  /** The seeded corpus, built once so both paths are asked about the same 400 inputs. */
+  function buildSeededCorpus(): string[] {
     const keywords = ['token', 'secret', 'password', 'passwd', 'api_key', 'API_KEY', 'api-key', 'access_key', 'credential', 'auth', 'authorization', 'client_id'];
+    // Case-fold spellings of the same words (round 4): Oniguruma's `(?i)` folds U+017F
+    // onto `s`, U+212A onto `k` and U+00DF / U+1E9E onto the two-character `ss`, and JS's
+    // `i` flag folds none of them, so each of these is a keyword the jq hooks fire on and
+    // this port used not to. `paßsword` is a deliberate non-word: neither engine fires on
+    // it, and a pattern that DID fire on it would be over-matching.
+    const foldKeywords = ['paßword', 'paßword', 'paßsword', 'paſsword', 'pasſword', 'toKen', 'baſic', 'apiKey', 'accessKey'];
     // Affixes glued to the keyword: ASCII word characters, non-ASCII characters that
     // ARE word characters in both engines, and the categories that are word characters
     // to Oniguruma's `\w` but not to JS's - the exact seam this port leaks on.
     const affixes = ['', 'x', '_', 'my', '\u00e9', '\u00fc', '\u00c9', '\u0663', '\u00aa', '\u4e2d', '\u2000x', '\u00a9', '\u2011', '\ufeff', '\u200b', '\u201c'];
-    // Separators: the ones both engines read, the ones only one reads, and the word
-    // separators the `is|was|are` alternative exists for.
-    const separators = ['=', ':', ' = ', ' : ', ' ', '\u0085', '\u00a0', '\u2000', '\u2028', '\u202f', '\u3000', '\ufeff', '\u200b', '\u180e', ' is ', ' was ', ' are '];
-    // Each value carries one of the SECRET strings below, so "was it masked?" is
+    // Separators: the ones both engines read, the ones only one reads, the word
+    // separators the `is|was|are` alternative exists for, and their fold spellings - a
+    // long s in `iſ` decides whether the rule fires at all.
+    const separators = ['=', ':', ' = ', ' : ', ' ', '\u0085', '\u00a0', '\u2000', '\u2028', '\u202f', '\u3000', '\ufeff', '\u200b', '\u180e', ' is ', ' was ', ' are ', ' iſ ', ' waſ '];
+    // Each value carries one of the FUZZ_SECRETS strings below, so "was it masked?" is
     // answerable by looking for that string rather than by comparing shapes.
-    const values = ['S3cretPw', 'AbCd.mn_op', 'hunter2', '"pa ss"', '"open sesame', 'YWJjZGVmZ2hpamts', 'ghp_AbcDefGhiJklMnoPqrSt', 'sk_live_AbCdEfGh1234567890', 'glpat-ABCDEFGHIJKLMNOPQRST', 'SG.abcdefghijklmnopqrst.ABCDEFGHIJKLMNOPQRST', 'xapp-1-A01B2C3D4E5F-1234567890abcdef'];
-    const secrets = ['S3cretPw', 'AbCd.mn_op', 'hunter2', 'pa ss', 'open sesame', 'YWJjZGVmZ2hpamts', 'ghp_AbcDefGhiJklMnoPqrSt', 'sk_live_AbCdEfGh1234567890', 'glpat-ABCDEFGHIJKLMNOPQRST', 'SG.abcdefghijklmnopqrst.ABCDEFGHIJKLMNOPQRST', 'A01B2C3D4E5F-1234567890abcdef', 'Sup3rS3cret'];
+    // `ſup3rS3cret` is a secret whose FIRST character is a fold partner: jq's
+    // `(?i)[A-Za-z0-9._-]` value class walks over it, JS's stops in front of it, and a
+    // mask that stops early leaves this exact string visible in the output.
+    const values = ['S3cretPw', 'AbCd.mn_op', 'hunter2', '"pa ss"', '"open sesame', 'YWJjZGVmZ2hpamts', 'ghp_AbcDefGhiJklMnoPqrSt', 'sk_live_AbCdEfGh1234567890', 'glpat-ABCDEFGHIJKLMNOPQRST', 'SG.abcdefghijklmnopqrst.ABCDEFGHIJKLMNOPQRST', 'xapp-1-A01B2C3D4E5F-1234567890abcdef', 'ſup3rS3cret', 'AbCdſfGh', 'ß3cret'];
+    const schemeWords = ['bearer', 'basic', 'token', 'baſic', 'toKen'];
     const clients = ['mysql', 'mysqldump', 'mysqladmin', 'mariadb-dump', 'mysql -u app', 'mysqldump -uroot', 'ssh host "mysqldump'];
     const pwArgs = ['-pS3cretPw', '-p"pa ss"', "\"-pS3cretPw\"", "'-pS3cret Pw'", '-p\u00e9S3cretPw', '-p\ufeffS3cretPw', '-p\u200bS3cretPw', '-p S3cretPw'];
     // Tails never contain a SECRET string, so a secret found in the output is the value,
@@ -1315,48 +1347,137 @@ describe('regex-engine parity with jq (issue #90 review round 1)', () => {
     // `***` - the second word pass runs on text that already carries a sentinel.
     const urlValues = ['https://user:Sup3rS3cret@example.com/p', 'https://u\u00e9:p\u00e9@example.com', 'http://\u00e9:Sup3rS3cret@h', 'password=https://u:Sup3rS3cret@h', 'password\u00e9=https://u:Sup3rS3cret@h'];
     const pick = <T,>(rand: () => number, xs: readonly T[]): T => xs[Math.floor(rand() * xs.length)];
+    const wordOf = (rand: () => number) => (rand() < 0.75 ? pick(rand, keywords) : pick(rand, foldKeywords));
 
     const rand = mulberry32(0x5eed1a3b);
     const corpus: string[] = [];
     for (let i = 0; i < 400; i++) {
       const tail = pick(rand, tails);
-      switch (i % 5) {
+      switch (i % 6) {
         case 0:
-          corpus.push(`${pick(rand, affixes)}${pick(rand, keywords)}${pick(rand, affixes)}${pick(rand, separators)}${pick(rand, values)}${tail}`);
+          corpus.push(`${pick(rand, affixes)}${wordOf(rand)}${pick(rand, affixes)}${pick(rand, separators)}${pick(rand, values)}${tail}`);
           break;
         case 1:
           corpus.push(`${pick(rand, clients)} ${pick(rand, pwArgs)}${tail}`);
           break;
         case 2:
-          corpus.push(`${pick(rand, keywords)}${pick(rand, separators)}${pick(rand, values)}${tail} ${pick(rand, keywords)}${pick(rand, separators)}${pick(rand, values)}`);
+          corpus.push(`${wordOf(rand)}${pick(rand, separators)}${pick(rand, values)}${tail} ${pick(rand, keywords)}${pick(rand, separators)}${pick(rand, values)}`);
           break;
         case 3:
-          corpus.push(`echo ${pick(rand, values)} ${pick(rand, separators)} ${pick(rand, keywords)}${pick(rand, affixes)}${tail}`);
+          corpus.push(`echo ${pick(rand, values)} ${pick(rand, separators)} ${wordOf(rand)}${pick(rand, affixes)}${tail}`);
+          break;
+        case 4:
+          corpus.push(`${pick(rand, affixes)}${pick(rand, urlValues)}${tail} ${pick(rand, keywords)}${pick(rand, separators)}${pick(rand, values)}`);
           break;
         default:
-          corpus.push(`${pick(rand, affixes)}${pick(rand, urlValues)}${tail} ${pick(rand, keywords)}${pick(rand, separators)}${pick(rand, values)}`);
+          corpus.push(`${pick(rand, schemeWords)} ${pick(rand, values)}${tail} ${pick(rand, schemeWords)} ${pick(rand, values)}`);
       }
     }
+    return corpus;
+  }
 
+  const SEEDED_CORPUS = buildSeededCorpus();
+
+  /** Run one input through jq's `def` and this port, and report leaks by secret. */
+  function diffAgainstJq(defs: string, jqPipelineName: string, input: string, portOut: string): { leaks: string[]; over: boolean; same: boolean } {
+    const jqOut = execFileSync('jq', ['-nr', '--arg', 's', input, defs + ` $s | ${jqPipelineName}`], { encoding: 'utf8' }).replace(/\n$/, '');
+    const leaks: string[] = [];
+    for (const secret of FUZZ_SECRETS) {
+      if (portOut.includes(secret) && !jqOut.includes(secret)) {
+        leaks.push(`LEAK of ${JSON.stringify(secret)} ${JSON.stringify(input)}\n    jq: ${JSON.stringify(jqOut)}\n    ts: ${JSON.stringify(portOut)}`);
+      }
+    }
+    return { leaks, over: FUZZ_SECRETS.some((secret) => jqOut.includes(secret) && !portOut.includes(secret)), same: jqOut === portOut };
+  }
+
+  it('leaves in cleartext no secret the jq hooks mask, over 400 seeded random inputs', {
+    skip: JQ_PRESENT ? false : 'jq is not on PATH on this machine',
+  }, () => {
+    const defs = jqDefs();
     const leaks: string[] = [];
     let overs = 0;
     let diffs = 0;
-    for (const input of corpus) {
-      const jqOut = execFileSync('jq', ['-nr', '--arg', 's', input, defs + ' $s | redact'], { encoding: 'utf8' }).replace(/\n$/, '');
-      const tsOut = redact(input);
-      if (jqOut === tsOut) continue;
-      diffs++;
-      for (const secret of secrets) {
-        if (tsOut.includes(secret) && !jqOut.includes(secret)) {
-          leaks.push(`LEAK of ${JSON.stringify(secret)} ${JSON.stringify(input)}\n    jq: ${JSON.stringify(jqOut)}\n    ts: ${JSON.stringify(tsOut)}`);
-        }
-      }
-      if (secrets.some((secret) => jqOut.includes(secret) && !tsOut.includes(secret))) overs++;
+    for (const input of SEEDED_CORPUS) {
+      const result = diffAgainstJq(defs, 'redact', input, redact(input));
+      if (!result.same) diffs++;
+      leaks.push(...result.leaks);
+      if (result.over) overs++;
     }
     // `diffs` counts every difference, including ones no SECRET string can see (a value
     // masked twice over, say). Only the leak direction fails the test; see the docstring
     // above for why pinning the other two counts would be a trap.
-    console.log(`NOTE: seeded fuzz corpus - ${corpus.length} inputs, ${diffs} difference(s) from jq, ${overs} secret-level over-redaction(s), ${leaks.length} leak(s)`);
+    console.log(`NOTE: seeded fuzz corpus (command path) - ${SEEDED_CORPUS.length} inputs, ${diffs} difference(s) from jq, ${overs} secret-level over-redaction(s), ${leaks.length} leak(s)`);
     assert.deepStrictEqual(leaks, [], `${leaks.length} input(s) leave in cleartext a secret the jq hooks mask`);
+  });
+
+  /**
+   * The prompt path (`redactPrompt`) used to be checked only against hand-written
+   * expectations, never against jq's `redact_prompt` - so every engine difference found
+   * in the first three rounds was found on the command path and silently left in the
+   * prose path, where the same `JS_WS` classes and the same keyword/scheme literals are
+   * in use. Same corpus, same single property, jq's other pipeline.
+   */
+  it('leaves in cleartext no secret the jq hooks mask on the PROMPT path, over the same 400 inputs', {
+    skip: JQ_PRESENT ? false : 'jq is not on PATH on this machine',
+  }, () => {
+    const defs = jqDefs();
+    const leaks: string[] = [];
+    let overs = 0;
+    let diffs = 0;
+    for (const input of SEEDED_CORPUS) {
+      const result = diffAgainstJq(defs, 'redact_prompt', input, redactPrompt(input));
+      if (!result.same) diffs++;
+      leaks.push(...result.leaks);
+      if (result.over) overs++;
+    }
+    console.log(`NOTE: seeded fuzz corpus (prompt path) - ${SEEDED_CORPUS.length} inputs, ${diffs} difference(s) from jq's redact_prompt, ${overs} secret-level over-redaction(s), ${leaks.length} leak(s)`);
+    assert.deepStrictEqual(leaks, [], `${leaks.length} prompt-path input(s) leave in cleartext a secret the jq hooks mask`);
+  });
+
+  /**
+   * Case-fold coverage by construction rather than by luck: substitute each of the four
+   * fold partners into every `s`, `k` and `ss` position of every keyword, separator and
+   * scheme word this port matches, and require this port and jq to agree EXACTLY (not
+   * merely in direction) on the result. Sweeping every non-surrogate code point against
+   * these literals returns exactly these four partners, so this loop is the whole set,
+   * and a dropped letter in `foldSpelled` fails here rather than leaking.
+   */
+  it('fires on every case-fold spelling of every keyword, exactly where jq fires', {
+    skip: JQ_PRESENT ? false : 'jq is not on PATH on this machine',
+  }, () => {
+    const defs = jqDefs();
+    const foldSubs: readonly [string, string][] = [['s', '\u017f'], ['k', '\u212a'], ['ss', '\u00df'], ['ss', '\u1e9e']];
+    const words = ['token', 'secret', 'password', 'passwd', 'api_key', 'access_key', 'credential', 'auth', 'authorization', 'client_id', 'is', 'was', 'are', 'bearer', 'basic'];
+    const value = 'AbCdEfGhIjKlMn';
+    const failures: string[] = [];
+    let cases = 0;
+    for (const word of words) {
+      const spellings = new Set<string>();
+      for (const [from, to] of foldSubs) {
+        for (let i = 0; i <= word.length - from.length; i++) {
+          if (word.slice(i, i + from.length) === from) spellings.add(word.slice(0, i) + to + word.slice(i + from.length));
+        }
+      }
+      const isSeparator = word === 'is' || word === 'was' || word === 'are';
+      const isScheme = word === 'bearer' || word === 'basic' || word === 'token';
+      const templates = isSeparator
+        ? [`password ${'@'} S3cret`, `${'@'} S3cret`]
+        : isScheme
+          ? [`@ ${value}`, `@=S3cret`, `header @ ${value} tail`]
+          : [`@=S3cret rest`, `@: S3cret`, `@ ${value}`, `x@=S3cret`, `--@="pa ss"`];
+      for (const spelling of spellings) {
+        for (const template of templates) {
+          const input = template.replace(/@/g, spelling);
+          cases++;
+          const jqOut = execFileSync('jq', ['-nr', '--arg', 's', input, defs + ' $s | redact'], { encoding: 'utf8' }).replace(/\n$/, '');
+          const tsOut = redact(input);
+          if (jqOut !== tsOut) {
+            failures.push(`${JSON.stringify(input)}\n    jq: ${JSON.stringify(jqOut)}\n    ts: ${JSON.stringify(tsOut)}`);
+          }
+        }
+      }
+    }
+    console.log(`NOTE: case-fold mutation sweep - ${cases} inputs, ${failures.length} divergence(s) from jq`);
+    assert.deepStrictEqual(failures, [], `${failures.length} case-fold input(s) diverge from jq`);
   });
 });

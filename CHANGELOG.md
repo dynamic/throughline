@@ -104,8 +104,20 @@ All notable changes to throughline are documented here. Format loosely follows
   either way without putting a mask on the leaking side, so it stays a divergence with
   each input pinned by direction: three where this port masks a command jq leaves
   visible, and two contrived ones where an over-match swallows a keyword the next rule
-  needed and a secret survives, pinned as leaks so they cannot grow quietly.
-  (`.omp-plugin` never
+  needed and a secret survives, pinned as leaks so they cannot grow quietly. A third
+  engine difference was found at the same head and is fixed rather than pinned:
+  Oniguruma's `(?i)` case fold reaches U+017F (long s), U+212A (Kelvin sign) and
+  U+00DF / U+1E9E (sharp s as the two-character `ss`) while JS's `i` flag reaches none
+  of them, so `paßword=S3cret`, `toKen=abcdef` and `bearer AbCdſEfGh` - each masked by
+  the jq hooks - were stored in cleartext, the first because the keyword literal never
+  matched and the last because the value class stopped early. Sweeping every
+  non-surrogate code point against these literals returns exactly those four fold
+  partners, so the keywords, separators, scheme names and value classes are spelled to
+  include them and a mutation test substitutes each one into every `s`, `k` and `ss`
+  position of every literal and requires the two engines to agree exactly. The prompt
+  path is now differentially tested too (`redact_prompt` over the same seeded 400-input
+  corpus, which the previous rounds could only have checked by hand-written
+  expectations): it matches jq exactly on that corpus. (`.omp-plugin` never
   had this gap: its shim shells out to the same `hooks/*.sh` scripts.)
 - **Capture hook dropped every event on Windows** (issue #81 review): the jq program
   is one command-line argument (`redaction defs + capture filter`) and Windows caps a
