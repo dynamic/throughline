@@ -77,62 +77,44 @@ All notable changes to throughline are documented here. Format loosely follows
 
 ### Fixed
 - **OpenCode plugin port of the issue #81 rules, plus a parity test** (issue #90):
-  the OpenCode plugin carries its own TypeScript port of the jq redaction defs, and
-  the rules added for issue #81 above were not ported at the same time - so with both
-  still unreleased, an OpenCode session running `mysql -h db -u app -pS3cretPw dbname`
-  masks nothing while the Claude Code hooks do, and `xapp-`, `sk_live_`/`rk_test_`,
-  `glpat-`, `npm_` and `SG.x.y` tokens are stored verbatim. Both rule sets are now
-  single tables in `.opencode-plugin/src/utils/redaction.ts`, ported rule for rule
-  including the regex-spelling differences Oniguruma and JS read differently (see
-  `JS_NOT_WS`), and `redaction.test.ts` parses `hooks/_lib.sh`, composes the jq defs
-  the way jq does and compares behaviour against `jq` itself, so a drift between the
-  two fails the suite on any input in that corpus - which now carries every code point
-  the two engines' `\s` disagree about, both as a separator and inside a value, plus a
-  seeded 400-input random-composition pass over the pieces the rules are built of,
-  asserting one property: the port never leaves in cleartext a secret the jq hooks
-  mask. Two word-class differences needed more than a re-spelling, and they are not the
-  same case. Oniguruma's Unicode-aware `\w` walks over an accented letter where JS's
-  stops, and that does not merely shift a boundary - it makes the separator
-  alternatives unmatchable, so the generic keyword rule never fires at all and
-  `passwordé=S3cret` (that `é` is a literal e-acute) was stored in cleartext here while
-  jq masked it. The port now runs that rule twice, jq's own ASCII affixes first and an
-  over-approximated word class last, so it fires wherever jq fires and the residue of
-  the approximation can only ever extend a mask; widened into the single rule instead,
-  the fuzz pass found it leaking, because a longer keyword group also matches earlier
-  and eats a keyword the next match needed. The word-BOUNDARY difference (`\b`,
-  Unicode-aware in Oniguruma, ASCII-only in JS) is the case that cannot be approximated
-  either way without putting a mask on the leaking side, so it stays a divergence with
-  each input pinned by direction: three where this port masks a command jq leaves
-  visible, and two contrived ones where an over-match swallows a keyword the next rule
-  needed and a secret survives, pinned as leaks so they cannot grow quietly. A third
-  engine difference was found at the same head and is fixed rather than pinned:
-  Oniguruma's `(?i)` case fold reaches U+017F (long s), U+212A (Kelvin sign) and
-  U+00DF / U+1E9E (sharp s as the two-character `ss`) while JS's `i` flag reaches none
-  of them, so `paßword=S3cret`, `toKen=abcdef` and `bearer AbCdſEfGh` - each masked by
-  the jq hooks - were stored in cleartext, the first because the keyword literal never
-  matched and the last because the value class stopped early. Sweeping every
-  non-surrogate code point against these literals returns exactly those four fold
-  partners, so the keywords, separators, scheme names and value classes are spelled to
-  include them and a mutation test substitutes each one into every `s`, `k` and `ss`
-  position of every literal and requires the two engines to agree exactly. The prompt
-  path is now differentially tested too (`redact_prompt` over the same seeded 400-input
-  corpus, which the previous rounds could only have checked by hand-written
-  expectations): it matches jq exactly on that corpus. One difference fell out of
-  that review and is pinned rather than "fixed". The URL userinfo rule anchors on `//`
-  where jq's `_url` anchors on `://`, so a scheme-relative reference like
-  `//user:pw@host` is masked by this port and left verbatim by jq. That gap is jq's: a
-  credential in userinfo position is a credential with or without a scheme in front of it,
-  so the anchor stays wide here, both inputs are pinned as over-redaction rows in
-  `ENGINE_DIVERGENCES` (which fails if the direction ever flips), and closing the gap the
-  other way - widening `_url` in the hooks - is its own change. This port masks the same
-  text it masked before the review, and one round of this PR briefly narrowed the anchor
-  to `://` in the name of text parity, which un-masked `//user:pw@host`; that round was
-  reverted before merge and the pinned rows exist so it cannot come back. And over-approximating `\w` on both sides of the keyword made
-  `redact()` quadratic in the length of a run of non-ASCII text - 5.6 s for a 3 KB command
-  where the released code takes 1 ms, on a path that runs in-process against the full
-  unclamped bash command - so the over-approximation is on the suffix only, which costs no
-  mask because a leading affix is written back verbatim, with a latency test pinning it. (`.omp-plugin` never
-  had this gap: its shim shells out to the same `hooks/*.sh` scripts.)
+  the OpenCode plugin carries its own TypeScript port of the jq redaction defs, and the
+  rules added for issue #81 were not ported at the same time - an OpenCode session running
+  `mysql -h db -u app -pS3cretPw dbname` masked nothing while the Claude Code hooks did,
+  and `xapp-`, `sk_live_`/`rk_test_`, `glpat-`, `npm_` and `SG.x.y` tokens were stored
+  verbatim. Both rule sets are now single tables in
+  `.opencode-plugin/src/utils/redaction.ts`, and `redaction.test.ts` parses `hooks/_lib.sh`
+  and compares against `jq` itself: every `_prefix_tokens` row and every `_mysql_pw*` rule
+  by pattern text and behaviour, the generic keyword=value rule's keyword and copula lists
+  by list equality plus a probe per keyword, and the def chain of both pipelines by name
+  and order, so a rule added, removed, reordered or edited on the jq side fails the suite
+  whether or not any test input mentions it.
+  Because JS and Oniguruma read identical regex text differently, four differences are
+  spelled around rather than copied: `.` (JS also refuses CR, U+2028 and U+2029, so a span
+  jq writes as `\.` is written `[^\n]`), `\s` (the two engines' whitespace sets differ in
+  both directions, so the class is written out as `JS_WS_CHARS`, 25 code points measured
+  against jq), `(?i)` (Oniguruma folds U+017F, U+212A, U+00DF and U+1E9E, JS folds none of
+  them, so the keyword literals carry those partners and a mutation test substitutes each
+  one into every `s`, `k` and `ss` position), and `\w` (Oniguruma's is Unicode-aware, which
+  does not shift a boundary but stops the generic keyword rule firing at all, so that rule
+  runs jq's ASCII affixes first and an over-approximated word class second. The second pass
+  masks a match only where its own keyword carries a non-ASCII character, which is the only
+  reason the widened class fires and the ASCII one did not; over-masking an ASCII keyword the
+  first pass already had would apply the rule twice to its own output, and the widened suffix
+  is kept off the leading affix because a star there costs the length of the run at every
+  position of a spaceless run. Widening the single rule instead of running it twice matched
+  earlier and ate keywords the next match needed).
+  Known divergences, each pinned by direction in `ENGINE_DIVERGENCES` so a flip fails:
+  Oniguruma's Unicode-aware `\b` has no JS equivalent (three inputs where this port masks a
+  command jq leaves visible, and three inputs where an over-match swallows a keyword the
+  next rule needs, so a secret survives - each of those three leaks a secret on `main`
+  today as well as here, and they are pinned with both engines' outputs so a fourth cannot
+  be added without a test naming it); and the URL userinfo rule anchors on
+  `//` where jq's `_url` anchors on `://`, masking scheme-relative userinfo like
+  `//user:pw@host` that the hooks leave verbatim - the anchor stays wide, because a
+  credential in userinfo position is a credential, and closing it means widening `_url` in
+  the hooks. The generic keyword rule is quadratic in the length of a long unbroken run of
+  text, on both engines, on the full unclamped bash command.
+  (`.omp-plugin` never had this gap: its shim shells out to the same `hooks/*.sh` scripts.)
 - **Capture hook dropped every event on Windows** (issue #81 review): the jq program
   is one command-line argument (`redaction defs + capture filter`) and Windows caps a
   command line at 32,767 characters; the explanatory comments inside the defs had grown

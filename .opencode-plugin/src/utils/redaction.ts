@@ -13,7 +13,11 @@
  * SYNC IS MECHANICAL, NOT HONESTY-BASED (issue #90): the rule tables below are
  * ordered and spelled to match their jq counterparts one row at a time, and
  * `redaction.test.ts` parses `hooks/_lib.sh` and fails if a rule is added,
- * removed, reordered or edited on the jq side without being ported here. That
+ * removed, reordered or edited on the jq side without being ported here. What it
+ * covers, by name: every `_prefix_tokens` row, every `_mysql_pw*` rule, the
+ * generic rule's keyword and copula lists, and the def chain of both pipelines in
+ * order - so a new `def` in `redact` or `redact_prompt`, or a keyword added to the
+ * generic alternation, fails a test even when no corpus input mentions it. That
  * test, not this comment, is what keeps the two in step — the drift it exists
  * to catch is exactly what happened with the issue #81 rules: they landed on the
  * jq side and were not ported here at the same time, so for as long as both are
@@ -100,7 +104,7 @@ function jsNotWs(extras: string): string {
  * that is provable rather than hoped: the rules that use this class run as the LAST
  * masking step of `redact` (pass 6b, after the ASCII pass), so nothing runs after a
  * longer keyword group and it can only ever extend a mask. It cannot consume text a
- * later rule needed, which is the mechanism behind the two `under` rows in
+ * later rule needed, which is the mechanism behind the three `under` rows in
  * `ENGINE_DIVERGENCES` (those are earlier rules whose over-match eats a later rule's
  * keyword). The residue cases are pinned as `over` rows in that table, so a future
  * change that turns one into a leak fails.
@@ -147,9 +151,11 @@ const FOLD_ALNUM = "A-Za-z\\u017f\\u212a0-9";
  * contains an `s` or a `k`, so nothing structural gets folded.
  *
  * Built from the plain-ASCII words rather than hand-spelling each alternation branch,
- * for the mundane reason that hand-spelling is where a dropped letter hides: the
- * differential test in redaction.test.ts re-derives these same words, strips the fold
- * classes back out, and asserts the result is the ASCII set jq's def is spelled with.
+ * for the mundane reason that hand-spelling is where a dropped letter hides: the parity
+ * test in `redaction.test.ts` parses the keyword and copula alternations out of jq's own
+ * `def redact`, asserts they equal `KEYWORD_WORDS` / `SEPARATOR_WORDS` in order, and then
+ * runs a probe per keyword through both engines, so a word that is in the list but not in
+ * the rule - or in jq but not in the list - fails.
  */
 function foldSpelled(word: string): string {
   let out = "";
@@ -580,8 +586,8 @@ export function redact(str: string): string {
   //             written back verbatim by the replacement, so dropping it costs no mask:
   //             `\u4e2dAPI_KEY\u4e2d  S3cretPw` is still masked, the match just starts at the
   //             keyword instead of at the character before it.
-  // Widening the single rule instead was shorter and WRONG, found by the seeded fuzz
-  // test in redaction.test.ts rather than by reasoning: a keyword group that runs
+  // Widening the single rule instead is shorter and WRONG, and the seeded fuzz
+  // test in redaction.test.ts pins why: a keyword group that runs
   // longer also MATCHES EARLIER, and an earlier match can consume the keyword a later
   // match needed - the same mechanism as the `under` rows in ENGINE_DIVERGENCES. As one
   // widened rule this port leaked `api-key<U+180E>YWJjZGVmZ2hpamts api_key "pa ss"`,
@@ -606,7 +612,33 @@ export function redact(str: string): string {
   };
 
   result = result.replace(new RegExp(keywordPattern("\\w*", "\\w*"), "gi"), keywordReplacement);
-  result = result.replace(new RegExp(keywordPattern("\\w*", JS_WORD_STAR), "gi"), keywordReplacement);
+  // Pass 6b masks a match only when its KEYWORD carries a non-ASCII character, which is the
+  // only reason the widened rule fires where the ASCII one did not: `JS_WORD_STAR` is
+  // `(?:\w|[^\x00-\x7f<whitespace>])*`, so a keyword group it matches and `\\w*` does not is
+  // exactly a keyword group containing a non-ASCII character. The separator and value
+  // classes are already spelled for Oniguruma, so nothing else about a match can differ
+  // between the two passes - and a match whose keyword is plain ASCII was fully visible to
+  // pass 6a, which scanned this same text one pass earlier. Masking it again is applying a
+  // rule twice to its own output, which is not the same as applying it once: the first pass
+  // has replaced the value with `***`, and the second matches `keyword + separator + ***`
+  // plus whatever is glued to it and masks that too. `Password "open sesame passwd:"open
+  // sesame` is `Password ***open sesame` in jq and in one pass, `Password *** sesame` in
+  // two - over-masking, never a leak, but a divergence from the hooks on ordinary text, and
+  // it comes back wherever an em-dash or an accented name appears anywhere else in the
+  // command if the test is on the whole string instead of on the matched keyword. Both
+  // shapes are pinned in `engineCases`, so neither can come back silently.
+  const widenedKeywordReplacement = (match: string, keyword: string, sep: string, value: string) =>
+    /[^\x00-\x7f]/.test(keyword) ? keywordReplacement(match, keyword, sep, value) : match;
+  // And the whole-string test is a fast path over that same rule rather than a second
+  // condition: with no non-ASCII character in the text, no keyword group can carry one, so
+  // every match pass 6b could see would be returned unchanged. It is here for cost - this
+  // rule is quadratic in the length of a long unbroken run on both engines
+  // (dynamic/throughline#114), the command path runs it on the full unclamped bash command,
+  // and a pasted base64 blob is ASCII, so running the widened pass at all would double the
+  // cost of the common case for an output that cannot differ.
+  if (/[^\x00-\x7f]/.test(result)) {
+    result = result.replace(new RegExp(keywordPattern("\\w*", JS_WORD_STAR), "gi"), widenedKeywordReplacement);
+  }
 
   // 7. Unmask sentinel
   result = unmaskSentinel(result);

@@ -15,6 +15,8 @@ import * as redactionModule from './redaction.js';
  */
 const TOKEN_PREFIX_RULES = (redactionModule as { TOKEN_PREFIX_RULES?: readonly { name: string; pattern: RegExp; replacement: string }[] }).TOKEN_PREFIX_RULES;
 const MYSQL_PW_RULES = (redactionModule as { MYSQL_PW_RULES?: readonly { name: string; pattern: RegExp; replacement: string }[] }).MYSQL_PW_RULES;
+const KEYWORD_WORDS = (redactionModule as { KEYWORD_WORDS?: readonly string[] }).KEYWORD_WORDS;
+const SEPARATOR_WORDS = (redactionModule as { SEPARATOR_WORDS?: readonly string[] }).SEPARATOR_WORDS;
 
 describe('Redaction Utilities', () => {
   describe('redact()', () => {
@@ -733,6 +735,90 @@ function jqMysqlRules(): JqRule[] {
   return rules;
 }
 
+/** The alternation inside the first `(?:` at `from`, split at top-level `|`. */
+function jqAlternationBranches(text: string, from: number, what: string): string[] {
+  const open = text.indexOf('(?:', from);
+  assert.ok(open >= 0, `no (?: group found for ${what} in ${JSON.stringify(text.slice(0, 80))} - the parity parser needs updating`);
+  let depth = 0;
+  let end = -1;
+  for (let i = open; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '(') depth++;
+    else if (ch === ')') {
+      depth--;
+      if (depth === 0) {
+        end = i;
+        break;
+      }
+    }
+  }
+  assert.ok(end > open, `the (?: group for ${what} is never closed`);
+  const body = text.slice(open + 3, end);
+  // Split on `|` outside every group and every bracket class: `auth(?:orization)?` and
+  // `client[_-]?id` both contain regex syntax, and a naive split('|') would cut them.
+  const branches: string[] = [];
+  let current = '';
+  let groupDepth = 0;
+  let inClass = false;
+  for (let i = 0; i < body.length; i++) {
+    const ch = body[i];
+    if (ch === '\\') {
+      current += ch + (body[++i] ?? '');
+      continue;
+    }
+    if (inClass) {
+      current += ch;
+      if (ch === ']') inClass = false;
+      continue;
+    }
+    if (ch === '[') inClass = true;
+    else if (ch === '(') groupDepth++;
+    else if (ch === ')') groupDepth--;
+    if (ch === '|' && groupDepth === 0) {
+      branches.push(current);
+      current = '';
+      continue;
+    }
+    current += ch;
+  }
+  branches.push(current);
+  return branches;
+}
+
+/**
+ * jq's generic keyword=value rule, as parsed from its own `def redact` - the two
+ * alternations it is built from, plus the pattern they sit in. Nothing else in this
+ * file checks this rule's WORD list: the prefix and MySQL rules have table parity, and
+ * before this parser the generic rule's list was only covered by whatever keyword some
+ * corpus input happened to contain, which is exactly how a keyword added on the jq side
+ * (say `private[_-]?key`) would stop being masked here with the suite still green.
+ */
+function jqGenericKeywordRule(): { keywords: string[]; separators: string[]; pattern: string } {
+  const body = jqDefBody(jqDefs(), 'redact');
+  const calls = jqCalls(body, 'gsub');
+  const generic = calls.map((args) => decodeJqString(args[0])).find((p) => p.includes('(?<k>'));
+  assert.ok(generic, 'jq `redact` no longer has a generic keyword=value gsub with a `(?<k>` group - the parity parser needs updating');
+  const kStart = generic.indexOf('(?<k>');
+  const sStart = generic.indexOf('(?<s>');
+  assert.ok(kStart >= 0 && sStart > kStart, 'the generic rule no longer reads as a `(?<k>` group followed by a `(?<s>` group');
+  return {
+    keywords: jqAlternationBranches(generic, generic.indexOf('(?:', kStart), 'the keyword alternation'),
+    separators: jqAlternationBranches(generic, generic.indexOf('(?:', sStart), 'the copula alternation'),
+    pattern: generic,
+  };
+}
+
+/**
+ * Plain-language spellings of the keywords, used to ask whether the port actually fires
+ * on each keyword jq lists - the structural comparison above proves the lists agree, this
+ * proves the list is wired into the rule. A branch with no representative here fails loudly
+ * rather than passing vacuously.
+ */
+const KEYWORD_PROBES = [
+  'token', 'secret', 'password', 'passwd', 'api_key', 'api-key', 'access_key', 'access-key',
+  'credential', 'auth', 'authorization', 'client_id', 'client-id',
+];
+
 /** The defs run in each jq pipeline, in order. */
 function jqPipeline(defs: string, name: string): string[] {
   return splitTopLevel(jqDefBody(defs, name), '|')
@@ -792,6 +878,72 @@ describe('jq parity with hooks/_lib.sh (issue #90)', () => {
       );
       assert.strictEqual(ts.replacement, jq.replacement, `MySQL rule ${i} replacement diverged from hooks/_lib.sh`);
     });
+  });
+
+  /**
+   * The generic keyword=value rule's WORD list, which no table covers: the prefix and
+   * MySQL rules compare `TOKEN_PREFIX_RULES` / `MYSQL_PW_RULES` against jq, but the
+   * generic rule's keywords and copulas live in two arrays in `redaction.ts` and in one
+   * `gsub` in `hooks/_lib.sh`, and until this test nothing read the jq side of them. A
+   * keyword added on the jq side (`private[_-]?key`, say) would therefore have kept the
+   * suite green while OpenCode stopped masking it - the exact drift issue #90 is about.
+   */
+  it("carries jq's generic keyword and copula lists, and fires on every word in them", () => {
+    const rule = jqGenericKeywordRule();
+    assert.ok(Array.isArray(KEYWORD_WORDS), 'redaction.ts must export KEYWORD_WORDS');
+    assert.ok(Array.isArray(SEPARATOR_WORDS), 'redaction.ts must export SEPARATOR_WORDS');
+    // Parser sanity first: a parse that silently returned an empty list would make the
+    // two deep-equal assertions below vacuous.
+    assert.ok(rule.keywords.length >= 9, `expected at least 9 generic keywords, parsed ${rule.keywords.length}: ${JSON.stringify(rule.keywords)}`);
+    for (const marker of ['token', 'password', 'passwd', 'credential', 'api[_-]?key', 'auth(?:orization)?', 'client[_-]?id']) {
+      assert.ok(rule.keywords.includes(marker), `the parsed generic keyword list does not contain ${marker}`);
+    }
+    assert.deepStrictEqual([...rule.separators], [...SEPARATOR_WORDS], 'jq copula list and SEPARATOR_WORDS diverged');
+    assert.deepStrictEqual([...rule.keywords], [...KEYWORD_WORDS], 'jq generic keyword list and KEYWORD_WORDS diverged');
+
+    // And the arrays must be wired into the rule, not merely equal to it: every keyword
+    // probe is run against both engines, and a keyword dropped from the TS list would show
+    // up here as a port that leaves the value visible where jq masks it.
+    const values = ['S3cretPw', 'AbCd.mn_op'];
+    const separators = ['=', ':', ' ', ' is ', ' was ', ' are '];
+    const inputs: string[] = [];
+    for (const word of KEYWORD_PROBES) {
+      for (const sep of separators) inputs.push(`${word}${sep}${values[inputs.length % values.length]}`);
+    }
+    const defs = jqDefs();
+    const diffs: string[] = [];
+    let jqMasked = 0;
+    for (const [index, input] of inputs.entries()) {
+      const value = values[index % values.length];
+      const jqOut = execFileSync('jq', ['-nr', '--arg', 's', input, defs + ' $s | redact'], { encoding: 'utf8' }).replace(/\n$/, '');
+      const tsOut = redact(input);
+      if (jqOut !== tsOut) diffs.push(`${JSON.stringify(input)}\n    jq: ${JSON.stringify(jqOut)}\n    ts: ${JSON.stringify(tsOut)}`);
+      if (!jqOut.includes(value)) jqMasked++;
+      if (tsOut.includes(value) && !jqOut.includes(value)) diffs.push(`LEAK: the port left ${JSON.stringify(value)} visible in ${JSON.stringify(input)} while jq masks it`);
+    }
+    assert.deepStrictEqual(diffs, [], `${diffs.length} keyword/copula probe input(s) diverge from jq`);
+    // And that the probes probe: if jq masked none of them the equality above proves
+    // nothing about a keyword list being wired into the rule at all.
+    assert.ok(jqMasked > 0, `jq masked none of the ${inputs.length} keyword probes; the probes no longer reach the generic rule`);
+  });
+
+  /**
+   * The full def chain each jq pipeline runs, pinned by name and order. This is what
+   * notices a rule ADDED on the jq side - no behavioural probe can see a def that does not
+   * exist in the port, and the text comparisons above only cover the defs they name. The
+   * `gsub` entries are the two inline rules (the Token-scheme word rule and the generic
+   * keyword=value catch-all), pinned positionally rather than by text because their text
+   * is checked elsewhere: the scheme literals by the probe inputs above, the keyword lists
+   * by the test above.
+   */
+  it('runs the same def chain as jq, in the same order, on both paths', () => {
+    const defs = jqDefs();
+    assert.deepStrictEqual(jqPipeline(defs, 'redact'), [
+      '_pem', '_auth_scheme', 'gsub', '_url', '_prefix_tokens', '_mysql_pw_all', 'gsub', '_unmask',
+    ], 'jq `redact` changed its def chain; the TS port must gain, drop or reorder the matching pass');
+    assert.deepStrictEqual(jqPipeline(defs, 'redact_prompt'), [
+      '_pem', '_auth_scheme_prose', '_url', '_prefix_tokens', '_unmask',
+    ], 'jq `redact_prompt` changed its def chain; the TS prompt path must follow');
   });
 
   it('runs the MySQL rules in the command chain only, exactly as jq does', () => {
@@ -910,7 +1062,7 @@ describe('issue #81 rules, ported to the OpenCode plugin', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Regex-ENGINE parity, not just rule-text parity (issue #90, review round 1)
+// Regex-ENGINE parity, not just rule-text parity (issue #90)
 // ---------------------------------------------------------------------------
 
 /**
@@ -1067,6 +1219,17 @@ const ENGINE_DIVERGENCES: readonly {
     note: 'Scheme-relative userinfo: jq\'s `_url` anchors on `://` and leaves this verbatim; the port anchors on `//` and masks the password. Deliberate, and the direction is pinned - if it ever flips, a credential the shipped plugin masks is being stored in cleartext.',
   },
   {
+    // Same `` mechanism as the two `under` rows before it, on the Token-scheme word rule
+    // instead of the SendGrid or MySQL ones, and OLD: `main` leaks this input byte-for-byte
+    // the same way, so it is not something the port introduced. Found by the ad-hoc 6,000
+    // -input fuzz run, not by the seeded corpus.
+    input: '\u00fcTOKEN i\u017f YWJjZGVmZ2hpamts\nnext line',
+    direction: 'under',
+    jq: '\u00fcTOKEN i\u017f ***\nnext line',
+    ts: '\u00fcToken *** YWJjZGVmZ2hpamts\nnext line',
+    note: 'LEAK: Oniguruma\'s `\b` refuses to anchor after \u00fc, so jq\'s Token-scheme rule never fires and its generic rule masks the value; JS\'s ASCII-only `\b` does fire, the Token rule eats `TOKEN i\u017f` and writes `Token ***`, and the value survives. The plain-ASCII copula (`\u00fcTOKEN is <value>`) diverges identically. Pre-existing on `main`, same class as the two rows above: an over-match at a `\b` the other engine does not have.',
+  },
+  {
     input: 'x//user:pw@host',
     direction: 'over',
     note: 'Same rule, same direction, with the anchor mid-token rather than at the start of the input, so the `//` anchor is pinned in both positions.',
@@ -1084,7 +1247,7 @@ function jqIsUsable(): boolean {
 
 const JQ_PRESENT = jqIsUsable();
 
-describe('regex-engine parity with jq (issue #90 review round 1)', () => {
+describe('regex-engine parity with jq (issue #90)', () => {
   const engineCases: readonly [string, string][] = [
     // JS `.` refuses CR, Oniguruma's does not: a CRLF line continuation inside a
     // quoted -e used to stop the span and leave the password in cleartext.
@@ -1150,24 +1313,21 @@ describe('regex-engine parity with jq (issue #90 review round 1)', () => {
     // as an `over` row above rather than quietly asserted away here.
     ['bearer\ufeffAbCdEfGhIjKlMnOp', 'bearer\ufeffAbCdEfGhIjKlMnOp'],
     ['password\ufeff=S3cret', 'password\ufeff=***'],
-    // The `\w` affixes of the generic keyword rule (issue #90 review round 3, the
-    // finding at head ef21e30): Oniguruma's `\w*` walks over a non-ASCII letter, JS's
-    // stops there, the separator alternatives cannot match a letter, and the rule never
-    // fires at all - the secret was stored whole. These are the review's minimal repros
-    // with jq's own outputs; the affixes are now `JS_WORD_STAR`, which fires wherever
-    // jq does. Note the last two: one accented letter after the keyword, no other rule
-    // involved, and the previous round's record claimed no such leak existed.
+    // The `\w` affixes of the generic keyword rule: Oniguruma's `\w*` walks over a
+    // non-ASCII letter, JS's stops there, the separator alternatives cannot match a
+    // letter, and the rule never fires at all - the secret is stored whole. `JS_WORD_STAR`
+    // fires wherever jq does; note the last two, one accented letter after the keyword with
+    // no other rule involved, which is the cheapest shape that leaks.
     ['password\u00e9=S3cret', 'password\u00e9=***'],
     ['export DB_PASSWORD_\u00c9=S3cret', 'export DB_PASSWORD_\u00c9=***'],
     ['secret\u0663=S3cret', 'secret\u0663=***'],
     ['api_key\u00aa: S3cret', 'api_key\u00aa: ***'],
     ['token\u00fc abcS3cret', 'token\u00fc ***'],
-    // The case fold, same shape of finding one round later (the review at head
-    // ef21e30): Oniguruma's `(?i)` folds U+017F onto `s`, U+212A onto `k` and U+00DF /
-    // U+1E9E onto the two-character `ss`; JS's `i` flag folds none of them, so the
-    // keyword literal did not match and the rule never fired. Written with escapes on
-    // purpose - an earlier round's U+FEFF case lost its BOM to an editor and was
-    // quietly asserting on a plain space.
+    // The case fold, same shape one step further in: Oniguruma's `(?i)` folds U+017F onto
+    // `s`, U+212A onto `k` and U+00DF / U+1E9E onto the two-character `ss`; JS's `i` flag
+    // folds none of them, so the keyword literal does not match and the rule never fires.
+    // Written with escapes on purpose - a literal U+FEFF in this file can be stripped by an
+    // editor, leaving an assertion on a plain space with a comment describing a BOM.
     ['pa\u00dfword=S3cret', 'pa\u00dfword=***'],
     ['pa\u1e9eword=S3cret', 'pa\u1e9eword=***'],
     ['pa\u017f\u017fword=S3cret', 'pa\u017f\u017fword=***'],
@@ -1188,6 +1348,23 @@ describe('regex-engine parity with jq (issue #90 review round 1)', () => {
     // to jq, so there the rule does NOT fire and matching jq means leaving it verbatim.
     ['https://user\ufeffname:pass\ufeffword@host', 'https://user\ufeffname:***@host'],
     ['https://user\u0085name:pass\u0085word@host', 'https://user\u0085name:pass\u0085word@host'],
+    // The generic keyword rule runs TWICE on the command path (jq's ASCII affixes, then the
+    // Oniguruma word class), and the second pass must be skipped when the text is all
+    // ASCII - there the widened rule is the same rule that already ran, and running a rule
+    // over its own output is NOT the same as running it once: the first pass has replaced a
+    // value with `***`, and the second then matches `***` plus whatever follows it and
+    // masks that too. These two inputs are where that showed: jq masks the quoted value
+    // and stops, the double pass went on to eat `sesame` / the tail of the line. Both are
+    // over-masking, not leaks, but they are a divergence from jq in a place no corpus input
+    // had looked, and they cost a second quadratic scan of every ASCII command.
+    ['Password "open sesame passwd:"open sesame\nnext line', 'Password ***open sesame\nnext line'],
+    ['api-key is "open sesame auth"open sesame db | ssh -p2222 host', 'api-key is ***open sesame db | ssh -p2222 host'],
+    // Same divergence, one non-ASCII character away: an em-dash or an accented name
+    // anywhere else in the command is enough that a whole-string test would let the second
+    // pass run, so the test is on the matched keyword instead. Without that, these two mask
+    // past the value the way the inputs above do.
+    ['Password "open sesame passwd:"open sesame\nnext line café', 'Password ***open sesame\nnext line café'],
+    ['api-key is "open sesame auth"open sesame db | ssh -p2222 host — ok', 'api-key is ***open sesame db | ssh -p2222 host — ok'],
   ];
 
   /**
@@ -1336,12 +1513,12 @@ describe('regex-engine parity with jq (issue #90 review round 1)', () => {
   }
 
   /**
-   * Every round of review on this port found a class the hand-written corpus did not
-   * contain: round 1 the `.` and `\s` spellings, round 2 the whitespace set itself,
-   * round 3 the `\w` affixes, round 4 the `(?i)` case fold - in each case an input shape
-   * nobody had typed out by hand, and in each case the corpus was the reason the
-   * previous round could claim parity. So the corpus is composed mechanically here, from
-   * the pieces the rules are built of, and both redaction paths are run through it.
+   * A hand-written corpus is only as wide as the input shapes someone thought to type: the
+   * classes this port actually diverged on - `.` and `\s` spelling, the whitespace set
+   * itself, the `\w` affixes, the `(?i)` case fold, a rule run twice over its own output -
+   * are all engine-semantics shapes, and none of them is what a person writing corpus cases
+   * for a `-p<password>` rule would reach for. So the corpus is composed mechanically here,
+   * from the pieces the rules are built of, and both redaction paths are run through it.
    *
    * Exactly one property is asserted per path: the port must never leave in cleartext a
    * secret that the jq hooks mask. Over-redaction is counted and printed, not asserted -
@@ -1353,7 +1530,7 @@ describe('regex-engine parity with jq (issue #90 review round 1)', () => {
   /** The seeded corpus, built once so both paths are asked about the same 400 inputs. */
   function buildSeededCorpus(): string[] {
     const keywords = ['token', 'secret', 'password', 'passwd', 'api_key', 'API_KEY', 'api-key', 'access_key', 'credential', 'auth', 'authorization', 'client_id'];
-    // Case-fold spellings of the same words (round 4): Oniguruma's `(?i)` folds U+017F
+    // Case-fold spellings of the same words: Oniguruma's `(?i)` folds U+017F
     // onto `s`, U+212A onto `k` and U+00DF / U+1E9E onto the two-character `ss`, and JS's
     // `i` flag folds none of them, so each of these is a keyword the jq hooks fire on and
     // this port used not to. `paßsword` is a deliberate non-word: neither engine fires on
