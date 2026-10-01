@@ -197,11 +197,15 @@ function redactUrlUserinfo(str: string): string {
   // rather than the cosmetic one: a BOM anywhere inside the userinfo or the password
   // ends the match in JS, the rule does not fire at all, and the password is stored
   // in cleartext - whereas jq masks it.
-  // jq's `_url` anchors on `://`, not `//`, and this port had `//` since before this
-  // branch existed - it masked `//user:pw@host`, which jq leaves alone. Over-redaction
-  // only, and now closed: the colon is part of the pattern, so a scheme-relative URL is
-  // left verbatim here exactly as jq leaves it.
-  const regex = new RegExp("(:\\/\\/" + jsNotWs(":@/") + "+):(" + jsNotWs("@/") + "+)@", "g");
+  // The anchor stays `//`, one character wider than jq's `_url`, which anchors on
+  // `://`. That is deliberate: a scheme-relative reference still carries
+  // `user:password@`, and a credential in userinfo position is a credential whether or
+  // not a scheme precedes it. The two inputs this masks and jq leaves verbatim are
+  // pinned as `over` rows in `ENGINE_DIVERGENCES` in `redaction.test.ts`. Widening the
+  // anchor is a change for the jq hooks, so both engines agree on the wider rule; the
+  // alternative - narrowing this port to `://` - masks LESS than the plugin ships today,
+  // which is the leak direction wearing a parity costume.
+  const regex = new RegExp("(\\/\\/" + jsNotWs(":@/") + "+):(" + jsNotWs("@/") + "+)@", "g");
   return str.replace(regex, `$1:${REDACT_SENTINEL}@`);
 }
 

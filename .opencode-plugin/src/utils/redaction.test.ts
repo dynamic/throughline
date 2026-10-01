@@ -1055,6 +1055,22 @@ const ENGINE_DIVERGENCES: readonly {
     direction: 'over',
     note: 'Co (private use): no Unicode property resolves this one either way, which is the honest limit of any attempt to spell the Oniguruma word set out in JS.',
   },
+  // The URL userinfo anchor. jq's `_url` requires a scheme (`://`); this port anchors on
+  // `//`, so a scheme-relative reference is masked here and left verbatim by jq. Chosen
+  // direction: `hunter2` in userinfo position is a password in any reading, and the
+  // shipped plugin masks these two today - narrowing the anchor to reach jq's text would
+  // have been an un-redaction, not a parity fix. Widening jq's `_url` is the way to close
+  // them, in the hooks repo, not by removing a mask here.
+  {
+    input: '//user:pw@host',
+    direction: 'over',
+    note: 'Scheme-relative userinfo: jq\'s `_url` anchors on `://` and leaves this verbatim; the port anchors on `//` and masks the password. Deliberate, and the direction is pinned - if it ever flips, a credential the shipped plugin masks is being stored in cleartext.',
+  },
+  {
+    input: 'x//user:pw@host',
+    direction: 'over',
+    note: 'Same rule, same direction, with the anchor mid-token rather than at the start of the input, so the `//` anchor is pinned in both positions.',
+  },
 ];
 
 function jqIsUsable(): boolean {
@@ -1167,16 +1183,31 @@ describe('regex-engine parity with jq (issue #90 review round 1)', () => {
     // stopped in front of it and masked only the head.
     ['bearer AbCd\u017fEfGh', 'Bearer ***'],
     ['access\u212aey: S3cret', 'access\u212aey: ***'],
-    // URL userinfo: a BOM inside the userinfo used to end the match, so the rule did
-    // not fire and the password was never masked at all.
-    // URL userinfo: the port anchored on `//` where jq anchors on `://`, so a
-    // scheme-relative URL was masked here and left verbatim by jq. Over-redaction, and
-    // it predates this branch; pinned so it cannot quietly come back.
-    ['//user:pw@host', '//user:pw@host'],
-    ['x//user:pw@host', 'x//user:pw@host'],
+    // URL userinfo. The BOM cases: a BOM inside the userinfo used to end the match, so
+    // the rule did not fire and the password was never masked at all; U+0085 is whitespace
+    // to jq, so there the rule does NOT fire and matching jq means leaving it verbatim.
     ['https://user\ufeffname:pass\ufeffword@host', 'https://user\ufeffname:***@host'],
     ['https://user\u0085name:pass\u0085word@host', 'https://user\u0085name:pass\u0085word@host'],
   ];
+
+  /**
+   * The one place this port masks MORE than jq by design, asserted directly rather
+   * than only through the jq-differential test (which skips where jq is absent): the
+   * userinfo anchor is `//`, jq's `_url` anchor is `://`. Pinned as `over` rows in
+   * `ENGINE_DIVERGENCES` too, so the differential test fails if the direction ever
+   * flips - a flipped row here means a credential the shipped plugin masks today is
+   * being stored in cleartext.
+   */
+  const WIDER_THAN_JQ: readonly [string, string][] = [
+    ['//user:pw@host', '//user:***@host'],
+    ['x//user:pw@host', 'x//user:***@host'],
+  ];
+
+  for (const [input, expected] of WIDER_THAN_JQ) {
+    it(`masks ${JSON.stringify(input)}, which jq leaves verbatim (pinned over-redaction)`, () => {
+      assert.strictEqual(redact(input), expected);
+    });
+  }
 
   for (const [input, expected] of engineCases) {
     it(`masks ${JSON.stringify(input)} the way the jq hooks do`, () => {
