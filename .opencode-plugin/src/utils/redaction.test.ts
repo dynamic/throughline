@@ -18,6 +18,26 @@ const MYSQL_PW_RULES = (redactionModule as { MYSQL_PW_RULES?: readonly { name: s
 const KEYWORD_WORDS = (redactionModule as { KEYWORD_WORDS?: readonly string[] }).KEYWORD_WORDS;
 const SEPARATOR_WORDS = (redactionModule as { SEPARATOR_WORDS?: readonly string[] }).SEPARATOR_WORDS;
 
+/**
+ * Whether a second engine is actually callable here. Declared before any `describe` body
+ * runs because `describe` callbacks execute synchronously at module evaluation: a `const`
+ * declared further down the file is still in its temporal dead zone when the first test
+ * option object reads it, which throws instead of skipping. Every test that shells out to
+ * `jq` carries `skip: JQ_PRESENT ? false : ...` so a machine without `jq` on PATH skips them
+ * rather than failing the suite - the assertions that only parse `hooks/_lib.sh` never do
+ * shell out, and stay unguarded so they still run there.
+ */
+function jqIsUsable(): boolean {
+  try {
+    execFileSync('jq', ['--version'], { stdio: 'pipe' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const JQ_PRESENT = jqIsUsable();
+
 describe('Redaction Utilities', () => {
   describe('redact()', () => {
     it('should redact PEM private keys', () => {
@@ -888,7 +908,7 @@ describe('jq parity with hooks/_lib.sh (issue #90)', () => {
    * keyword added on the jq side (`private[_-]?key`, say) would therefore have kept the
    * suite green while OpenCode stopped masking it - the exact drift issue #90 is about.
    */
-  it("carries jq's generic keyword and copula lists, and fires on every word in them", () => {
+  it("carries jq's generic keyword and copula lists", () => {
     const rule = jqGenericKeywordRule();
     assert.ok(Array.isArray(KEYWORD_WORDS), 'redaction.ts must export KEYWORD_WORDS');
     assert.ok(Array.isArray(SEPARATOR_WORDS), 'redaction.ts must export SEPARATOR_WORDS');
@@ -900,10 +920,21 @@ describe('jq parity with hooks/_lib.sh (issue #90)', () => {
     }
     assert.deepStrictEqual([...rule.separators], [...SEPARATOR_WORDS], 'jq copula list and SEPARATOR_WORDS diverged');
     assert.deepStrictEqual([...rule.keywords], [...KEYWORD_WORDS], 'jq generic keyword list and KEYWORD_WORDS diverged');
+  });
 
-    // And the arrays must be wired into the rule, not merely equal to it: every keyword
-    // probe is run against both engines, and a keyword dropped from the TS list would show
-    // up here as a port that leaves the value visible where jq masks it.
+  /**
+   * The behavioural half of the parity check above: the lists must be WIRED into the rule,
+   * not merely equal to it. This one runs `jq`, so it carries the same skip guard every
+   * other `jq`-calling test in this file has - the assertions above parse `hooks/_lib.sh`
+   * and need no second engine, and used to sit in the same test as these probes, which made
+   * the whole test (including the two list comparisons) fail with `spawnSync jq ENOENT` on a
+   * machine without `jq` on PATH instead of skipping.
+   */
+  it('fires on every keyword jq lists, on both engines', {
+    skip: JQ_PRESENT ? false : 'jq is not on PATH on this machine',
+  }, () => {
+    // Every keyword probe is run against both engines, and a keyword dropped from the TS
+    // list would show up here as a port that leaves the value visible where jq masks it.
     const values = ['S3cretPw', 'AbCd.mn_op'];
     const separators = ['=', ':', ' ', ' is ', ' was ', ' are '];
     const inputs: string[] = [];
@@ -1091,11 +1122,16 @@ describe('issue #81 rules, ported to the OpenCode plugin', () => {
  * rule an affix that stops early does not merely shift a boundary, it makes the
  * separator alternatives unmatchable so the rule never fires and the secret is stored
  * whole. There the port over-approximates Oniguruma's word set (`JS_WORD_STAR`), which
- * fires wherever jq fires and leaves a residue only on the masking side - safe because
- * that rule is the last masking step, so a longer keyword group cannot eat a keyword a
- * later rule needed. The `over` rows below are that residue: a non-ASCII character
- * jq's `\w` refuses and the port's over-approximation accepts. `under` rows are all
- * `\b`-anchored.
+ * fires wherever jq fires - but its residue is NOT only on the masking side, and this
+ * comment used to say it was. Running the widened class as a second pass keeps it from
+ * eating a keyword a later RULE needs, and that is why the seeded fuzz test can assert
+ * zero leaks over its own corpus; it does not cover the case where the FIRST pass, whose
+ * affixes are ASCII like jq's text, eats a keyword the single Unicode-aware pass would
+ * have matched instead. Two rows below are that: `under` rows with a `\w` mechanism, not a
+ * `\b` one, both leaking on `main` too. So `under` rows are NOT all `\b`-anchored, and a
+ * future `\w` change must check them rather than assume the direction.
+ * The `over` rows below are the residue of the widened class: a non-ASCII character
+ * jq's `\w` refuses and the port's over-approximation accepts.
  *
  * So each row below says which engine masks more, and the differential test asserts
  * that row rather than assuming a direction. `over` = the port masks a command jq
@@ -1105,9 +1141,14 @@ describe('issue #81 rules, ported to the OpenCode plugin', () => {
  */
 const ENGINE_DIVERGENCES: readonly {
   input: string;
+  /**
+   * Rows that carry BOTH outputs pinned verbatim, `under` rows always and `over` rows where
+   * jq masks part of the line too (see the `over` row above the differential test for why
+   * the direction heuristic cannot describe those). A pinned `ts` is asserted without `jq`.
+   */
   direction: 'over' | 'under';
   note: string;
-  /** `under` rows only: the two outputs, pinned. */
+  /** Rows with `ts` set are asserted output-for-output, in both engines. */
   jq?: string;
   ts?: string;
 }[] = [
@@ -1131,19 +1172,22 @@ const ENGINE_DIVERGENCES: readonly {
     // that masks MORE than jq can consume the keyword a LATER rule needed, and the
     // secret that rule would have masked survives. Both of these are the port's own
     // `\b` firing after \u00e9; the difference from the three rows above is only what
-    // the extra mask swallows.
+    // the extra mask swallows. These two are NEW leaks: `main` masks both secrets (measured
+    // against a build of `main` - it returns `\u00e9SG.abc...password=***` and `\u00e9mysql -pxtoken ***`,
+    // the same text jq writes), so the rules this port adds are what make them survive. The
+    // third `\b` row, the Token-scheme one further down, is the only one `main` already leaks.
     input: '\u00e9SG.abcdefghijklmnopqrst.ABCDEFGHIJKLMNOPQRSTpassword=S3cret',
     direction: 'under',
     jq: '\u00e9SG.abcdefghijklmnopqrst.ABCDEFGHIJKLMNOPQRSTpassword=***',
     ts: '\u00e9SG.***=S3cret',
-    note: 'LEAK: the port anchors on \u00e9 and the SendGrid token class swallows the following `password`, so the generic keyword rule never fires and `S3cret` survives. jq anchors nowhere and masks `password=S3cret` instead.',
+    note: 'LEAK, introduced by this port (masks fine on `main`): the port anchors on \u00e9 and the SendGrid token class swallows the following `password`, so the generic keyword rule never fires and `S3cret` survives. jq anchors nowhere and masks `password=S3cret` instead. Accepted as rare: it needs a non-ASCII letter glued directly in front of an `SG.` token that is itself glued to a `keyword=value` pair. Closing it means an Oniguruma-accurate `\b`, which JS has no spelling for - see dynamic/throughline#116.',
   },
   {
     input: '\u00e9mysql -pxtoken abcS3cret',
     direction: 'under',
     jq: '\u00e9mysql -pxtoken ***',
     ts: '\u00e9mysql -p*** abcS3cret',
-    note: 'LEAK: the port anchors on \u00e9 and the MySQL span eats `token`, so the token-word rule never fires and `abcS3cret` survives. Same mechanism as the row above, different rule order.',
+    note: 'LEAK, introduced by this port (masks fine on `main`): the port anchors on \u00e9 and the MySQL span eats `token`, so the token-word rule never fires and `abcS3cret` survives. Same mechanism as the row above, different rule order, same acceptance and same #116 anchor decision.',
   },
   // The `over` rows below are the residue of over-approximating Oniguruma's `\w` in the
   // generic keyword rule (`JS_WORD_STAR`): jq's `\w` refuses a non-ASCII PUNCTUATION,
@@ -1234,18 +1278,48 @@ const ENGINE_DIVERGENCES: readonly {
     direction: 'over',
     note: 'Same rule, same direction, with the anchor mid-token rather than at the start of the input, so the `//` anchor is pinned in both positions.',
   },
+  // Pass 6b re-runs the generic rule over text pass 6a already rewrote, and a guard on the
+  // keyword alone cannot see every case of that. When a keyword carries a non-ASCII
+  // character in its MIDDLE, both passes match it (6a's `\w*` suffix stops at the
+  // character and the separator alternative then matches from there), so 6a masks the value
+  // and 6b masks 6a's `***` plus whatever is glued to it. The keyword guard does not catch
+  // this and a VALUE guard ("skip when the value starts with `***`") is worse: it cannot
+  // tell 6a's `***` from three asterisks a user pasted, and `password\u00e9=***S3cretPw` is a
+  // value this port must mask, which such a guard would hand back in cleartext. So the
+  // residue stays pinned. It masks MORE than jq and never less.
+  {
+    input: 'token\u00e9token="a b"c d',
+    direction: 'over',
+    jq: 'token\u00e9token=***c d',
+    ts: 'token\u00e9token=*** d',
+    note: 'OVER-REDACTION, pinned verbatim because jq masks part of this line too and the direction heuristic only recognises "jq left it visible": pass 6a masks the second `token`, and pass 6b - whose widened suffix crosses the \u00e9 - then matches `token\u00e9token=***` plus the `c` glued to it and masks that as well. jq stops after its own mask. Both engines mask the secret; this port also eats one ASCII character glued to it.',
+  },
+  // The two-pass keyword rule has a leak direction too, and these rows are it. Pass 6a runs
+  // jq's ASCII affixes FIRST, and a keyword whose ASCII affix stops short of the non-ASCII
+  // letter jq's `\w*` would cross can match a LATER keyword in the same line and eat it as
+  // the earlier one's value - so the keyword jq would have matched is gone before the
+  // widened pass runs, and the value behind it survives. Pass 6b then masks the earlier
+  // keyword's value, which is why the output looks like it masked more than jq while
+  // leaking a secret jq masks. Both rows leak identically on `main` (measured against a
+  // build of `main`), so neither is a regression; they are pinned because they contradict
+  // any claim that the second pass can only over-mask. Closing them needs pass 6b to see
+  // the whole line before 6a consumes it, which reintroduces the U+180E leak the two-pass
+  // shape exists to avoid - so the two-pass order stays, and this class stays pinned.
+  {
+    input: 'export DB_PASSWORD_\u00c9 SECRET PASSWORD S3cret',
+    direction: 'under',
+    jq: 'export DB_PASSWORD_\u00c9 *** PASSWORD ***',
+    ts: 'export DB_PASSWORD_\u00c9 *** *** S3cret',
+    note: 'LEAK, pre-existing on `main` (`export DB_PASSWORD_\u00c9 SECRET *** S3cret`): JS\'s ASCII `\w*` stops `DB_PASSWORD_` short of \u00c9, so pass 6a matches `SECRET PASSWORD` and masks `PASSWORD` as its value; jq\'s `\w*` crosses \u00c9, matches `DB_PASSWORD_\u00c9 SECRET` first, and still has `PASSWORD S3cret` to mask. `S3cret` survives here and on `main`, and only pass 6b\'s later mask makes the line look over-redacted.',
+  },
+  {
+    input: 'secret\u00e9 api_key credential hunter2',
+    direction: 'under',
+    jq: 'secret\u00e9 *** credential ***',
+    ts: 'secret\u00e9 *** *** hunter2',
+    note: 'LEAK, pre-existing on `main` (`secret\u00e9 api_key *** hunter2`): same mechanism one keyword later - `secret\u00e9` cannot fire in pass 6a, so `api_key credential` is matched instead and `hunter2` is never reached. The shape the seeded corpus cannot generate: its two-keyword template puts no affix on the first keyword.',
+  },
 ];
-
-function jqIsUsable(): boolean {
-  try {
-    execFileSync('jq', ['--version'], { stdio: 'pipe' });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-const JQ_PRESENT = jqIsUsable();
 
 describe('regex-engine parity with jq (issue #90)', () => {
   const engineCases: readonly [string, string][] = [
@@ -1365,6 +1439,17 @@ describe('regex-engine parity with jq (issue #90)', () => {
     // past the value the way the inputs above do.
     ['Password "open sesame passwd:"open sesame\nnext line café', 'Password ***open sesame\nnext line café'],
     ['api-key is "open sesame auth"open sesame db | ssh -p2222 host — ok', 'api-key is ***open sesame db | ssh -p2222 host — ok'],
+    // The same double-pass shape spelled with case-fold partners. These are NOT covered by
+    // the ASCII pair above: `foldSpelled` puts U+017F into `KEYWORD_ALTERNATION`, so
+    // `pa\u017f\u017fword` is a NON-ASCII keyword, which is exactly what pass 6b's first guard
+    // mistook for "6a could not have seen this" - and 6b then re-masked 6a's output, giving
+    // `*** sesame` where jq gives `***open sesame`. Pass 6b now also asks whether 6a's own
+    // keyword group could have matched the keyword, and these two go back to jq's text. The
+    // em-dash and accent versions of the ASCII pair are pinned below instead, because there
+    // the widened suffix crosses a non-ASCII character INSIDE the keyword and no keyword
+    // guard can see it; that residue is the pinned `over` row `token\u00e9token="a b"c`.
+    ['pa\u017f\u017fword "open sesame passwd:"open sesame', 'pa\u017f\u017fword ***open sesame'],
+    ['x pa\u017f\u017fword="a b"c d', 'x pa\u017f\u017fword=***c d'],
   ];
 
   /**
@@ -1383,6 +1468,20 @@ describe('regex-engine parity with jq (issue #90)', () => {
   for (const [input, expected] of WIDER_THAN_JQ) {
     it(`masks ${JSON.stringify(input)}, which jq leaves verbatim (pinned over-redaction)`, () => {
       assert.strictEqual(redact(input), expected);
+    });
+  }
+
+  /**
+   * The `under` rows, asserted the same way but on the port's own output only, so a pinned
+   * LEAK is checked on a machine where the differential test skips for want of `jq`. Without
+   * this the leak pins are only as strong as the machine they run on, which is the wrong
+   * way round: the row exists to make the next person see the leak, not to prove jq's side
+   * of it. If a fix closes one, this fails and the row gets DELETED, not the expectation
+   * softened - same rule the differential test states.
+   */
+  for (const row of ENGINE_DIVERGENCES.filter((d) => d.ts !== undefined)) {
+    it(`writes the pinned output for the documented ${row.direction} divergence ${JSON.stringify(row.input)}`, () => {
+      assert.strictEqual(redact(row.input), row.ts);
     });
   }
 
@@ -1472,6 +1571,19 @@ describe('regex-engine parity with jq (issue #90)', () => {
         if (jqOut !== documented.jq || tsOut !== documented.ts) {
           unexplained.push(
             `PINNED LEAK CHANGED SHAPE ${JSON.stringify(input)}\n    jq: ${JSON.stringify(jqOut)} (pinned ${JSON.stringify(documented.jq)})\n    ts: ${JSON.stringify(tsOut)} (pinned ${JSON.stringify(documented.ts)})`,
+          );
+          continue;
+        }
+        seenDivergences.add(documented.input);
+        continue;
+      }
+      if (documented.ts !== undefined) {
+        // An `over` row with both outputs pinned, because jq masks part of the line as well
+        // and the heuristic below reads that as a flip. Same rule as a pinned leak: the
+        // outputs are compared verbatim, so the row cannot change shape quietly.
+        if (jqOut !== documented.jq || tsOut !== documented.ts) {
+          unexplained.push(
+            `PINNED OVER-REDACTION CHANGED SHAPE ${JSON.stringify(input)}\n    jq: ${JSON.stringify(jqOut)} (pinned ${JSON.stringify(documented.jq)})\n    ts: ${JSON.stringify(tsOut)} (pinned ${JSON.stringify(documented.ts)})`,
           );
           continue;
         }
@@ -1576,6 +1688,12 @@ describe('regex-engine parity with jq (issue #90)', () => {
           corpus.push(`${pick(rand, clients)} ${pick(rand, pwArgs)}${tail}`);
           break;
         case 2:
+          // NOTE for anyone widening this template: the first keyword deliberately carries no
+          // affix here, which is why this case cannot generate the two-pass leak pinned as
+          // `under` rows in ENGINE_DIVERGENCES (`secret\u00e9 api_key credential hunter2`): put
+          // an affix on the first keyword with a space separator and the leak direction
+          // appears here, so extending this line means teaching this test to expect a pinned
+          // leak per shape rather than zero leaks. See the `under` rows for what is known.
           corpus.push(`${wordOf(rand)}${pick(rand, separators)}${pick(rand, values)}${tail} ${pick(rand, keywords)}${pick(rand, separators)}${pick(rand, values)}`);
           break;
         case 3:

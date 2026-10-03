@@ -12,18 +12,24 @@
  *
  * SYNC IS MECHANICAL, NOT HONESTY-BASED (issue #90): the rule tables below are
  * ordered and spelled to match their jq counterparts one row at a time, and
- * `redaction.test.ts` parses `hooks/_lib.sh` and fails if a rule is added,
- * removed, reordered or edited on the jq side without being ported here. What it
- * covers, by name: every `_prefix_tokens` row, every `_mysql_pw*` rule, the
- * generic rule's keyword and copula lists, and the def chain of both pipelines in
- * order - so a new `def` in `redact` or `redact_prompt`, or a keyword added to the
- * generic alternation, fails a test even when no corpus input mentions it. That
- * test, not this comment, is what keeps the two in step — the drift it exists
+ * `redaction.test.ts` parses `hooks/_lib.sh` and fails if a rule it compares is
+ * added, removed, reordered or edited on the jq side without being ported here.
+ * What it covers, by name: every `_prefix_tokens` row, every `_mysql_pw*` rule, the
+ * generic rule's keyword and copula lists, and the top-level def chain of both
+ * pipelines in order - so a new `def` in `redact` or `redact_prompt`, or a keyword
+ * added to the generic alternation, fails a test even when no corpus input mentions
+ * it. What it does NOT cover: the arguments to `_basic_scheme`, the Token-word
+ * value class, the generic rule's value class, and any step added inside
+ * `_auth_scheme` or `_auth_scheme_prose`. An edit there is caught only if a corpus
+ * input happens to exercise it. That test, not this comment, is what keeps the two
+ * in step — the drift it exists
  * to catch is exactly what happened with the issue #81 rules: they landed on the
- * jq side and were not ported here at the same time, so for as long as both are
- * unreleased the two files disagree. (They are still both inside [Unreleased], so
- * no shipped release ever had the jq rule without the port - the drift is a real
- * maintenance hazard, not a user-visible leak.)
+ * jq side and were not ported here at the same time, and for as long as both sets
+ * sat unreleased the two files disagreed. They agree from this change on: the #81
+ * rows are in `TOKEN_PREFIX_RULES` and `MYSQL_PW_RULES` and the parity test holds
+ * them there. (Neither set had shipped a release of its own, so no released plugin
+ * ever had the jq rule without the port - the drift was a maintenance hazard, not
+ * a user-visible leak.)
  *
  * Oniguruma-to-JS differences the port has to work around. Each is noted again at the
  * rule that needs it, so the tables stay comparable line by line, and each is pinned by
@@ -39,8 +45,11 @@
  *     whitespace class in this file is spelled out as `JS_WS_CHARS` / `JS_NOT_WS`.
  *   - `\w` is not `\w`: Oniguruma's is Unicode-aware and JS's is ASCII, which does not
  *     shift a boundary, it stops the generic keyword rule firing at all. Over-
- *     approximated as `JS_WORD_STAR`, run as the LAST masking pass so the residue of
- *     the approximation can only ever extend a mask.
+ *     approximated as `JS_WORD_STAR`, run as the LAST masking pass so its residue cannot
+ *     starve a later rule - which bounds what it can over-mask, but does not make this
+ *     class leak-free: the ASCII pass that runs before it can eat a keyword jq's single
+ *     Unicode-aware pass would have matched, and two `under` rows in `ENGINE_DIVERGENCES`
+ *     are exactly that (both leak on `main` too).
  *   - `(?i)` is not `i`: Oniguruma folds U+017F onto `s`, U+212A onto `k` and U+00DF /
  *     U+1E9E onto `ss`, JS folds none of them, so the literals are spelled through
  *     `foldSpelled`.
@@ -100,14 +109,17 @@ function jsNotWs(extras: string): string {
  * non-whitespace character - which fires wherever jq's `\w` fires, plus a residue on
  * the other side.
  *
- * The residue is deliberately on the masking side, and here, unlike the `\b` sites,
- * that is provable rather than hoped: the rules that use this class run as the LAST
- * masking step of `redact` (pass 6b, after the ASCII pass), so nothing runs after a
- * longer keyword group and it can only ever extend a mask. It cannot consume text a
- * later rule needed, which is the mechanism behind the three `under` rows in
- * `ENGINE_DIVERGENCES` (those are earlier rules whose over-match eats a later rule's
- * keyword). The residue cases are pinned as `over` rows in that table, so a future
- * change that turns one into a leak fails.
+ * The residue is deliberately on the masking side, and the rules that use this class run
+ * as the LAST masking step of `redact` (pass 6b, after the ASCII pass) precisely so that
+ * nothing runs after a longer keyword group that it could extend a mask over. That is
+ * what the ordering buys, and it is NOT the same as "this class cannot leak" - an earlier
+ * claim in this comment, withdrawn. Pass 6b cannot starve a later RULE, but pass 6a, whose
+ * affixes are ASCII like jq's text, can eat a keyword that jq's single Unicode-aware pass
+ * would have matched as the keyword rather than as a value, and then no pass reaches the
+ * secret behind it. Two rows in `ENGINE_DIVERGENCES` are that mechanism (`under`, both
+ * leaking on `main` as well); the other `under` rows there are earlier rules whose
+ * over-match eats a later rule's keyword. The `over` residue of THIS class is pinned
+ * alongside them, so a future change that turns one into a leak fails.
  */
 const JS_WORD_STAR = "(?:\\w|[^\\x00-\\x7f" + JS_WS_CHARS + "])*";
 
@@ -586,18 +598,26 @@ export function redact(str: string): string {
   //             written back verbatim by the replacement, so dropping it costs no mask:
   //             `\u4e2dAPI_KEY\u4e2d  S3cretPw` is still masked, the match just starts at the
   //             keyword instead of at the character before it.
-  // Widening the single rule instead is shorter and WRONG, and the seeded fuzz
-  // test in redaction.test.ts pins why: a keyword group that runs
+  // Widening the single rule instead is shorter and WRONG for the MASKING-ORDER case, and
+  // the seeded fuzz test in redaction.test.ts pins why: a keyword group that runs
   // longer also MATCHES EARLIER, and an earlier match can consume the keyword a later
   // match needed - the same mechanism as the `under` rows in ENGINE_DIVERGENCES. As one
   // widened rule this port leaked `api-key<U+180E>YWJjZGVmZ2hpamts api_key "pa ss"`,
   // masking `api_key` as the first keyword's value and leaving the quoted password in
-  // cleartext while jq masks the quoted value. As the LAST masking pass the
-  // over-approximation has no later rule to starve, so its residue sits on the masking
-  // side - which is what lets that fuzz test assert zero leaks instead of pinning any.
-  // The `\\b` of the OTHER rules is a different class of difference: there even an
-  // over-approximation can land on the leaking side, so those stay pinned as
-  // divergences - see ENGINE_DIVERGENCES in redaction.test.ts.
+  // cleartext while jq masks the quoted value. Putting the over-approximation LAST means it
+  // has no later RULE to starve, so most of its residue sits on the masking side - but NOT
+  // all of it, and this comment used to claim otherwise. Pass 6a, the ASCII affixes, can
+  // itself consume a keyword that jq's single Unicode-aware pass would have matched as the
+  // KEYWORD rather than as a value, and then the secret behind it is unreachable to both
+  // passes: `export DB_PASSWORD_\u00c9 SECRET PASSWORD S3cret` masks `PASSWORD` (6a, as `SECRET`'s
+  // value) where jq masks `SECRET` (as `DB_PASSWORD_\u00c9`'s value) and still has `PASSWORD S3cret`
+  // left to mask. Those inputs are pinned as `under` rows in ENGINE_DIVERGENCES; both leak
+  // on `main` too, so they are not regressions, but "the second pass can only over-mask"
+  // was false as written and the seeded corpus cannot generate the shape (its two-keyword
+  // template puts no affix on the first keyword). The `\\b` of the OTHER rules is a
+  // different class of difference: there even an over-approximation can land on the leaking
+  // side, so those stay pinned as divergences too - see ENGINE_DIVERGENCES in
+  // redaction.test.ts.
   const keywordPattern = (lead: string, suffix: string) =>
     "(" + lead + "(?:" + KEYWORD_ALTERNATION + ")" + suffix + ")" +
       "(" + JS_WS + "*[:=]" + JS_WS + "*|" + JS_WS + "+(?:" + SEPARATOR_ALTERNATION + ")" + JS_WS + "+|" + JS_WS + "+)" +
@@ -612,23 +632,34 @@ export function redact(str: string): string {
   };
 
   result = result.replace(new RegExp(keywordPattern("\\w*", "\\w*"), "gi"), keywordReplacement);
-  // Pass 6b masks a match only when its KEYWORD carries a non-ASCII character, which is the
-  // only reason the widened rule fires where the ASCII one did not: `JS_WORD_STAR` is
-  // `(?:\w|[^\x00-\x7f<whitespace>])*`, so a keyword group it matches and `\\w*` does not is
-  // exactly a keyword group containing a non-ASCII character. The separator and value
-  // classes are already spelled for Oniguruma, so nothing else about a match can differ
-  // between the two passes - and a match whose keyword is plain ASCII was fully visible to
-  // pass 6a, which scanned this same text one pass earlier. Masking it again is applying a
-  // rule twice to its own output, which is not the same as applying it once: the first pass
-  // has replaced the value with `***`, and the second matches `keyword + separator + ***`
-  // plus whatever is glued to it and masks that too. `Password "open sesame passwd:"open
-  // sesame` is `Password ***open sesame` in jq and in one pass, `Password *** sesame` in
-  // two - over-masking, never a leak, but a divergence from the hooks on ordinary text, and
-  // it comes back wherever an em-dash or an accented name appears anywhere else in the
-  // command if the test is on the whole string instead of on the matched keyword. Both
-  // shapes are pinned in `engineCases`, so neither can come back silently.
+  /**
+   * Pass 6b's guard: mask a match only where the keyword is one pass 6a's keyword group
+   * COULD NOT have matched. Two tests, because one is not enough:
+   *   1. the keyword carries a non-ASCII character at all - otherwise the two passes'
+   *      keyword groups are the same set, since `JS_WORD_STAR` only ever widens past
+   *      non-ASCII, and every separator and class in the pattern is identical; and
+   *   2. the keyword is not one of the CASE-FOLD SPELLINGS pass 6a already carries.
+   *      `foldSpelled` puts U+017F, U+212A, U+00DF and U+1E9E INTO `KEYWORD_ALTERNATION`, so
+   *      `pa\u017f\u017fword` is non-ASCII and was still fully visible to pass 6a - test 1 alone
+   *      re-masks its own output, which is how `pa\u017f\u017fword "open sesame passwd:"open sesame`
+   *      came to be written `*** sesame` here against jq's `***open sesame`.
+   * What is deliberately NOT here is a guard on the VALUE, e.g. "skip when the value starts
+   * with `***`", which is the other shape of this problem (`token\u00e9token="a b"c`, where 6a
+   * masks the second `token` and 6b then masks 6a's `***` plus the `c` glued to it). Such a
+   * guard cannot tell 6a's own `***` from three asterisks a user pasted, and
+   * `password\u00e9=***S3cretPw` is a value this port must mask and that guard would hand back
+   * in cleartext - a leak direction, bought to fix an over-mask. `token\u00e9token="a b"c` is
+   * pinned as an `over` row in `ENGINE_DIVERGENCES` instead, so it cannot get worse silently.
+   * Applying the rule twice to its own output is never the same as applying it once: pass 6a
+   * has replaced a value with `***`, and a second match that runs past it eats text jq
+   * leaves visible. The over-mask those two pins cover is over-masking, never a leak, but it
+   * is a divergence from the hooks on ordinary-looking text.
+   */
+  const asciiKeywordSeenByPass6a = new RegExp("^\\w*(?:" + KEYWORD_ALTERNATION + ")\\w*$", "i");
   const widenedKeywordReplacement = (match: string, keyword: string, sep: string, value: string) =>
-    /[^\x00-\x7f]/.test(keyword) ? keywordReplacement(match, keyword, sep, value) : match;
+    /[^\x00-\x7f]/.test(keyword) && !asciiKeywordSeenByPass6a.test(keyword)
+      ? keywordReplacement(match, keyword, sep, value)
+      : match;
   // And the whole-string test is a fast path over that same rule rather than a second
   // condition: with no non-ASCII character in the text, no keyword group can carry one, so
   // every match pass 6b could see would be returned unchanged. It is here for cost - this
