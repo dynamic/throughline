@@ -76,6 +76,64 @@ All notable changes to throughline are documented here. Format loosely follows
   build a path.
 
 ### Fixed
+- **OpenCode plugin port of the issue #81 rules, plus a parity test** (issue #90):
+  the OpenCode plugin carries its own TypeScript port of the jq redaction defs, and the
+  rules added for issue #81 were not ported at the same time - an OpenCode session running
+  `mysql -h db -u app -pS3cretPw dbname` masked nothing while the Claude Code hooks did,
+  and `xapp-`, `sk_live_`/`rk_test_`, `glpat-`, `npm_` and `SG.x.y` tokens were stored
+  verbatim. Both rule sets are now single tables in
+  `.opencode-plugin/src/utils/redaction.ts`, and `redaction.test.ts` parses `hooks/_lib.sh`
+  and compares against `jq` itself: every `_prefix_tokens` row and every `_mysql_pw*` rule
+  by pattern text and behaviour, the generic keyword=value rule's keyword and copula lists
+  by list equality plus a probe per keyword, and the def chain of both pipelines by name
+  and order, so a compared rule added, removed, reordered or edited on the jq side fails
+  the suite whether or not any test input mentions it. Not compared as text: the arguments
+  to `_basic_scheme`, the Token-word value class, the generic rule's value class, and steps
+  inside `_auth_scheme` / `_auth_scheme_prose`; a change there is caught only by a corpus
+  input that exercises it.
+  Because JS and Oniguruma read identical regex text differently, four differences are
+  spelled around rather than copied: `.` (JS also refuses CR, U+2028 and U+2029, so a span
+  jq writes as `\.` is written `[^\n]`), `\s` (the two engines' whitespace sets differ in
+  both directions, so the class is written out as `JS_WS_CHARS`, 25 code points measured
+  against jq), `(?i)` (Oniguruma folds U+017F, U+212A, U+00DF and U+1E9E, JS folds none of
+  them, so the keyword literals carry those partners and a mutation test substitutes each
+  one into every `s`, `k` and `ss` position), and `\w` (Oniguruma's is Unicode-aware, which
+  does not shift a boundary but stops the generic keyword rule firing at all, so that rule
+  runs jq's ASCII affixes first and an over-approximated word class second. The second pass
+  masks a match only where its keyword is one the ASCII pass could not have matched - not
+  merely one that contains a non-ASCII character, because the case-fold partners live in the
+  keyword alternation itself, so `pa\u017f\u017fword` is non-ASCII and was already masked by the
+  first pass, and re-masking it made the port diverge from jq on its own output; over-masking
+  a keyword the first pass already had would apply the rule twice to its own output, and the
+  widened suffix is kept off the leading affix because a star there costs the length of the
+  run at every position of a spaceless run. Widening the single rule instead of running it
+  twice matched earlier and ate keywords the next match needed).
+  Known divergences, each pinned by direction in `ENGINE_DIVERGENCES` so a flip fails:
+  Oniguruma's Unicode-aware `\b` has no JS equivalent (three inputs where this port masks a
+  command jq leaves visible, and three inputs where an over-match swallows a keyword the
+  next rule needs, so a secret survives - of those three leaks, only one already leaks on
+  `main` too; the other two are secrets the rules this port adds make survive, which `main`
+  masks, and both are accepted as rare because they need a non-ASCII letter glued directly
+  in front of an `SG.` token or a MySQL client name that is itself glued to a
+  `keyword=value` pair. Closing them is one `\b` decision for both engines, filed as
+  dynamic/throughline#116. All three are pinned with both engines' outputs, and the two new
+  ones say so on the row, so the count and the shape of a pinned leak cannot grow without a
+  test naming it); the generic keyword rule's two-pass word class leaks two further inputs
+  where its ASCII pass consumes a keyword jq's single Unicode-aware pass would have matched
+  (both leak on `main` as well, so they are not regressions, and they are pinned for the
+  same reason); one input where the second pass masks one ASCII character more than jq does,
+  `token\u00e9token="a b"c`, where the first pass masks the second `token` and the second pass -
+  whose widened suffix crosses the accent inside the keyword - then masks the first pass's
+  `***` plus the `c` glued to it (pinned with both outputs, because no keyword guard reaches
+  this case and a value guard that skips values beginning `***` would also skip
+  `password\u00e9=***S3cretPw`, which this port must mask, so the residue is accepted and
+  watched rather than guarded around); and the URL userinfo rule anchors on
+  `//` where jq's `_url` anchors on `://`, masking scheme-relative userinfo like
+  `//user:pw@host` that the hooks leave verbatim - the anchor stays wide, because a
+  credential in userinfo position is a credential, and closing it means widening `_url` in
+  the hooks. The generic keyword rule is quadratic in the length of a long unbroken run of
+  text, on both engines, on the full unclamped bash command.
+  (`.omp-plugin` never had this gap: its shim shells out to the same `hooks/*.sh` scripts.)
 - **Capture hook dropped every event on Windows** (issue #81 review): the jq program
   is one command-line argument (`redaction defs + capture filter`) and Windows caps a
   command line at 32,767 characters; the explanatory comments inside the defs had grown
