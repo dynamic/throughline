@@ -497,6 +497,29 @@ const KEYWORD_SEPARATOR =
 const KEYWORD_VALUE = "\"[^\"]*\"|" + REDACT_SENTINEL + "|\"[^\\r\\n]*|" + jsNotWs("\"") + "+";
 
 /**
+ * One `separator value` pair, matched STICKILY, for the chain walk in `redactTokenScheme`.
+ * Same two alternatives as `KEYWORD_SEPARATOR` / `KEYWORD_VALUE`, so a pair this walk sees is
+ * a pair the generic rule would have seen; the sticky flag is what keeps the walk from
+ * searching ahead for a pair instead of extending over the next one.
+ */
+const KEYWORD_PAIR_STICKY = new RegExp("(?:" + KEYWORD_SEPARATOR + ")(" + KEYWORD_VALUE + ")", "iy");
+/**
+ * A keyword as pass 6a's ASCII keyword group could match it, anchored whole. Built from
+ * `KEYWORD_ALTERNATION` at module scope so `redactTokenScheme`'s chain walk and pass 6b's
+ * keyword guard ask the SAME question - `redact` used to build its own copy inline.
+ */
+const KEYWORD_HEAD = new RegExp("^\\w*(?:" + KEYWORD_ALTERNATION + ")\\w*$", "i");
+/**
+ * Does this value CONTAIN a keyword at all - the question the chain walk in
+ * `redactTokenScheme` asks, which is wider than `KEYWORD_HEAD` on purpose. jq's generic keyword
+ * group is Unicode-aware, so `üsecret` heads a pair for it and the secret behind that value has
+ * to be masked by the walk too; anchoring on ASCII `\w` would stop the walk one pair short and
+ * leak. Over-approximating here costs masking on a line that already has a non-ASCII character
+ * glued in front of `token`, never a mask the hooks have.
+ */
+const KEYWORD_CONTAINED = new RegExp("(?:" + KEYWORD_ALTERNATION + ")", "i");
+
+/**
  * The two anchors the Token-scheme word rule is split across, and why one rule became two
  * (issue #116).
  *
@@ -577,16 +600,57 @@ function redactTokenScheme(str: string): string {
   // jq: the bare `\\btoken\\s+...` gsub in `redact`, command path, no length floor - split
   // into the two anchors above, whose comment carries the reason (issue #116).
   const agreed = new RegExp(`${TOKEN_ASCII_ANCHOR}${foldSpelled("token")}${JS_WS}+([${FOLD_ALNUM}._-]+)`, "gi");
+  const source = str.replace(agreed, "Token ***");
   const ambiguous = new RegExp(
     `(?<k>${TOKEN_AMBIGUOUS_ANCHOR}${foldSpelled("token")})(?<s>${KEYWORD_SEPARATOR})(?<v>${KEYWORD_VALUE})`,
     "gi",
   );
-  // The sentinel value stays a sentinel: `redactUrlUserinfo` has not run yet at this point in
-  // the pipeline, so no user text can contain it and the branch is unreachable today, but
-  // copying it keeps this replacement the same function of its groups as `keywordReplacement`.
-  const ambiguousReplacement = (_m: string, k: string, s: string, v: string) =>
-    `${k}${s}${v === REDACT_SENTINEL ? REDACT_SENTINEL : "***"}`;
-  return str.replace(agreed, "Token ***").replace(ambiguous, ambiguousReplacement);
+  /**
+   * The ambiguous-zone mask, applied as an explicit scan rather than a `replace` callback
+   * because of the one case the match cannot answer on its own: a value that is itself a
+   * keyword (`<NBSP>token is password S3cretPw`). Under the reading where jq's boundary fires
+   * there, jq's Token rule ate the copula, `password` survived as a keyword, and jq's generic
+   * rule went on to mask `S3cretPw`. Masking only the value here deletes that keyword and leaks
+   * the secret behind it - the same mistake the anchor change made in the other direction, one
+   * word further right. So when the value is keyword-like the mask walks forward over the pairs
+   * it heads and masks the whole run: a superset of what either reading masks, at the cost of a
+   * few ordinary words on a line that already carries a non-ASCII character glued in front of
+   * `token`. A `replace` callback cannot do this - it replaces its own match region and no
+   * farther - hence the scan.
+   *
+   * The walk stops after the first pair whose value does not contain a keyword
+   * (`KEYWORD_CONTAINED`, deliberately wider than the ASCII-anchored `KEYWORD_HEAD`: see its
+   * comment), so it is linear and never runs past the pair that holds the secret.
+   *
+   * The sentinel branch is unreachable today (`redactUrlUserinfo` runs after this pass, so no
+   * user text can contain the sentinel) and is kept so this pass stays the same function of its
+   * groups as `keywordReplacement`.
+   */
+  let out = "";
+  let cursor = 0;
+  ambiguous.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = ambiguous.exec(source)) !== null) {
+    const { k, s, v } = match.groups as { k: string; s: string; v: string };
+    if (v === REDACT_SENTINEL) continue;
+    let end = match.index + match[0].length;
+    if (KEYWORD_CONTAINED.test(v)) {
+      KEYWORD_PAIR_STICKY.lastIndex = end;
+      let pair: RegExpExecArray | null;
+      while ((pair = KEYWORD_PAIR_STICKY.exec(source)) !== null) {
+        end = KEYWORD_PAIR_STICKY.lastIndex;
+        if (!KEYWORD_CONTAINED.test(pair[1])) break;
+        KEYWORD_PAIR_STICKY.lastIndex = end;
+      }
+    }
+    out += source.slice(cursor, match.index + k.length + s.length) + "***";
+    cursor = end;
+    // Never let the scan re-enter what the walk already masked: a second `token` inside the
+    // walked run would otherwise emit its own `***` and rewind the cursor, duplicating text.
+    if (ambiguous.lastIndex < cursor) ambiguous.lastIndex = cursor;
+    if (ambiguous.lastIndex === match.index) ambiguous.lastIndex++;
+  }
+  return out + source.slice(cursor);
 }
 
 /**
@@ -605,10 +669,10 @@ function redactAuthSchemes(str: string): string {
 function redactAuthSchemesProse(str: string): string {
   let result = str;
   result = redactBearerScheme(result, 16);
-  // `\\b` stays here on purpose, where the command path moved to TOKEN_LEFT_ANCHOR: this
-  // path has no generic keyword rule to fall through to, so a non-ASCII letter in front of
-  // `TOKEN` is a case where jq's `\\b` refuses, jq stores the value whole, and this port
-  // masks it anyway. That is an over-mask in the safe direction; copying the lookbehind
+  // `\b` stays here on purpose, where the command path split its anchor at the seam (see
+  // TOKEN_ASCII_ANCHOR): this path has no generic keyword rule to fall through to, so a
+  // non-ASCII letter in front of `TOKEN` is a case where jq's `\b` refuses, jq stores the value
+  // whole, and this port masks it anyway. That is an over-mask in the safe direction; copying the lookbehind
   // here would turn it into a leak on both engines.
   result = result.replace(new RegExp(`\\b${foldSpelled("token")}${JS_WS}+([${FOLD_ALNUM}._-]{16,})`, "gi"), "Token ***");
   result = redactBasicScheme(result, 16);
@@ -742,7 +806,7 @@ export function redact(str: string): string {
    * leaves visible. The over-mask those two pins cover is over-masking, never a leak, but it
    * is a divergence from the hooks on ordinary-looking text.
    */
-  const asciiKeywordSeenByPass6a = new RegExp("^\\w*(?:" + KEYWORD_ALTERNATION + ")\\w*$", "i");
+  const asciiKeywordSeenByPass6a = KEYWORD_HEAD;
   const widenedKeywordReplacement = (match: string, keyword: string, sep: string, value: string) =>
     /[^\x00-\x7f]/.test(keyword) && !asciiKeywordSeenByPass6a.test(keyword)
       ? keywordReplacement(match, keyword, sep, value)

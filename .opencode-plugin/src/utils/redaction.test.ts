@@ -1291,6 +1291,35 @@ const ENGINE_DIVERGENCES: readonly {
     note: 'LITERAL-ONLY residue of the same fix, pinned so it cannot quietly become a leak. Both engines mask the whole value; jq writes its own `Token` spelling and this port leaves the keyword as the input spelled it, because in the ambiguous zone it masks through the generic rule instead of guessing which side of the boundary jq landed on. `over` here means "the port did not mask less" - both outputs are pinned, so any change of shape, including one that stops masking the value, fails.',
   },
   {
+    // The chain the ambiguous zone has to answer without knowing which side of the boundary
+    // fired: the VALUE is itself a keyword, so masking just the value would delete the keyword
+    // the generic rule needs next. Review of the first version of dynamic/throughline#116 found
+    // exactly this shape leaking, and no test before it covered it.
+    input: '\u00a0token is password S3cretPw9',
+    direction: 'over',
+    jq: '\u00a0Token *** password ***',
+    ts: '\u00a0token is ***',
+    note: 'OVER-REDACTION by design, and the shape that decides the design: NBSP is not a word character to Oniguruma, so jq anchors a boundary there, its Token rule eats the copula, `password` survives as a keyword and jq\'s generic rule then masks `S3cretPw9`. This port cannot see which side of the boundary NBSP is on, so when the value is keyword-like the mask walks forward over the pairs it heads: ` is password S3cretPw9` goes in one mask. Both outputs pinned - if the walk ever stops one pair short this row fails as a leak, which is exactly what it did before the walk existed.',
+  },
+  {
+    // Same walk, with the head keyword carrying a non-ASCII affix: that is why the walk asks
+    // KEYWORD_CONTAINED (Unicode-aware, like jq) and not KEYWORD_HEAD (ASCII-anchored, like
+    // pass 6a). An ASCII-anchored test stops the walk one pair short here.
+    input: '\u2014token is \u00fcsecret S3cretPw9',
+    direction: 'over',
+    jq: '\u2014Token *** \u00fcsecret ***',
+    ts: '\u2014token is ***',
+    note: 'OVER-REDACTION, the Unicode-affix case of the walk: jq\'s generic keyword group reads `\u00fcsecret` as a keyword because its `\w` is Unicode-aware and JS\'s is ASCII, so the secret behind it is masked by jq and has to be masked here too. An ASCII-anchored keyword test in the walk leaks this input; KEYWORD_CONTAINED is what closes it.',
+  },
+  {
+    // The walk across a copula spelled with a case-fold partner, on an astral prefix.
+    input: '\u{1f600}TOKEN i\u017f password S3cretPw9',
+    direction: 'over',
+    jq: '\u{1f600}Token *** password ***',
+    ts: '\u{1f600}TOKEN i\u017f ***',
+    note: 'OVER-REDACTION: an astral prefix reaches the ambiguous zone as a low surrogate (above ASCII, so this port cannot tell it from a letter), and the copula is spelled with U+017F, which only the fold-spelled separator matches. Same walk as the rows above, pinned so neither half of that can regress silently.',
+  },
+  {
     input: 'x//user:pw@host',
     direction: 'over',
     note: 'Same rule, same direction, with the anchor mid-token rather than at the start of the input, so the `//` anchor is pinned in both positions.',
@@ -1522,6 +1551,27 @@ describe('regex-engine parity with jq (issue #90)', () => {
     // the whole line into one `***`.
     assert.strictEqual(redact('\u00fcTOKEN is ' + secret), '\u00fcTOKEN is ***');
     assert.strictEqual(redact('\u00fcTOKEN i\u017f ' + secret + '\nnext line'), '\u00fcTOKEN i\u017f ***\nnext line');
+  });
+
+  /**
+   * The chain the first version of the fix leaked: a keyword sitting behind the copula. Masking
+   * only the value deletes the keyword the generic rule needs to reach the secret, so the mask
+   * walks forward over the pairs a keyword-like value heads. Asserted on this port's own output
+   * so a machine without `jq` still checks that the secret is gone.
+   */
+  it('masks a keyword behind the copula\u0027s own value, where the ambiguous zone cannot tell which anchor fired (issue #116 review)', () => {
+    const secret = 'S3cretPw9';
+    const inputs: readonly string[] = [
+      '\u00a0token is password ' + secret,
+      '\u2014token is \u00fcsecret ' + secret,
+      '\u{1f600}TOKEN i\u017f password ' + secret,
+      '\u00a0token is password auth ' + secret,
+    ];
+    for (const input of inputs) {
+      const out = redact(input);
+      assert.ok(!out.includes(secret), `the secret survived: ${JSON.stringify(out)}`);
+      assert.ok(out.includes('***'), `nothing was masked at all, so the line above proves nothing: ${JSON.stringify(out)}`);
+    }
   });
 
   /**
