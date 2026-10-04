@@ -518,6 +518,32 @@ const KEYWORD_HEAD = new RegExp("^\\w*(?:" + KEYWORD_ALTERNATION + ")\\w*$", "i"
  * glued in front of `token`, never a mask the hooks have.
  */
 const KEYWORD_CONTAINED = new RegExp("(?:" + KEYWORD_ALTERNATION + ")", "i");
+/**
+ * Does this ambiguous-zone value carry a MySQL/MariaDB CLIENT NAME - the one word a LATER
+ * pass (`_mysql_pw_all`, pass 5b) needs intact as its anchor? Searches rather than anchors
+ * whole-word, and reuses `MYSQL_CLIENT` rather than a hand-copied list, for the same reason
+ * the parity test reuses it: a client name added on the jq side must not have to be remembered
+ * here too. Case-sensitive, like the rule it guards (jq's `_mysql_anchor` has no `(?i)`).
+ *
+ * This is the last of the "a mask deletes the word a later rule needs" family that issue #116
+ * opened, and it is measured, not reasoned about: 5,454 of 150,480 generated inputs leaked on
+ * the first version of this fix, every one of them shaped `<non-ascii>token <sep> mysql
+ * -p<password>`. Masking `mysql` as `token`'s value deletes the only anchor `_mysql_pw_all`
+ * has, so the client-anchored `-p<password>` behind it - a password this port masks on `main`
+ * and in jq - survives. Deferring the whole ambiguous pass past 5b is not the fix either: in
+ * the mirror shape (`mysql -p\u00a9token S3cretPw`) the span eats `\u00a9token` and the deferred pass
+ * is left with no keyword to anchor on, which measured 144 leaks of its own. So the mask stays
+ * at step 3 and stops in front of the client name instead.
+ *
+ * Stopping here costs nothing in masking: the generic keyword rule (pass 6) runs the SAME
+ * separator and value alternatives over the SAME keyword, one pass later, and masks this value
+ * then - which is exactly what jq's own generic rule does with it, since jq's Token rule either
+ * ate the copula (boundary fires) or never fired (boundary refuses) and left the client name
+ * standing for `_mysql_pw_all` to use. What it does NOT cover is a client name glued into a
+ * longer word (`mysql-pw`, `xbmysql`): the search says yes, the real anchor may say no, and the
+ * cost of that false positive is the mask waiting for pass 6 instead of happening at pass 3.
+ */
+const MYSQL_ANCHOR_IN_VALUE = new RegExp(MYSQL_CLIENT);
 
 /**
  * The two anchors the Token-scheme word rule is split across, and why one rule became two
@@ -553,15 +579,21 @@ const KEYWORD_CONTAINED = new RegExp("(?:" + KEYWORD_ALTERNATION + ")", "i");
  *     intact, so it deletes neither the keyword nor the copula a later pass needs.
  *
  * That ordering is what makes the ambiguous branch safe in both directions: it never masks
- * less than jq's Token rule (its separator alternatives are a superset of jq's `\s+`, its
- * value class a superset of jq's `[A-Za-z0-9._-]+`, so every value jq's rule masks gets
- * masked), and it never deletes the keyword a later rule needs. Where jq's `\b` refuses (\u00fc,
- * \u00e9, \u0663: letters and digits in Unicode terms) the generic rule then reproduces jq's output
- * byte for byte. Where jq's `\b` fires (\u00a9, an em dash, an astral character - the port sees the
- * low surrogate, which is above ASCII either way, so the astral planes land on the safe side
- * too) the port keeps the keyword's own spelling where jq writes `Token ***`, a literal
- * difference on a line where both engines masked the value; that residue is pinned as one
- * `over` row in `ENGINE_DIVERGENCES` with both outputs.
+ * less than jq's Token rule (its separator alternatives are a superset of jq's `\s+`, its value
+ * class a superset of jq's `[A-Za-z0-9._-]+`, so every value jq's rule masks gets masked), and
+ * it stops in front of a word a later rule still needs - the copula, and the MySQL client name
+ * `_mysql_pw_all` anchors on (`MYSQL_ANCHOR_IN_VALUE`). Where jq's `\b` refuses (\u00fc, \u00e9, \u0663,
+ * \u4e2d: letters and digits in Unicode terms) and the walked run stops at a pair the generic rule
+ * can still reach, the output is jq's byte for byte. It is NOT byte for byte in general, and this
+ * comment used to claim it was: when the value behind the copula is itself a keyword the mask
+ * walks over the whole run (`\u00a0token is password S3cretPw9` \u2192 this port ` token is ***`, the
+ * hooks ` Token *** password ***`), so ordinary words inside that run get masked here and left
+ * visible by jq. Those over-masks are pinned row by row in `ENGINE_DIVERGENCES` (several `over`
+ * rows, not one) and they are the accepted cost of a zone this port cannot resolve. Where jq's
+ * `\b` fires (\u00a9, an em dash, an astral character - the port sees the low surrogate, which is
+ * above ASCII either way, so the astral planes land on the safe side too) the port keeps the
+ * keyword's own spelling where jq writes `Token ***`, a literal difference on a line where both
+ * engines masked the value.
  *
  * The prompt path deliberately keeps a single `\b` rule (see `redactAuthSchemesProse`):
  * `redactPrompt` runs no generic keyword rule at all, so there is nothing to reproduce jq's
@@ -596,11 +628,7 @@ function redactBasicScheme(str: string, minLen: number): string {
 /**
  * Token scheme redaction (command path).
  */
-function redactTokenScheme(str: string): string {
-  // jq: the bare `\\btoken\\s+...` gsub in `redact`, command path, no length floor - split
-  // into the two anchors above, whose comment carries the reason (issue #116).
-  const agreed = new RegExp(`${TOKEN_ASCII_ANCHOR}${foldSpelled("token")}${JS_WS}+([${FOLD_ALNUM}._-]+)`, "gi");
-  const source = str.replace(agreed, "Token ***");
+function maskAmbiguousTokenZone(source: string): string {
   const ambiguous = new RegExp(
     `(?<k>${TOKEN_AMBIGUOUS_ANCHOR}${foldSpelled("token")})(?<s>${KEYWORD_SEPARATOR})(?<v>${KEYWORD_VALUE})`,
     "gi",
@@ -620,7 +648,9 @@ function redactTokenScheme(str: string): string {
    *
    * The walk stops after the first pair whose value does not contain a keyword
    * (`KEYWORD_CONTAINED`, deliberately wider than the ASCII-anchored `KEYWORD_HEAD`: see its
-   * comment), so it is linear and never runs past the pair that holds the secret.
+   * comment), so it is linear and never runs past the pair that holds the secret - and it stops
+   * BEFORE a pair whose value carries a MySQL client name, because that pair is pass 5b's
+   * anchor and a run that swallowed it leaks the `-p<password>` behind it.
    *
    * The sentinel branch is unreachable today (`redactUrlUserinfo` runs after this pass, so no
    * user text can contain the sentinel) and is kept so this pass stays the same function of its
@@ -633,11 +663,17 @@ function redactTokenScheme(str: string): string {
   while ((match = ambiguous.exec(source)) !== null) {
     const { k, s, v } = match.groups as { k: string; s: string; v: string };
     if (v === REDACT_SENTINEL) continue;
+    // The value is a later rule's anchor: mask nothing here and let `_mysql_pw_all` have it.
+    if (MYSQL_ANCHOR_IN_VALUE.test(v)) continue;
     let end = match.index + match[0].length;
     if (KEYWORD_CONTAINED.test(v)) {
       KEYWORD_PAIR_STICKY.lastIndex = end;
       let pair: RegExpExecArray | null;
       while ((pair = KEYWORD_PAIR_STICKY.exec(source)) !== null) {
+        // Same guard one pair further right: the walk masks a RUN, and a run that swallows a
+        // client name starves pass 5b exactly as the single-pair mask above would. It stops
+        // BEFORE this pair rather than over it, so the client name stays on the line.
+        if (MYSQL_ANCHOR_IN_VALUE.test(pair[1])) break;
         end = KEYWORD_PAIR_STICKY.lastIndex;
         if (!KEYWORD_CONTAINED.test(pair[1])) break;
         KEYWORD_PAIR_STICKY.lastIndex = end;
@@ -651,6 +687,30 @@ function redactTokenScheme(str: string): string {
     if (ambiguous.lastIndex === match.index) ambiguous.lastIndex++;
   }
   return out + source.slice(cursor);
+}
+
+/**
+ * The two-anchor Token pass, command path. The ambiguous zone is masked FIRST, over the
+ * untouched input, and the ASCII-anchored rule runs over its output - not the other way round,
+ * which is what leaked `\u00a9token token password S3cretPw` (found by the 150,480-input sweep that
+ * was built to check the MySQL-anchor fix):
+ *
+ *   - jq's `\b` fires after \u00a9, so its leftmost match is the FIRST `token` and eats the second
+ *     one as its value, leaving `password S3cretPw` for the generic rule to mask;
+ *   - this port refused that first position (that is the whole point of the split), so an
+ *     ASCII-anchored pass run afterwards found its leftmost match at the SECOND `token` and ate
+ *     `password` - the keyword the generic rule needed - and `S3cretPw` survived.
+ *
+ * Masking the ambiguous zone first removes that mismatch: the zone's own scan already walks
+ * past the pairs a refused earlier match would have left reachable, so anything the ASCII rule
+ * can still see past the zone is text where the two engines agree about the match, and a
+ * `***` written by the zone is not a keyword either anchor can re-match.
+ */
+function redactTokenScheme(str: string): string {
+  // jq: the bare `\\btoken\\s+...` gsub in `redact`, command path, no length floor - split
+  // into the two anchors above, whose comment carries the reason (issue #116).
+  const agreed = new RegExp(`${TOKEN_ASCII_ANCHOR}${foldSpelled("token")}${JS_WS}+([${FOLD_ALNUM}._-]+)`, "gi");
+  return maskAmbiguousTokenZone(str).replace(agreed, "Token ***");
 }
 
 /**

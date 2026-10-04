@@ -1365,6 +1365,23 @@ const ENGINE_DIVERGENCES: readonly {
     ts: 'secret\u00e9 *** *** hunter2',
     note: 'LEAK, pre-existing on `main` (`secret\u00e9 api_key *** hunter2`): same mechanism one keyword later - `secret\u00e9` cannot fire in pass 6a, so `api_key credential` is matched instead and `hunter2` is never reached. The shape the seeded corpus cannot generate: its two-keyword template puts no affix on the first keyword.',
   },
+  // The Token-scheme ambiguous zone and the MySQL client anchor both need words out of the same
+  // line, and the two orderings each delete one the other needs. These two `over` rows are what
+  // the shipped order leaves behind; the secrets are masked in both engines on both inputs.
+  {
+    input: '\u00a9token is mysql -pS3cret',
+    direction: 'over',
+    jq: '\u00a9Token *** mysql -p***',
+    ts: '\u00a9token is *** -p***',
+    note: 'OVER-REDACTION, both secrets masked in both engines: \u00a9 is not a word character to Oniguruma, so jq anchors a boundary there, its Token rule eats the copula, and its generic rule never sees a `token is <value>` pair - `mysql` stays visible. This port cannot tell \u00a9 from \u00e9, so in the ambiguous zone it masks the value through the generic alternatives and its own generic pass then masks the client name too. What matters is the ORDER: the client name stays on the line until `_mysql_pw_all` has anchored on it. Masking it at step 3 - what the first version of this fix did - leaked `-pS3cret` on 5,454 of the 150,480-input sweep that found it.',
+  },
+  {
+    input: '\u00a9token token password S3cretPw',
+    direction: 'over',
+    jq: '\u00a9Token *** password ***',
+    ts: '\u00a9token ***',
+    note: 'OVER-REDACTION by the chain walk, pinned because the two engines match at DIFFERENT positions here: jq anchors after \u00a9, so its leftmost match is the first `token` and it eats the second one, leaving `password S3cretPw` to the generic rule; this port refuses the first position, and an ASCII-anchored pass run over the zone\u0027s output then reaches the second `token` and eats `password` - the keyword the generic rule needed - which is exactly how this input leaked. Running the ambiguous zone FIRST means its walk covers the whole run and no ASCII-anchored match is left to eat a keyword the generic pass still needed.',
+  },
 ];
 
 describe('regex-engine parity with jq (issue #90)', () => {
@@ -1507,6 +1524,29 @@ describe('regex-engine parity with jq (issue #90)', () => {
     ['\u00fctoken abc', '\u00fctoken ***'],
     ['\u00fcAPI_TOKEN=YWJjZGVmZ2hpamts', '\u00fcAPI_TOKEN=***'],
     ['\u00fc\u0663TOKEN \u017fup3rS3cret', '\u00fc\u0663TOKEN ***'],
+    // The prefix the comment above names but no row exercised (ADVISORY from the review of
+    // dynamic/throughline#122): a CJK ideograph is a letter to Oniguruma's `\b` and a non-ASCII
+    // code unit to this port, so it lands in the same ambiguous zone as \u00fc. Pinned by row now,
+    // not by prose.
+    ['\u4e2dTOKEN is S3cretPw9', '\u4e2dTOKEN is ***'],
+    ['\u4e2dtoken \u017fup3rS3cret', '\u4e2dtoken ***'],
+    // The Token pass and the MySQL pass both need words out of the same line, and every one the
+    // other rule consumed first is a password that survives. These are the shapes the
+    // 150,480-input sweep found leaking on the first version of the anchor split (5,454 inputs,
+    // every one of them `<non-ascii>token <sep> mysql -p<password>`): the client name now stays
+    // on the line for `_mysql_pw_all`, and the generic pass masks it afterwards exactly where
+    // jq's does - byte for byte here, because on these prefixes jq's `\b` refuses too.
+    ['\u00e9token is mysql -pS3cret', '\u00e9token is *** -p***'],
+    ['\u00e9token is password mysql -pS3cret', '\u00e9token is *** mysql -p***'],
+    // The mirror shape, and the reason the ambiguous mask cannot be deferred past
+    // `_mysql_pw_all` (which a previous round tried, at 144 leaks of its own): here the MySQL
+    // span eats `\u00a9token` and a deferred Token pass has no keyword left to anchor on.
+    ['mysql -p\u00a9token S3cretPw', 'mysql -p*** ***'],
+    // The leftmost-match hazard in the zone where both engines AGREE, included because the fix
+    // for it is an ordering: jq's `\b` fires after \u00a9 so its leftmost match eats the second
+    // `token` and leaves `password` to the generic rule; a port that refuses the first position
+    // must not let a later ASCII-anchored match eat `password` instead.
+    [' token token password S3cretPw', ' Token *** password ***'],
   ];
 
   /**
@@ -1572,6 +1612,33 @@ describe('regex-engine parity with jq (issue #90)', () => {
       assert.ok(!out.includes(secret), `the secret survived: ${JSON.stringify(out)}`);
       assert.ok(out.includes('***'), `nothing was masked at all, so the line above proves nothing: ${JSON.stringify(out)}`);
     }
+  });
+
+  /**
+   * BLOCKING 1 of the review of dynamic/throughline#122, asserted on this port's own output so it
+   * is checked on a machine with no `jq` on PATH. The Token pass runs at step 3 and the MySQL
+   * client-anchored pass at step 5b, so a step-3 mask that CONSUMES the client name deletes the
+   * only anchor step 5b has, and the `-p<password>` behind it survives. Every input here is that
+   * shape or its mirror; the property is the negative one - the password must not survive.
+   */
+  it('leaves the MySQL client name on the line for _mysql_pw_all when the Token zone masks around it (#122 review)', () => {
+    const pw = 'S3cretPw9';
+    const inputs: readonly string[] = [
+      '\u00a9token is mysql -p' + pw,
+      '\u00e9token is mysql -p' + pw,
+      '\u00e9token is password mysql -p' + pw,
+      '\u4e2dTOKEN was mysqldump -p' + pw,
+      '\u2014token is mariadb-dump -p' + pw,
+      '\u00a9token token password mysql -p' + pw,
+    ];
+    for (const input of inputs) {
+      const out = redact(input);
+      assert.ok(!out.includes(pw), `the client-anchored password survived: ${JSON.stringify(out)}`);
+      assert.ok(out.includes('***'), `nothing was masked at all, so the line above proves nothing: ${JSON.stringify(out)}`);
+    }
+    // And as text, on the two inputs whose shape the fix settles:
+    assert.strictEqual(redact('\u00e9token is mysql -p' + pw), '\u00e9token is *** -p***');
+    assert.strictEqual(redact('\u00e9token is password mysql -p' + pw), '\u00e9token is *** mysql -p***');
   });
 
   /**
