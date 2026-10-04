@@ -55,7 +55,10 @@
  *     `foldSpelled`.
  *   - `\b` IS left as a difference, not fixed: Oniguruma's is Unicode-aware and no
  *     approximation of it lands on the safe side, so each input where the two disagree
- *     is pinned by direction in `ENGINE_DIVERGENCES` in `redaction.test.ts`.
+ *     is pinned by direction in `ENGINE_DIVERGENCES` in `redaction.test.ts`. The Token-scheme
+ *     word rule is the one exception (issue #116): there the port cannot even say which side of
+ *     the boundary it is on, so that rule splits at the seam and masks through the generic rule
+ *     in the zone where the engines disagree - see TOKEN_ASCII_ANCHOR.
  *
  * `.omp-plugin` is NOT affected by any of this: its shim shells out to the same
  * `hooks/*.sh` scripts, so it inherits the jq rules directly.
@@ -479,6 +482,74 @@ function unmaskSentinel(str: string): string {
 // --- Auth scheme patterns ---
 
 /**
+ * The generic keyword rule's separator and value alternatives, hoisted to module scope so the
+ * ambiguous-prefix Token pass can reuse the SAME shape (issue #116). Composed into
+ * `keywordPattern` byte for byte as it was when both strings were inline there.
+ *
+ * The Token pass needs the generic separators rather than its own because of the copula:
+ * in `\u00fctoken is S3cretPw` the Token rule's own `\s+[A-Za-z0-9._-]+` matches the word `is` as
+ * the VALUE, so any replacement that deletes the value deletes the copula the generic rule
+ * needs to reach the secret - which is the same "ate the keyword a later rule needed" leak
+ * this function exists to stop, one character further left.
+ */
+const KEYWORD_SEPARATOR =
+  JS_WS + "*[:=]" + JS_WS + "*|" + JS_WS + "+(?:" + SEPARATOR_ALTERNATION + ")" + JS_WS + "+|" + JS_WS + "+";
+const KEYWORD_VALUE = "\"[^\"]*\"|" + REDACT_SENTINEL + "|\"[^\\r\\n]*|" + jsNotWs("\"") + "+";
+
+/**
+ * The two anchors the Token-scheme word rule is split across, and why one rule became two
+ * (issue #116).
+ *
+ * `\b` is the one anchor this port cannot copy: Oniguruma reads it as Unicode-aware and JS
+ * reads it as ASCII-only. That is not a boundary that shifts by one character, it is a rule
+ * that fires on one engine and not the other, and a scheme rule that fires early EATS the
+ * keyword a later rule needs: on `\u00fcTOKEN is <secret>` jq's `\b` refuses to anchor after \u00fc,
+ * its Token rule never fires, and its GENERIC keyword rule masks the value; JS's `\b` does
+ * fire, this rule ate `TOKEN is` and wrote `Token ***`, and the value survived in cleartext.
+ * That is the leak dynamic/throughline#116 reports, and it is the third instance of the
+ * mechanism the `\b` rows in `ENGINE_DIVERGENCES` pin for `SG.` and the MySQL client anchor.
+ *
+ * The obvious fix - refuse every non-ASCII code unit in front of `token`, over-approximating
+ * Oniguruma's refusing side - was measured over 36,480 generated inputs and is WRONG: it
+ * closed those 2,016 leaks and opened 1,008 new ones in the same sweep. Standing down is not
+ * neutral either, because the generic rule can then read the whole `<non-ascii>token` as the
+ * VALUE of an earlier keyword (`password \u00a9token S3cretPw`) and leave the real secret behind
+ * it with no keyword in front of it at all. Firing too often eats a keyword; refusing too
+ * often turns one into a value. Both leak.
+ *
+ * So the rule is split at the seam instead of being moved to one side of it:
+ *   - TOKEN_ASCII_ANCHOR: where the two engines AGREE about the boundary (start of input, or
+ *     an ASCII non-word character in front), this rule fires and writes jq's literal
+ *     `Token ***`;
+ *   - TOKEN_AMBIGUOUS_ANCHOR: where the character in front is non-ASCII, this port cannot
+ *     know which side of `\b` jq lands on - no JS class reproduces Oniguruma's word set
+ *     (`[\p{L}\p{N}\p{M}_]` disagrees on 583 of 19,979 probed code points, and `\p{...}` needs
+ *     the `u` flag the identity escapes in this file's `\S`-spelled classes reject). It masks
+ *     the value EITHER WAY, but through the GENERIC rule's separator and value alternatives
+ *     (KEYWORD_SEPARATOR / KEYWORD_VALUE) and with the keyword and separator written back
+ *     intact, so it deletes neither the keyword nor the copula a later pass needs.
+ *
+ * That ordering is what makes the ambiguous branch safe in both directions: it never masks
+ * less than jq's Token rule (its separator alternatives are a superset of jq's `\s+`, its
+ * value class a superset of jq's `[A-Za-z0-9._-]+`, so every value jq's rule masks gets
+ * masked), and it never deletes the keyword a later rule needs. Where jq's `\b` refuses (\u00fc,
+ * \u00e9, \u0663: letters and digits in Unicode terms) the generic rule then reproduces jq's output
+ * byte for byte. Where jq's `\b` fires (\u00a9, an em dash, an astral character - the port sees the
+ * low surrogate, which is above ASCII either way, so the astral planes land on the safe side
+ * too) the port keeps the keyword's own spelling where jq writes `Token ***`, a literal
+ * difference on a line where both engines masked the value; that residue is pinned as one
+ * `over` row in `ENGINE_DIVERGENCES` with both outputs.
+ *
+ * The prompt path deliberately keeps a single `\b` rule (see `redactAuthSchemesProse`):
+ * `redactPrompt` runs no generic keyword rule at all, so there is nothing to reproduce jq's
+ * fall-through with - masking there is an over-mask in the safe direction, and splitting the
+ * anchor would only remove a mask.
+ */
+const TOKEN_ASCII_ANCHOR = String.raw`(?<![A-Za-z0-9_\u0080-\uffff])`;
+/** See TOKEN_ASCII_ANCHOR: the prefix characters where the two engines disagree about `\b`. */
+const TOKEN_AMBIGUOUS_ANCHOR = String.raw`(?<=[\u0080-\uffff])`;
+
+/**
  * Bearer scheme redaction (command path, min length 1).
  */
 function redactBearerScheme(str: string, minLen: number): string {
@@ -503,8 +574,19 @@ function redactBasicScheme(str: string, minLen: number): string {
  * Token scheme redaction (command path).
  */
 function redactTokenScheme(str: string): string {
-  // jq: the bare `\\btoken\\s+...` gsub in `redact`, command path, no length floor.
-  return str.replace(new RegExp(`\\b${foldSpelled("token")}${JS_WS}+([${FOLD_ALNUM}._-]+)`, "gi"), "Token ***");
+  // jq: the bare `\\btoken\\s+...` gsub in `redact`, command path, no length floor - split
+  // into the two anchors above, whose comment carries the reason (issue #116).
+  const agreed = new RegExp(`${TOKEN_ASCII_ANCHOR}${foldSpelled("token")}${JS_WS}+([${FOLD_ALNUM}._-]+)`, "gi");
+  const ambiguous = new RegExp(
+    `(?<k>${TOKEN_AMBIGUOUS_ANCHOR}${foldSpelled("token")})(?<s>${KEYWORD_SEPARATOR})(?<v>${KEYWORD_VALUE})`,
+    "gi",
+  );
+  // The sentinel value stays a sentinel: `redactUrlUserinfo` has not run yet at this point in
+  // the pipeline, so no user text can contain it and the branch is unreachable today, but
+  // copying it keeps this replacement the same function of its groups as `keywordReplacement`.
+  const ambiguousReplacement = (_m: string, k: string, s: string, v: string) =>
+    `${k}${s}${v === REDACT_SENTINEL ? REDACT_SENTINEL : "***"}`;
+  return str.replace(agreed, "Token ***").replace(ambiguous, ambiguousReplacement);
 }
 
 /**
@@ -523,6 +605,11 @@ function redactAuthSchemes(str: string): string {
 function redactAuthSchemesProse(str: string): string {
   let result = str;
   result = redactBearerScheme(result, 16);
+  // `\\b` stays here on purpose, where the command path moved to TOKEN_LEFT_ANCHOR: this
+  // path has no generic keyword rule to fall through to, so a non-ASCII letter in front of
+  // `TOKEN` is a case where jq's `\\b` refuses, jq stores the value whole, and this port
+  // masks it anyway. That is an over-mask in the safe direction; copying the lookbehind
+  // here would turn it into a leak on both engines.
   result = result.replace(new RegExp(`\\b${foldSpelled("token")}${JS_WS}+([${FOLD_ALNUM}._-]{16,})`, "gi"), "Token ***");
   result = redactBasicScheme(result, 16);
   return result;
@@ -620,8 +707,8 @@ export function redact(str: string): string {
   // redaction.test.ts.
   const keywordPattern = (lead: string, suffix: string) =>
     "(" + lead + "(?:" + KEYWORD_ALTERNATION + ")" + suffix + ")" +
-      "(" + JS_WS + "*[:=]" + JS_WS + "*|" + JS_WS + "+(?:" + SEPARATOR_ALTERNATION + ")" + JS_WS + "+|" + JS_WS + "+)" +
-      "(\"[^\"]*\"|" + REDACT_SENTINEL + "|\"[^\\r\\n]*|" + jsNotWs("\"") + "+)";
+      "(" + KEYWORD_SEPARATOR + ")" +
+      "(" + KEYWORD_VALUE + ")";
   const keywordReplacement = (_match: string, keyword: string, sep: string, value: string) => {
     // If value is the sentinel, keep it as-is (will be unmasked later)
     if (value === REDACT_SENTINEL) {

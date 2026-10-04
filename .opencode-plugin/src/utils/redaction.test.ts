@@ -1102,7 +1102,8 @@ describe('issue #81 rules, ported to the OpenCode plugin', () => {
  * refuses CR, JS `\s` additionally matches U+FEFF, and JS `\b` is not
  * Unicode-aware. The first two are fixed by spelling the rule out (see
  * `JS_NOT_WS` / the `[ ^\n]` step in `redaction.ts` and `ENGINE_SPELLINGS` here);
- * the third is left as a documented divergence. This suite pins all of it, and
+ * the third is left as a documented divergence, except on the Token-scheme word rule, which
+ * issue #116 split at the anchor seam instead of picking a side. This suite pins all of it, and
  * its differential test is what stops the text-normalization mapping from being
  * used to paper over a real behavioural drift.
  */
@@ -1175,19 +1176,19 @@ const ENGINE_DIVERGENCES: readonly {
     // the extra mask swallows. These two are NEW leaks: `main` masks both secrets (measured
     // against a build of `main` - it returns `\u00e9SG.abc...password=***` and `\u00e9mysql -pxtoken ***`,
     // the same text jq writes), so the rules this port adds are what make them survive. The
-    // third `\b` row, the Token-scheme one further down, is the only one `main` already leaks.
+    // third `\b` row of this class, the Token-scheme one, is deleted below: issue #116 closed it.
     input: '\u00e9SG.abcdefghijklmnopqrst.ABCDEFGHIJKLMNOPQRSTpassword=S3cret',
     direction: 'under',
     jq: '\u00e9SG.abcdefghijklmnopqrst.ABCDEFGHIJKLMNOPQRSTpassword=***',
     ts: '\u00e9SG.***=S3cret',
-    note: 'LEAK, introduced by this port (masks fine on `main`): the port anchors on \u00e9 and the SendGrid token class swallows the following `password`, so the generic keyword rule never fires and `S3cret` survives. jq anchors nowhere and masks `password=S3cret` instead. Accepted as rare: it needs a non-ASCII letter glued directly in front of an `SG.` token that is itself glued to a `keyword=value` pair. Closing it means an Oniguruma-accurate `\b`, which JS has no spelling for - see dynamic/throughline#116.',
+    note: 'LEAK, introduced by this port (masks fine on `main`): the port anchors on \u00e9 and the SendGrid token class swallows the following `password`, so the generic keyword rule never fires and `S3cret` survives. jq anchors nowhere and masks `password=S3cret` instead. Accepted as rare: it needs a non-ASCII letter glued directly in front of an `SG.` token that is itself glued to a `keyword=value` pair. dynamic/throughline#116 closed only the Token-scheme instance of this class, by splitting that rule at its anchor seam; this row and the MySQL one below stay open because the rules that fire there have no generic fall-through to hand the value to.',
   },
   {
     input: '\u00e9mysql -pxtoken abcS3cret',
     direction: 'under',
     jq: '\u00e9mysql -pxtoken ***',
     ts: '\u00e9mysql -p*** abcS3cret',
-    note: 'LEAK, introduced by this port (masks fine on `main`): the port anchors on \u00e9 and the MySQL span eats `token`, so the token-word rule never fires and `abcS3cret` survives. Same mechanism as the row above, different rule order, same acceptance and same #116 anchor decision.',
+    note: 'LEAK, introduced by this port (masks fine on `main`): the port anchors on \u00e9 and the MySQL span eats `token`, so the token-word rule never fires and `abcS3cret` survives. Same mechanism as the row above, different rule order, same acceptance. dynamic/throughline#116 closed the third row of this class, the Token-scheme word rule, by splitting that rule at the anchor seam so it masks through the generic rule where the engines disagree; these two stay pinned because the rules that fire there have no such fall-through to hand the value to.',
   },
   // The `over` rows below are the residue of over-approximating Oniguruma's `\w` in the
   // generic keyword rule (`JS_WORD_STAR`): jq's `\w` refuses a non-ASCII PUNCTUATION,
@@ -1262,16 +1263,32 @@ const ENGINE_DIVERGENCES: readonly {
     direction: 'over',
     note: 'Scheme-relative userinfo: jq\'s `_url` anchors on `://` and leaves this verbatim; the port anchors on `//` and masks the password. Deliberate, and the direction is pinned - if it ever flips, a credential the shipped plugin masks is being stored in cleartext.',
   },
+  // The row that used to sit here is the dynamic/throughline#116 leak, and it is CLOSED, so
+  // per the rule at the top of this table ("a later round that closes one must DELETE its row,
+  // not soften it") it is gone: the port no longer anchors its Token rule with a bare
+  // word-boundary, so `\u00fcTOKEN is <secret>` now reaches the generic keyword rule and masks the
+  // way the hooks do. Both inputs of that leak live in `engineCases` as ordinary parity rows,
+  // and `it('masks the value after a non-ASCII letter …')` asserts them without `jq`.
+  //
+  // The two `over` rows below are what the fix leaves behind. The two `under` rows above it
+  // (`SG.`, MySQL client anchor) are untouched: same mechanism, different rule, still leaking.
   {
-    // Same `` mechanism as the two `under` rows before it, on the Token-scheme word rule
-    // instead of the SendGrid or MySQL ones, and OLD: `main` leaks this input byte-for-byte
-    // the same way, so it is not something the port introduced. Found by the ad-hoc 6,000
-    // -input fuzz run, not by the seeded corpus.
-    input: '\u00fcTOKEN i\u017f YWJjZGVmZ2hpamts\nnext line',
-    direction: 'under',
-    jq: '\u00fcTOKEN i\u017f ***\nnext line',
-    ts: '\u00fcToken *** YWJjZGVmZ2hpamts\nnext line',
-    note: 'LEAK: Oniguruma\'s `\b` refuses to anchor after \u00fc, so jq\'s Token-scheme rule never fires and its generic rule masks the value; JS\'s ASCII-only `\b` does fire, the Token rule eats `TOKEN i\u017f` and writes `Token ***`, and the value survives. The plain-ASCII copula (`\u00fcTOKEN is <value>`) diverges identically. Pre-existing on `main`, same class as the two rows above: an over-match at a `\b` the other engine does not have.',
+    // The residue of that fix, and it points the safe way: an input where the port now masks
+    // MORE than the hooks, because jq's own Token rule ate the copula `is` so jq's generic
+    // rule never reached the value.
+    input: '\u00a9token is S3cretPw',
+    direction: 'over',
+    jq: '\u00a9Token *** S3cretPw',
+    ts: '\u00a9token is ***',
+    note: 'OVER-REDACTION, and the leak here is on the jq side: \u00a9 is not a word character to Oniguruma, so jq anchors a boundary there, its Token rule matches the word `is` as the value, and the copula its generic rule needed is rewritten away - `S3cretPw` survives in the hooks. This port cannot tell that \u00a9 from the \u00fc in the row this replaces (no JS class reproduces Oniguruma\'s word set), so in the ambiguous zone it masks the value through the GENERIC separator and value alternatives and writes the keyword and separator back verbatim, which leaves the copula alive for the pass that needs it. Both outputs pinned because jq masks part of the line too and the direction heuristic cannot describe this row.',
+  },
+  {
+    // Same ambiguous zone, the shape where neither engine leaks and only the literal moved.
+    input: '\u00a9token YWJjZGVmZ2hpamts',
+    direction: 'over',
+    jq: '\u00a9Token ***',
+    ts: '\u00a9token ***',
+    note: 'LITERAL-ONLY residue of the same fix, pinned so it cannot quietly become a leak. Both engines mask the whole value; jq writes its own `Token` spelling and this port leaves the keyword as the input spelled it, because in the ambiguous zone it masks through the generic rule instead of guessing which side of the boundary jq landed on. `over` here means "the port did not mask less" - both outputs are pinned, so any change of shape, including one that stops masking the value, fails.',
   },
   {
     input: 'x//user:pw@host',
@@ -1450,6 +1467,17 @@ describe('regex-engine parity with jq (issue #90)', () => {
     // guard can see it; that residue is the pinned `over` row `token\u00e9token="a b"c`.
     ['pa\u017f\u017fword "open sesame passwd:"open sesame', 'pa\u017f\u017fword ***open sesame'],
     ['x pa\u017f\u017fword="a b"c d', 'x pa\u017f\u017fword=***c d'],
+    // The Token-scheme word rule on the prefix characters where Oniguruma's `\b` REFUSES
+    // (\u00fc, \u0663, \u4e2d: letters, digits and marks in Unicode terms). jq falls through to its
+    // generic keyword rule and masks the value; this port's ambiguous-prefix pass now
+    // reproduces that fall-through instead of eating `TOKEN is` and writing `Token ***`. The
+    // first two are the inputs dynamic/throughline#116 reported, demoted to ordinary parity
+    // rows because the fix closed them; the rest are the shapes around them.
+    ['\u00fcTOKEN is YWJjZGVmZ2hpamts', '\u00fcTOKEN is ***'],
+    ['\u00fcTOKEN i\u017f YWJjZGVmZ2hpamts\nnext line', '\u00fcTOKEN i\u017f ***\nnext line'],
+    ['\u00fctoken abc', '\u00fctoken ***'],
+    ['\u00fcAPI_TOKEN=YWJjZGVmZ2hpamts', '\u00fcAPI_TOKEN=***'],
+    ['\u00fc\u0663TOKEN \u017fup3rS3cret', '\u00fc\u0663TOKEN ***'],
   ];
 
   /**
@@ -1470,6 +1498,31 @@ describe('regex-engine parity with jq (issue #90)', () => {
       assert.strictEqual(redact(input), expected);
     });
   }
+
+  /**
+   * The dynamic/throughline#116 leak, asserted on this port's own output so it is checked on a
+   * machine with no `jq` on PATH - where the differential test skips and the `engineCases`
+   * parity rows only prove this port agrees with itself. The property that matters is the
+   * negative one: the value must not survive. `Token *** YWJjZGVmZ2hpamts`, which is what
+   * `main` wrote, masks the keyword and stores the secret, and no amount of `***` elsewhere in
+   * the line makes that safe.
+   */
+  it('masks the value after a non-ASCII letter in front of TOKEN, instead of eating the keyword the generic rule needs (issue #116)', () => {
+    const secret = 'YWJjZGVmZ2hpamts';
+    const inputs: readonly string[] = [
+      '\u00fcTOKEN is ' + secret,
+      '\u00fcTOKEN i\u017f ' + secret + '\nnext line',
+    ];
+    for (const input of inputs) {
+      const out = redact(input);
+      assert.ok(!out.includes(secret), `the secret survived: ${JSON.stringify(out)}`);
+      assert.ok(out.includes('***'), `nothing was masked at all, so the line above proves nothing: ${JSON.stringify(out)}`);
+    }
+    // And as text, because "no cleartext" alone would also pass if a future change collapsed
+    // the whole line into one `***`.
+    assert.strictEqual(redact('\u00fcTOKEN is ' + secret), '\u00fcTOKEN is ***');
+    assert.strictEqual(redact('\u00fcTOKEN i\u017f ' + secret + '\nnext line'), '\u00fcTOKEN i\u017f ***\nnext line');
+  });
 
   /**
    * The `under` rows, asserted the same way but on the port's own output only, so a pinned
