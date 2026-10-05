@@ -83,9 +83,9 @@ All notable changes to throughline are documented here. Format loosely follows
   layout will "skip silently" and that "nothing offered" is not a bug, which the
   announcement contradicted. Both-ignored now skips the offer silently, and the Reminders
   "Report, then let the user review" bullet words the commit/push offer as conditional on
-  something being committable. What is kept is the narrower case that is genuinely
-  surprising: only one of the two artifacts is ignored, so the staged set is partial and
-  the skill now names the file being left out.
+  something being committable. Added for the narrower, genuinely surprising case: when
+  only one of the two artifacts is ignored the staged set is partial, so the skill now
+  names the file being left out.
 
 ### Fixed
 - **OpenCode plugin port of the issue #81 rules, plus a parity test** (issue #90):
