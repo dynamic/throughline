@@ -560,6 +560,42 @@ const KEYWORD_CONTAINED = new RegExp("(?:" + KEYWORD_ALTERNATION + ")", "i");
 const MYSQL_ANCHOR_IN_VALUE = new RegExp(MYSQL_CLIENT);
 
 /**
+ * Pass 5b's `-p` and the head of its value, enough to ask what that mask WOULD swallow. The
+ * value head stops at whitespace and at the span's hard stops, so it never reads past the
+ * argument `_mysql_pw_all` masks; the newline cut below mirrors the span's own hard stop.
+ */
+const MYSQL_PW_AHEAD = /-p["']?([^\s"'`;|&]+)/;
+
+/**
+ * Would the MySQL mask this ambiguous-zone value is being preserved for swallow a KEYWORD?
+ * (Review of dynamic/throughline#122, second round: the guard above was written as though
+ * preserving the client name were always the safe move, and it is not.)
+ *
+ * `\u00a9token mysql -ppassword S3cretPw9X` is the input that says so. Where jq's boundary FIRES after
+ * \u00a9 its Token rule eats `mysql` outright, `_mysql_pw_all` never anchors, and jq's generic
+ * keyword rule then reads the glued `ppassword` as a keyword and masks the secret behind it:
+ * `\u00a9Token *** -ppassword ***`. This port preserved `mysql` for pass 5b, pass 5b masked
+ * `-ppassword` - a password that is also a keyword - and the generic rule was left with no
+ * keyword to anchor on: `\u00a9token *** -p*** S3cretPw9X`, secret in cleartext, on an input `main`
+ * masks. 288 such inputs in the review's 233,280-input fuzz, all of them this shape.
+ *
+ * So the deferral is conditional. Preserving the client name is right when pass 5b will mask a
+ * NON-keyword password (`mysql -pS3cretPw`), because deleting `mysql` there deletes the only
+ * anchor for a secret nothing else can see. It is wrong when the password is itself keyword-shaped:
+ * masking it deletes a keyword the generic rule needs, and the generic rule can reach that secret
+ * on its own - which is what it does under the boundary-fires reading, and under the
+ * boundary-refuses reading it masks MORE than jq (jq's own pass 5b ate `password` there and left
+ * `S3cretPw9X` in the clear), which is the accepted direction of this zone.
+ */
+function mysqlMaskWouldEatKeyword(source: string, from: number): boolean {
+  const lineEnd = source.indexOf("\n", from);
+  const rest = lineEnd < 0 ? source.slice(from) : source.slice(from, lineEnd);
+  const m = MYSQL_PW_AHEAD.exec(rest);
+  return m !== null && KEYWORD_CONTAINED.test(m[1]);
+}
+
+
+/**
  * The two anchors the Token-scheme word rule is split across, and why one rule became two
  * (issue #116).
  *
@@ -677,8 +713,9 @@ function maskAmbiguousTokenZone(source: string): string {
   while ((match = ambiguous.exec(source)) !== null) {
     const { k, s, v } = match.groups as { k: string; s: string; v: string };
     if (v === REDACT_SENTINEL) continue;
-    // The value is a later rule's anchor: mask nothing here and let `_mysql_pw_all` have it.
-    if (MYSQL_ANCHOR_IN_VALUE.test(v)) continue;
+    // The value is a later rule's anchor: mask nothing here and let `_mysql_pw_all` have it -
+    // unless that mask would swallow a keyword, which is the case the guard cannot defer in.
+    if (MYSQL_ANCHOR_IN_VALUE.test(v) && !mysqlMaskWouldEatKeyword(source, match.index + match[0].length)) continue;
     let end = match.index + match[0].length;
     if (KEYWORD_CONTAINED.test(v)) {
       KEYWORD_PAIR_STICKY.lastIndex = end;
@@ -687,7 +724,7 @@ function maskAmbiguousTokenZone(source: string): string {
         // Same guard one pair further right: the walk masks a RUN, and a run that swallows a
         // client name starves pass 5b exactly as the single-pair mask above would. It stops
         // BEFORE this pair rather than over it, so the client name stays on the line.
-        if (MYSQL_ANCHOR_IN_VALUE.test(pair[1])) break;
+        if (MYSQL_ANCHOR_IN_VALUE.test(pair[1]) && !mysqlMaskWouldEatKeyword(source, KEYWORD_PAIR_STICKY.lastIndex)) break;
         end = KEYWORD_PAIR_STICKY.lastIndex;
         if (!KEYWORD_CONTAINED.test(pair[1])) break;
         KEYWORD_PAIR_STICKY.lastIndex = end;
