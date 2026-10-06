@@ -1795,9 +1795,11 @@ describe('regex-engine parity with jq (issue #90)', () => {
     const input = ('\u00a9token mysql ' + 'x'.repeat(100) + ' ').repeat(1000) + '-ppassword S3cretPw9X';
     // The two shapes the guard used to route into pass 5b: no `-p` at all, and one `-p` past a
     // command separator that 5b's span cannot cross. Without masking the client names at pass 3,
-    // 5b retried its line-long span from each of them - quadratic, 155 s at 26,000 repeats.
+    // 5b retried its line-long span from each of them - quadratic, 155 s at 26,000 repeats, and the
+    // scan itself went quadratic again at 26,000 with a trailing ';' (6.1 s) until the stop was cached
+    // too, which is why both of these run at 20,000 repeats rather than a size that passes either way.
     const noFlag = '\u00e9token mysql '.repeat(20000);
-    const flagPastSeparator = '\u00e9token mysql '.repeat(8000) + '; ls -pX';
+    const flagPastSeparator = '\u00e9token mysql '.repeat(20000) + '; ls -pX';
     const started = Date.now();
     const out = redact(input);
     const elapsed = Date.now() - started;

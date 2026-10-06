@@ -619,13 +619,30 @@ const MYSQL_PW_STOP = /[;|&\r\n]/;
  * the work: one forward scan for the whole Token pass, resumed where the last scan stopped, because
  * the positions asked about only move right. A hit ahead of the question is cached and reused; a
  * region with nothing to find is scanned once and answered from the `exhausted` flag. Total regex
- * work is O(source) per Token pass instead of O(matches x window).
+ * work is O(source) per Token pass instead of O(matches x window) - with the caveat that a STOP is
+ * cached too (`stopPos`), because a stop that has to be rediscovered by every question behind it is
+ * the same quadratic wearing a different hat: `\u00e9token mysql ` repeated 26,000 times with a trailing
+ * `;` measured 6.1 s against `main`'s 15 ms before that cache existed, and about 5 ms with it.
  *
  * Two things this deliberately does NOT do. It does not restart the scan at a `MYSQL_PW_STOP` for a
  * question positioned BEFORE the stop (that question's own region really has no reachable flag, which
  * is the `none` answer), and it does not reset the `exhausted` flag at a stop, because a question
  * positioned past the stop rescans from its own position and can still find a flag in its own region
  * - so `exhausted` means "nothing ahead of the furthest point scanned", which is all the callers ask.
+ *
+ * A THIRD thing it does not do, stated as an open gap rather than a claim: `MYSQL_PW_STOP` is a
+ * single-character class, and pass 5b's real span (`MYSQL_SPAN_STEPS`) walks past four things this
+ * class stops at - a `;` or `|` inside quotes, a backslash-newline continuation, an `N>&M` redirect,
+ * and an `&>` redirect. For a client name followed by one of those and then a password, the scanner
+ * answers `none`, the client name is masked at pass 3, pass 5b loses its anchor, and the password
+ * survives: `\u00e9token mysql -e "select 1;" -pS3cretPw9X`, `\u00e9token mysql db \` newline
+ * `-pS3cretPw9X`, `\u00e9token mysql 2>&1 -pS3cretPw9X` and `\u00e9token mysql &>/dev/null -pS3cretPw9X`
+ * all do this (review round 2 of dynamic/throughline#122, finding 2, verified against `jq` there).
+ * `main` leaks all four too, so this is not a regression - it is the part of the class this round ran
+ * out of budget on. Closing it means driving the scanner with `MYSQL_SPAN_STEP` itself, and that has
+ * to be measured rather than assumed: 5b's own span is what makes `mysql ` repeated 4,000 times cost
+ * 1.6 s on `main`, so asking 5b's question exactly re-buys 5b's cost and needs its own linearity
+ * proof. The timing test below pins the two shapes that are covered, not these four.
  */
 type MysqlPwAhead = 'none' | 'safe-to-defer' | 'eats-keyword';
 
@@ -636,7 +653,7 @@ function makeMysqlPwKeywordScanner(source: string): (from: number) => MysqlPwAhe
   const scan = new RegExp(MYSQL_PW_AHEAD.source + "|[" + MYSQL_PW_STOP.source.slice(1, -1) + "]", "g");
   let hitPos = -1;
   let hitState: MysqlPwAhead = 'none';
-  let scanFrom = 0;
+  let stopPos = -1;
   let exhausted = false;
   return function mysqlPwAhead(from: number): MysqlPwAhead {
     // A cached flag still ahead of the question answers it. Neither alternative can match zero
@@ -644,7 +661,18 @@ function makeMysqlPwKeywordScanner(source: string): (from: number) => MysqlPwAhe
     // always advances and a null result is final for every question asked from behind it.
     if (hitPos >= from && hitPos !== -1) return hitState;
     if (exhausted) return 'none';
-    scan.lastIndex = hitPos >= from ? scanFrom : from;
+    // The same answer for a cached STOP, and this one is load-bearing rather than a micro-optimisation:
+    // without it every question asked from before the stop rescans the whole run to reach it again,
+    // which put `\u00e9token mysql ` repeated 26,000 times plus a trailing `;` at 6.1 s (15 ms on `main`).
+    // A stop ahead of `from` means the region this question could reach has already been walked and
+    // held no flag, so the answer is `none` without a scan. Cached separately from `hitPos` because a
+    // stop does not end the scan - a question positioned past it rescans and may well find a flag in
+    // its own region.
+    if (stopPos >= from && stopPos !== -1) return 'none';
+    // Every path that gets here was asked from behind the last hit and behind the last stop, so the
+    // scan resumes at the question's own position; nothing is re-walked, because the answers that
+    // would have needed re-walking are the two caches above.
+    scan.lastIndex = from;
     const m = scan.exec(source);
     if (m === null) {
       exhausted = true;
@@ -652,11 +680,11 @@ function makeMysqlPwKeywordScanner(source: string): (from: number) => MysqlPwAhe
       hitState = 'none';
       return 'none';
     }
-    scanFrom = scan.lastIndex;
     if (m[1] === undefined) {
       // Reached the end of the region pass 5b can cover before reaching any flag. Reported as
-      // `none`, which the caller answers with a mask; a later question positioned past this stop
-      // rescans from its own position.
+      // `none`, which the caller answers with a mask, and remembered as `stopPos` so the questions
+      // that sit behind the same stop do not walk back to it one at a time.
+      stopPos = m.index;
       hitPos = -1;
       hitState = 'none';
       return 'none';
