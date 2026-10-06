@@ -1438,6 +1438,14 @@ describe('regex-engine parity with jq (issue #90)', () => {
     // guard can see it; that residue is the pinned `over` row `token\u00e9token="a b"c`.
     ['pa\u017f\u017fword "open sesame passwd:"open sesame', 'pa\u017f\u017fword ***open sesame'],
     ['x pa\u017f\u017fword="a b"c d', 'x pa\u017f\u017fword=***c d'],
+    // The sentinel pasted DIRECTLY against a following keyword: the generic rule's value
+    // alternative matches `REDACT_SENTINEL` exactly, and the sentinel is all word
+    // characters, so a pass-6a match can END mid-word-run and the scan resumes inside
+    // that run. Issue #114's word-anchored lead had to keep admitting exactly that resume
+    // position - masking less here than the hooks would be the leak direction, bought for
+    // latency. Both engines mask both halves; verified against jq 1.7.1.
+    ['password=TLREDACTSENTINELtoken=x', 'password=***token=***'],
+    ['password=xTLREDACTSENTINELtoken=y', 'password=***'],
   ];
 
   /**
@@ -1830,5 +1838,53 @@ describe('regex-engine parity with jq (issue #90)', () => {
     assert.ok(out.includes('***'), 'nothing was masked, so the timing proves nothing');
     assert.ok(!out.includes('password=x'), `the trailing secret survived: ${JSON.stringify(out.slice(-40))}`);
     assert.ok(elapsed < 2000, `redact() took ${elapsed}ms on a ${input.length}-character command; the leading word affix has gone quadratic again`);
+  });
+
+  /**
+   * Latency guard for the ASCII side of that same affix (dynamic/throughline#114). The
+   * unbounded `\\w*` lead of pass 6a re-scanned the whole keyword alternation at every
+   * start position inside one long word run, and each keyword hit then re-scanned the
+   * suffix; the non-ASCII guard above cannot see this, because pass 6b's whole-string
+   * fast path skips ASCII input outright - so only a test like this pins 6a's cost.
+   * Measured on this machine BEFORE the lead was word-anchored: `'tokena'` x250 (1.5 KB)
+   * 289 ms and x1000 (6 KB) 17.7 s, `'my_token_value_'` x150 (2.25 KB) 370 ms and x600
+   * (9 KB) 24.0 s - a 4x-size scaling ratio of ~61-65, super-quadratic, and `redact()`
+   * runs in-process on the full unclamped bash command. After the anchor (a lookbehind
+   * at the match START plus the sentinel-resume re-admit, see `keywordLead6a`) both
+   * shapes stay in single-digit milliseconds at 4N. The absolute bound (500 ms) leaves
+   * post-fix runs ~50x of headroom and pre-fix runs overshoot it by more than 35x, so CI
+   * noise cannot flip the verdict; the ratio bound floors the denominator at 5 ms so sub-
+   * millisecond noise on the small timing cannot fail the test on its own either (the
+   * pre-fix 4x-size ratio is ~61-65 against a bound of 20). The inputs are the issue's
+   * own shapes ON PURPOSE: a long word run with no separator inside it (a base64-ish
+   * blob that happens to contain `token`) is what makes the unbounded lead try every
+   * start in the run; a trailing ` password=x` would NOT - the very first start then
+   * completes (lead to the last `token`, suffix to the run end, the space is the
+   * separator, the tail is the value) and the catastrophic scan never happens. The
+   * leading `password=x` masks without shortening the scan, so the timing still proves
+   * the keyword rule ran and masked.
+   */
+  it('stays linear on long ASCII word runs, which the unbounded keyword lead used to break', () => {
+    const timed = (input: string) => {
+      const started = process.hrtime.bigint();
+      const out = redact(input);
+      const ms = Number(process.hrtime.bigint() - started) / 1e6;
+      return { ms, out };
+    };
+    const shapes: readonly [string, number, number][] = [
+      ['tokena', 250, 1000],
+      ['my_token_value_', 150, 600],
+    ];
+    for (const [unit, n, fourN] of shapes) {
+      const small = timed('password=x ' + unit.repeat(n));
+      const big = timed('password=x ' + unit.repeat(fourN));
+      assert.strictEqual(small.out, 'password=*** ' + unit.repeat(n), `the ${JSON.stringify(unit)} x${n} input was not masked to exactly the expected output`);
+      assert.strictEqual(big.out, 'password=*** ' + unit.repeat(fourN), `the ${JSON.stringify(unit)} x${fourN} input was not masked to exactly the expected output`);
+      const ratio = big.ms / Math.max(small.ms, 5);
+      assert.ok(ratio < 20,
+        `redact() scaled ${ratio.toFixed(1)}x for a 4x-longer ${JSON.stringify(unit)} run (${small.ms.toFixed(1)}ms -> ${big.ms.toFixed(1)}ms); the keyword lead has gone super-linear again`);
+      assert.ok(big.ms < 500,
+        `redact() took ${big.ms.toFixed(1)}ms on a ${big.out.length}-character ASCII command; the unbounded keyword lead is back (issue #114)`);
+    }
   });
 });
