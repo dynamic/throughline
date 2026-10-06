@@ -505,8 +505,16 @@ tl_jq_redact_defs() {
   def _pem:
     gsub("-----BEGIN [A-Z ]*PRIVATE KEY-----[\\s\\S]*?-----END [A-Z ]*PRIVATE KEY-----"; "***private-key-redacted***")
     | gsub("-----BEGIN [A-Z ]*PRIVATE KEY-----[\\s\\S]*"; "***private-key-redacted***");
+  # The anchor is `//`, not `://`: a scheme-relative reference (`git clone
+  # //bob:hunter2@example.com/r`, a copy-pasted `//user:token@host/x`) still
+  # carries `user:password@`, and a credential in userinfo position is a
+  # credential whether or not a scheme precedes it. Scheme-ful URLs are
+  # unaffected - the `:` before `//` stays outside the match, so
+  # `https://user:pw@h` still becomes `https://user:***@h`. Widened for issue
+  # #115 to close the divergence with the OpenCode plugin's TypeScript port,
+  # which has always anchored on `//`.
   def _url:
-    gsub("(?<pfx>://[^:@/\\s]+):(?<pw>[^@/\\s]+)@"; "\(.pfx):\(M)@");
+    gsub("(?<pfx>//[^:@/\\s]+):(?<pw>[^@/\\s]+)@"; "\(.pfx):\(M)@");
   # Vendor prefixes are a maintained allowlist: add a rule when a real capture
   # shows a shape this set misses (issue #81). Keep every floor long enough
   # that an ordinary word/identifier cannot match it - these run over prompt

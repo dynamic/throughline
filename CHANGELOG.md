@@ -143,7 +143,7 @@ All notable changes to throughline are documented here. Format loosely follows
   `//` where jq's `_url` anchors on `://`, masking scheme-relative userinfo like
   `//user:pw@host` that the hooks leave verbatim - the anchor stays wide, because a
   credential in userinfo position is a credential, and closing it means widening `_url` in
-  the hooks. The generic keyword rule is quadratic in the length of a long unbroken run of
+  the hooks (that widening has since landed; see the issue #115 entry below). The generic keyword rule is quadratic in the length of a long unbroken run of
   text, on both engines, on the full unclamped bash command.
   (`.omp-plugin` never had this gap: its shim shells out to the same `hooks/*.sh` scripts.)
 - **Capture hook dropped every event on Windows** (issue #81 review): the jq program
@@ -197,6 +197,20 @@ All notable changes to throughline are documented here. Format loosely follows
   `xapp-config-generator`) are not masked. Remaining bare-flag gaps (e.g.
   `curl -u user:pass`) are unchanged and still rely on the handoff skill's
   re-scan.
+- **Scheme-relative URL credentials** (issue #115): `_url` in `hooks/_lib.sh`
+  anchored on `://`, so a credential in a scheme-relative reference was stored in
+  cleartext - `git clone //bob:hunter2@example.com/r` and a copy-pasted
+  `//user:token@host/x` both reached the capture hook as bash command text and were
+  written to the buffer verbatim, while the OpenCode plugin's TypeScript port
+  (anchored on `//`) masked them. The anchor is widened to `//` so both engines
+  mask the shape; scheme-ful URLs are unchanged, because the `:` before the `//`
+  stays outside the match and `https://user:pw@h` masks exactly as before. The two
+  `over` rows in `ENGINE_DIVERGENCES` that recorded this disagreement are deleted -
+  the differential test fails until both sides really do agree - and the inputs are
+  now asserted directly in `WIDER_THAN_JQ`, in the differential corpus, and as a hook
+  test in `tests/run.sh`. Not addressed, left open by the issue itself: userinfo
+  carrying an escaped `@`, and whether the password class should refuse a
+  scheme-looking tail (`//user:pw@@host`).
 
 ## [0.16.0]
 
