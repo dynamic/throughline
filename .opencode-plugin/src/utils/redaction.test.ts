@@ -1533,6 +1533,12 @@ describe('regex-engine parity with jq (issue #90)', () => {
       '//user:pw@host',
       'x//user:pw@host',
       'git clone //bob:hunter2@example.com/r',
+      // A `//`-reference that is not a URL at all, and one glued to the end of a
+      // scheme-ful URL: both mask on both engines, and neither matched before the
+      // anchor widened to `//`.
+      'a//b:c@d',
+      'http://REDACTED@h//v:q@w',
+      'file:///u:p@h',
       'token\u4e2d'.repeat(3) + ' 5>&1',
       'config: password="open sesame',
       'ghp_AbcDefGhiJklMnoPqrStuVwxYzaBcDefGhiJ',

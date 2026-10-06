@@ -204,9 +204,11 @@ All notable changes to throughline are documented here. Format loosely follows
   `//user:token@host/x` both reach the capture hook as bash command text, and
   the hooks wrote them to the buffer verbatim while the OpenCode plugin's
   TypeScript port (anchored on `//`) masked them. The anchor is widened to `//`
-  so both engines mask the shape; scheme-ful URLs are unchanged, because the `:`
-  before the `//` stays outside the match and `https://user:pw@h` masks exactly
-  as before. The two `over` rows in `ENGINE_DIVERGENCES` that recorded this
+  so both engines mask the shape; the common `scheme://user:pw@host` spelling is
+  unchanged, because the `:` before the `//` stays outside the match and
+  `https://user:pw@h` masks exactly as before. Two scheme-ful spellings gain a
+  mask, never lose one: `file:///u:p@h` (the old `://` anchor stopped at the third
+  slash) and a second `//v:q@w` reference glued to the end of a URL. The two `over` rows in `ENGINE_DIVERGENCES` that recorded this
   disagreement are deleted - the differential test fails until both sides really
   do agree - and the inputs are now asserted directly, in the differential
   corpus, and as a hook test in `tests/run.sh`. Not addressed, left open by the
