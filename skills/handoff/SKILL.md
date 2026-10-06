@@ -247,9 +247,12 @@ having to carry it. Omit the line entirely for a session that starts something n
      error the same as the skip-the-offer case above, not as "not ignored."
    - Otherwise, check `DATA/HANDOFF.md` and the new session log **independently**
      with `git check-ignore`. Offer to stage whichever of the two is NOT ignored;
-     if both are ignored, say so and skip the offer - nothing committable exists
+     if both are ignored, skip the offer silently - nothing committable exists
      (the default, local-only layout - including this repo's own dogfooded
-     `.claude/throughline/` - is itself gitignored, so this is the common case).
+     `.claude/throughline/` - is itself gitignored, so this is the common case, and
+     announcing a skipped optional offer on every handoff is filler). When only ONE
+     of the two is ignored, name the file being left out in a clause: a partial
+     staged set is the one case here that surprises the reader.
    - Stage **exactly** the not-ignored file(s) by their literal paths - `DATA/HANDOFF.md`
      and/or the specific `DATA/logs/handoff-YYYY-MM-DD-HHMM.md` just written this
      session. Never a glob like `logs/handoff-*.md` (it would sweep in older,
@@ -320,8 +323,10 @@ the file is currently under the 150/200-line target (see Phase 1 step 4 below).
   secret was caught, so check what's still readable around it, not just whether
   a mask is present. This is defense in depth, not the sole barrier.
 - **Report, then let the user review.** After writing, show the HANDOFF.md diff +
-  session-log path, then the copy-pasteable next-session briefing block, then the
-  commit/push offer. The review gate is post-write, not pre-write - commit/push is
-  the only action in this sequence that waits on an explicit go.
+  session-log path, then the copy-pasteable next-session briefing block, then -
+  only if something is committable (step 8) - the commit/push offer; with both
+  artifacts gitignored there is no offer to make and nothing to say about it. The
+  review gate is post-write, not pre-write - commit/push is the only action in
+  this sequence that waits on an explicit go.
 - **Buffers are the source of truth for *what happened*** — they don't lie about
   which commands ran or files changed, even after a long, compacted session.

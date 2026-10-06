@@ -75,6 +75,18 @@ All notable changes to throughline are documented here. Format loosely follows
   fixed-string flag, never substituted into a command string and never used to
   build a path.
 
+### Changed
+- **`handoff` no longer announces a skipped commit offer** (issue #80): Phase 4 step 8
+  told the agent to say so when both `DATA/HANDOFF.md` and the new session log turn out
+  to be gitignored, so every handoff of a default-layout project ended with a line about
+  a commit offer that did not happen - the step's own preamble already said the default
+  layout will "skip silently" and that "nothing offered" is not a bug, which the
+  announcement contradicted. Both-ignored now skips the offer silently, and the Reminders
+  "Report, then let the user review" bullet words the commit/push offer as conditional on
+  something being committable. Added for the narrower, genuinely surprising case: when
+  only one of the two artifacts is ignored the staged set is partial, so the skill now
+  names the file being left out.
+
 ### Fixed
 - **OpenCode plugin port of the issue #81 rules, plus a parity test** (issue #90):
   the OpenCode plugin carries its own TypeScript port of the jq redaction defs, and the
