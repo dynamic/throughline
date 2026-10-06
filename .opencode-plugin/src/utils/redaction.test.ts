@@ -2018,7 +2018,9 @@ describe('regex-engine parity with jq (issue #90)', () => {
    * jq, and the count of cells jq masks is asserted non-zero so a rule that stopped firing
    * altogether could not pass it.
    */
-  it('matches jq on a keyword that straddles a word-run boundary inside non-ASCII text', () => {
+  it('matches jq on a keyword that straddles a word-run boundary inside non-ASCII text', {
+    skip: JQ_PRESENT ? false : 'jq is not on PATH on this machine',
+  }, () => {
     const defs = jqDefs();
     const heads = ['token', 'password', 'api-key', 'access-key', 'client-id', 'api_key'];
     const affixes = ['', '\u6f22', '\u00e9'];

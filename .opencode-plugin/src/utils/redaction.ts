@@ -761,7 +761,17 @@ export function redact(str: string): string {
    * - one failure from that scan means none is left anywhere in the text, because every match
    * of the rule contains a keyword - and anchors each attempt where that keyword's ASCII word
    * prefix starts, the earliest start that could reach it. Both scans move strictly left to
-   * right, so the pass costs O(text) in total rather than O(run)^2.
+   * right and the walk-back runs only for an anchor that is still unset, so the DRIVER costs
+   * O(text).
+   * What it does not buy is linearity of the anchored attempt itself. The rule keeps jq's
+   * unbounded `\\w*` lead, and on one long ASCII word run carrying many keywords that lead still
+   * backs off character by character with the suffix re-walking the run at each hit - the cost
+   * pass 6a has too, and the reason `('token').repeat(k) + '\u00e9'` (the trailing character is what
+   * lets pass 6b run at all) takes 59ms at 10,001 characters and 917ms at 40,001 here against
+   * 29ms / 457ms for pass 6a alone. That is issue #114's remaining territory, not this issue's
+   * quadratic: the same 10,001-character input cost the review round 96s on `main` (its
+   * measurement; a local re-run of that figure did not finish inside its own timeout), where
+   * this branch takes 59ms, so the pass no longer adds a second quadratic on top of 6a.
    */
   const widenedWordPass = (text: string): string => {
     // `y` on top of `g` makes `lastIndex` an ANCHOR rather than a hint: the attempt either
@@ -807,14 +817,19 @@ export function redact(str: string): string {
       let scan: RegExpExecArray | null = keyword;
       while (scan !== null && scan.index < runEnd) {
         const keywordEnd = scan.index + scan[0].length;
-        let start = scan.index;
-        while (start > runStart && isAsciiWordChar(text.charCodeAt(start - 1))) start -= 1;
-        if (keywordEnd <= runEnd) {
-          if (inRunStart < 0) inRunStart = start;
-        } else if (acrossStart < 0) {
-          acrossStart = start;
+        const wantIn = keywordEnd <= runEnd;
+        // Walk back only for the anchor that is still missing. The walk-back is as long as
+        // the keyword's ASCII word prefix, so doing it at every occurrence of a long run
+        // would cost O(occurrences x run length) - quadratic again, and this loop is the one
+        // place in the pass that sees every occurrence. Occurrence order and walk-back order
+        // agree (a later occurrence's prefix starts no earlier than an earlier one's), so the
+        // FIRST occurrence of each kind is the earliest start of that kind.
+        if (wantIn ? inRunStart < 0 : acrossStart < 0) {
+          let start = scan.index;
+          while (start > runStart && isAsciiWordChar(text.charCodeAt(start - 1))) start -= 1;
+          if (wantIn) inRunStart = start; else acrossStart = start;
+          if (inRunStart >= 0 && acrossStart >= 0) break;
         }
-        if (inRunStart >= 0 && acrossStart >= 0) break;
         scan = keywords.exec(text);
       }
       // `scan` is the last occurrence examined if both anchors were filled, and the first
