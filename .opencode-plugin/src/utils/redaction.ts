@@ -560,90 +560,113 @@ const KEYWORD_CONTAINED = new RegExp("(?:" + KEYWORD_ALTERNATION + ")", "i");
 const MYSQL_ANCHOR_IN_VALUE = new RegExp(MYSQL_CLIENT);
 
 /**
- * Pass 5b's `-p` and the head of its value, enough to ask what that mask WOULD swallow. The
- * value head stops at whitespace and at the span's hard stops, so a captured value never reads
- * past the argument `_mysql_pw_all` masks - a newline included, since `\s` covers it. The SEARCH
- * for the `-p` is not line-bounded, in this pattern or in the scanner that consumes it: pass 5b is
- * a whole-string `gsub`, so a `-p` on a later line is a real mask, and a question asked about an
- * earlier line is answered about it too.
+ * Pass 5b's `-p` and the head of its value, enough to ask what that mask WOULD swallow. The lead is
+ * part of the pattern rather than decoration: pass 5b anchors on `MYSQL_LEAD` + `-p`, so a `-p` with
+ * no space or tab (or backslash-newline continuation) in front of it is part of a flag NAME, not a
+ * password - `--port 3306`, `--skip-pager`, `--protocol`. Matching the bare `-p` text instead asked
+ * the keyword question about `--port`'s `ort`, answered "not a keyword", left the client name for a
+ * pass that then masked `-ppassword` outright, and kept the secret: `©token mysql --port 3306
+ * -ppassword S3cretPw9X` leaked on the first version of this scanner while `jq` (with the hooks' own
+ * defs) and a build of `main` both masked it. The value head stops at whitespace and at the span's
+ * hard stops, so a captured value never reads past the argument `_mysql_pw_all` masks - a newline
+ * included, since `\s` covers it.
  */
-const MYSQL_PW_AHEAD = /-p["']?([^\s"'`;|&]+)/;
+const MYSQL_PW_AHEAD = new RegExp(MYSQL_LEAD + "(-p[\"']?[^\\s\"'`;|&]+)");
 
 /**
- * Would the MySQL mask this ambiguous-zone value is being preserved for swallow a KEYWORD?
- * (Review of dynamic/throughline#122, second round: the guard above was written as though
- * preserving the client name were always the safe move, and it is not.)
- *
- * `\u00a9token mysql -ppassword S3cretPw9X` is the input that says so. Where jq's boundary FIRES after
- * \u00a9 its Token rule eats `mysql` outright, `_mysql_pw_all` never anchors, and jq's generic
- * keyword rule then reads the glued `ppassword` as a keyword and masks the secret behind it:
- * `\u00a9Token *** -ppassword ***`. This port preserved `mysql` for pass 5b, pass 5b masked
- * `-ppassword` - a password that is also a keyword - and the generic rule was left with no
- * keyword to anchor on: `\u00a9token *** -p*** S3cretPw9X`, secret in cleartext, on an input `main`
- * masks. 288 such inputs in the review's 233,280-input fuzz, all of them this shape.
- *
- * So the deferral is conditional. Preserving the client name is right when pass 5b will mask a
- * NON-keyword password (`mysql -pS3cretPw`), because deleting `mysql` there deletes the only
- * anchor for a secret nothing else can see. It is wrong when the password is itself keyword-shaped:
- * masking it deletes a keyword the generic rule needs, and the generic rule can reach that secret
- * on its own - which is what it does under the boundary-fires reading, and under the
- * boundary-refuses reading it masks MORE than jq (jq's own pass 5b ate `password` there and left
- * `S3cretPw9X` in the clear), which is the accepted direction of this zone.
- *
- * THE SCAN IS BOUND BY AMORTISATION, NOT BY A WINDOW, and the window it replaced leaked. The first
- * version of this guard sliced `source.slice(from, from + 4096)` per ambiguous match, which is what
- * made the pass O(matches x window): `\u00e9token mysql ` repeated 26,000 times measured 238 s against
- * `main`'s 16 ms, and `redact()` runs in-process on the whole unclamped bash command. Trimming the
- * window to 4096 code units fixed the time and silently created a LEAK: the -p beyond the window is
- * invisible, the guard answers "no", the client name is preserved for pass 5b, and pass 5b masks a
- * keyword password - the exact failure this guard exists to prevent. Measured on this branch before
- * the scan below replaced it, `\u00a9token mysql ` + 5,000 `x` + ` -ppassword S3cretPw9X`: the secret
- * SURVIVES here, while `jq` (with the hooks' own defs) and a build of `main` both mask it. Same at
- * 100,000 filler characters. So a bound that trades masking for time is not an option in this zone;
- * the bound has to be in the work, not in the distance.
- *
- * This factory is that bound: one forward scan of `source` for the whole Token pass, resumed from
- * where the last scan stopped, because the positions asked about only move right (the ambiguous
- * matches are executed left to right and the walk only advances). One `-p` found ahead is cached and
- * reused by every question whose position sits before it; a line with no `-p` anywhere costs a single
- * scan and then answers from the `exhausted` flag. Total regex work is O(source) per pass instead of
- * O(matches x window), and no `-p` is ever out of range. Widening the visible distance only ever
- * turns a "defer" into a "mask", never the reverse, so this masks MORE than the windowed version
- * wherever the two differ - the safe direction, and the reason the pinned `over` rows absorb it
- * rather than a new leak row.
- *
- * What it does NOT change: the search is not line-bounded, so on a multi-line command the `-p` it
- * finds may sit on a later line than the client name that motivated the question (the windowed
- * version had the same property, just a shorter reach). Pass 5b is a whole-string `gsub`, so a later
- * line's client-anchored mask is real, and the direction here is still to mask.
+ * The characters that end the region pass 5b's span can reach from a client name: a shell command
+ * separator or a newline. A `-p` behind one of those sits behind a mask 5b will never anchor on, so
+ * answering the keyword question about it protects nothing - which is why the scanner stops here
+ * instead of scanning on to the end of the string.
  */
-function makeMysqlPwKeywordScanner(source: string): (from: number) => boolean {
-  const scan = new RegExp(MYSQL_PW_AHEAD.source, "g");
+const MYSQL_PW_STOP = /[;|&\r\n]/;
+
+/**
+ * Which of three things sits ahead of an ambiguous-zone client name, as seen from position `from`.
+ * (Review of dynamic/throughline#122, second round wrote the first version of this as a two-valued
+ * question - "would 5b swallow a keyword?" - as though preserving the client name were always the
+ * safe move. It is not, in either of two directions.)
+ *
+ * `\u00a9token mysql -ppassword S3cretPw9X` is the input that made it three-valued-ish to begin with.
+ * Where jq's boundary FIRES after \u00a9 its Token rule eats `mysql` outright, `_mysql_pw_all` never
+ * anchors, and jq's generic keyword rule reads the glued `ppassword` as a keyword and masks the
+ * secret behind it: `\u00a9Token *** -ppassword ***`. This port preserved `mysql` for pass 5b, pass 5b
+ * masked `-ppassword` - a password that is also a keyword - and the generic rule was left with no
+ * keyword to anchor on: `\u00a9token *** -p*** S3cretPw9X`, secret in cleartext, on an input `main`
+ * masks. 288 such inputs in the review's 233,280-input fuzz, all of them this shape. So a
+ * keyword-shaped password ahead is answered by MASKING the client name (`eats-keyword`), which is
+ * what the boundary-fires reading masks and, on the boundary-refuses side, more than jq - the
+ * accepted direction of this zone.
+ *
+ * `none` is the third answer, and it is a mask for the opposite reason: when no `-p` that pass 5b
+ * could reach lies ahead (none before a `MYSQL_PW_STOP`, or none at all), keeping the client name
+ * intact buys nothing - there is no 5b mask to protect - while the cost is real. `\u00e9token mysql `
+ * repeated 26,000 times has no `-p` anywhere, so every `mysql` was left standing for pass 5b, which
+ * retried its line-long span from each of the 26,000 client names: 155 s on this branch against
+ * 3 ms on `main` (`redactMysqlPw` accounted for all of it; the same class shape `mysql ` repeated
+ * 4,000 times costs 1.6 s on `main` too, so the span's cost predates this PR - what is new is this
+ * branch routing a whole class of input into it). Masking the client name here is what `main`'s
+ * single `\b` rule did at pass 3, so `none` goes back to the older, cheaper behaviour and masks no
+ * less.
+ *
+ * THE SCAN IS BOUND BY AMORTISATION AND BY REACH, NOT BY A WINDOW, and the window it replaced
+ * leaked. The first version sliced `source.slice(from, from + 4096)` per ambiguous match - that was
+ * the O(matches x window) cost - and past 4096 code units the `-p` was invisible, so the guard
+ * answered "5b will not swallow a keyword", the client name was preserved, and 5b masked a keyword
+ * password: `\u00a9token mysql ` + 5,000 `x` + ` -ppassword S3cretPw9X` kept its secret, and so did the
+ * same at 100,000 filler and at 4,100 (just past the bound), while `jq` and a build of `main` mask
+ * all three. A bound that trades masking for time is not an option in this zone, so the bound is in
+ * the work: one forward scan for the whole Token pass, resumed where the last scan stopped, because
+ * the positions asked about only move right. A hit ahead of the question is cached and reused; a
+ * region with nothing to find is scanned once and answered from the `exhausted` flag. Total regex
+ * work is O(source) per Token pass instead of O(matches x window).
+ *
+ * Two things this deliberately does NOT do. It does not restart the scan at a `MYSQL_PW_STOP` for a
+ * question positioned BEFORE the stop (that question's own region really has no reachable flag, which
+ * is the `none` answer), and it does not reset the `exhausted` flag at a stop, because a question
+ * positioned past the stop rescans from its own position and can still find a flag in its own region
+ * - so `exhausted` means "nothing ahead of the furthest point scanned", which is all the callers ask.
+ */
+type MysqlPwAhead = 'none' | 'safe-to-defer' | 'eats-keyword';
+
+function makeMysqlPwKeywordScanner(source: string): (from: number) => MysqlPwAhead {
+  // One alternation, so "which comes first" is answered by the match itself rather than by two
+  // searches that could disagree: either a flag pass 5b could anchor on, or the end of the region
+  // that flag could reach.
+  const scan = new RegExp(MYSQL_PW_AHEAD.source + "|[" + MYSQL_PW_STOP.source.slice(1, -1) + "]", "g");
   let hitPos = -1;
-  let hitKeyword = false;
+  let hitState: MysqlPwAhead = 'none';
   let scanFrom = 0;
   let exhausted = false;
-  return function mysqlMaskWouldEatKeyword(from: number): boolean {
-    // A cached `-p` still ahead of the question answers it; the pattern cannot match zero width
-    // (its own literal is two characters), so `scanFrom` always advances and a null result is
-    // final for every later question.
-    if (hitPos >= from && hitPos !== -1) return hitKeyword;
-    if (exhausted) return false;
+  return function mysqlPwAhead(from: number): MysqlPwAhead {
+    // A cached flag still ahead of the question answers it. Neither alternative can match zero
+    // width (the first carries its lead and the `-p`, the second is one character), so `exec`
+    // always advances and a null result is final for every question asked from behind it.
+    if (hitPos >= from && hitPos !== -1) return hitState;
+    if (exhausted) return 'none';
     scan.lastIndex = hitPos >= from ? scanFrom : from;
     const m = scan.exec(source);
     if (m === null) {
       exhausted = true;
       hitPos = -1;
-      hitKeyword = false;
-      return false;
+      hitState = 'none';
+      return 'none';
+    }
+    scanFrom = scan.lastIndex;
+    if (m[1] === undefined) {
+      // Reached the end of the region pass 5b can cover before reaching any flag. Reported as
+      // `none`, which the caller answers with a mask; a later question positioned past this stop
+      // rescans from its own position.
+      hitPos = -1;
+      hitState = 'none';
+      return 'none';
     }
     hitPos = m.index;
-    hitKeyword = KEYWORD_CONTAINED.test(m[1]);
-    scanFrom = hitPos + 1;
-    return hitKeyword;
+    // The capture carries its lead and the `-p` itself; the value is the part 5b would replace.
+    hitState = KEYWORD_CONTAINED.test(m[1].replace(/^[ \t]?-p["']?/, '')) ? 'eats-keyword' : 'safe-to-defer';
+    return hitState;
   };
 }
-
 
 /**
  * The two anchors the Token-scheme word rule is split across, and why one rule became two
@@ -685,9 +708,10 @@ function makeMysqlPwKeywordScanner(source: string): (from: number) => boolean {
  * `_mysql_pw_all` anchors on (`MYSQL_ANCHOR_IN_VALUE`). The client-name half of that sentence is
  * CONDITIONAL, and this comment used to state it unconditionally while the 288-input
  * keyword-password class disproved it: preserving the client name is only the safe move while pass
- * 5b masks a password that is not itself a keyword, so `makeMysqlPwKeywordScanner` is asked which
- * one it is and the mask goes ahead over the client name when 5b would swallow a keyword (see that
- * function and `mysqlMaskWouldEatKeyword`'s use sites below). Where jq's `\b` refuses (\u00fc, \u00e9, \u0663,
+ * 5b masks a password that is not itself a keyword AND can reach it, so `makeMysqlPwKeywordScanner`
+ * is asked which of three things lies ahead and the mask goes ahead over the client name both when
+ * 5b would swallow a keyword and when 5b can reach no flag at all (see that function and the
+ * `mysqlPwAhead` use sites below). Where jq's `\b` refuses (\u00fc, \u00e9, \u0663,
  * \u4e2d: letters and digits in Unicode terms) and the walked run stops at a pair the generic rule
  * can still reach, the output is jq's byte for byte. It is NOT byte for byte in general, and this
  * comment used to claim it was: when the value behind the copula is itself a keyword the mask
@@ -764,35 +788,40 @@ function maskAmbiguousTokenZone(source: string): string {
   let out = "";
   let cursor = 0;
   // One forward `-p` scan for this whole pass, not one per question - see
-  // `makeMysqlPwKeywordScanner` for why the bound cannot be a window.
-  const mysqlMaskWouldEatKeyword = makeMysqlPwKeywordScanner(source);
+  // `makeMysqlPwKeywordScanner` for why the bound can be neither a window nor unbounded work.
+  const mysqlPwAhead = makeMysqlPwKeywordScanner(source);
   ambiguous.lastIndex = 0;
   let match: RegExpExecArray | null;
   while ((match = ambiguous.exec(source)) !== null) {
     const { k, s, v } = match.groups as { k: string; s: string; v: string };
     if (v === REDACT_SENTINEL) continue;
-    // The value is a later rule's anchor: mask nothing here and let `_mysql_pw_all` have it -
-    // unless that mask would swallow a keyword, which is the case the guard cannot defer in.
+    // The value is a later rule's anchor: mask nothing here and let `_mysql_pw_all` have it - but
+    // only when that pass has something it can actually reach to mask, and only when what it masks
+    // is not a keyword.
     let end = match.index + match[0].length;
-    // Both halves of the client-name question at once: defer, or mask and walk. Deferring is
-    // right when pass 5b masks a NON-keyword password; when it would swallow a keyword, masking
-    // the client name here is what leaves the generic rule an anchor - and the run behind it has
-    // to be walked too, because the same consumption problem sits one word further right
-    // (`\u00a9token is mysql -ptoken password S3cretPw9X`: the generic rule masks `-ptoken`'s value
-    // `password` and the real secret behind it survives, while jq masked `-ptoken` at 5b and kept
-    // `password` intact as a keyword).
-    const walksAsKeyword =
-      KEYWORD_CONTAINED.test(v) ||
-      (MYSQL_ANCHOR_IN_VALUE.test(v) && mysqlMaskWouldEatKeyword(end));
-    if (MYSQL_ANCHOR_IN_VALUE.test(v) && !walksAsKeyword) continue;
+    const clientName = MYSQL_ANCHOR_IN_VALUE.test(v);
+    // Three answers, not two (see `makeMysqlPwKeywordScanner`): deferring is right only when pass
+    // 5b has a REACHABLE, NON-keyword password in front of it. When it would swallow a keyword the
+    // mask has to happen here, because deleting that keyword is what leaves the generic rule no
+    // anchor - and the run behind it has to be walked too, because the same consumption problem
+    // sits one word further right (`\u00a9token is mysql -ptoken password S3cretPw9X`: the generic rule
+    // masks `-ptoken`'s value `password` and the real secret behind it survives, while jq masked
+    // `-ptoken` at 5b and kept `password` intact as a keyword). When 5b can reach no flag at all
+    // (`none`), deferring protects nothing and leaves the client name standing for 5b's span to
+    // retry - which is the 155 s on `\u00e9token mysql ` repeated 26,000 times, where `main` masked the
+    // name at pass 3 in milliseconds. So `none` masks here, like `main` did, and does not walk.
+    const ahead = clientName ? mysqlPwAhead(end) : 'safe-to-defer';
+    if (clientName && ahead === 'safe-to-defer') continue;
+    const walksAsKeyword = KEYWORD_CONTAINED.test(v) || (clientName && ahead === 'eats-keyword');
     if (walksAsKeyword) {
       KEYWORD_PAIR_STICKY.lastIndex = end;
       let pair: RegExpExecArray | null;
       while ((pair = KEYWORD_PAIR_STICKY.exec(source)) !== null) {
         // Same guard one pair further right: the walk masks a RUN, and a run that swallows a
         // client name starves pass 5b exactly as the single-pair mask above would. It stops
-        // BEFORE this pair rather than over it, so the client name stays on the line.
-        if (MYSQL_ANCHOR_IN_VALUE.test(pair[1]) && !mysqlMaskWouldEatKeyword(KEYWORD_PAIR_STICKY.lastIndex)) break;
+        // BEFORE this pair rather than over it, so the client name stays on the line - but only
+        // while 5b still has a reachable flag of its own to mask past here.
+        if (MYSQL_ANCHOR_IN_VALUE.test(pair[1]) && mysqlPwAhead(KEYWORD_PAIR_STICKY.lastIndex) === 'safe-to-defer') break;
         end = KEYWORD_PAIR_STICKY.lastIndex;
         if (!KEYWORD_CONTAINED.test(pair[1])) break;
         KEYWORD_PAIR_STICKY.lastIndex = end;

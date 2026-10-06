@@ -1742,6 +1742,13 @@ describe('regex-engine parity with jq (issue #90)', () => {
       // The same distance inside a WALKED run: the client-name pair sits behind a keyword pair, so
       // this is the in-walk call site, not the first-match one.
       '\u00a0token is password ' + beyond(4100),
+      // And the same distance behind a flag whose NAME contains `-p`: `--port`, `--port=`,
+      // `--skip-pager`. The first version of the scan matched the `-p` inside those names, read
+      // `ort` as "not a keyword", deferred the client name to a pass that masks no flag with a lead
+      // in front of it, and 5b then masked `-ppassword` outright.
+      '\u00a9token mysql --port 3306 -ppassword ' + secret,
+      '\u00a9token mysql --port=3306 -ppassword ' + secret,
+      '\u00a9token mysql --skip-pager -ppassword ' + secret,
     ];
     for (const input of inputs) {
       const out = redact(input);
@@ -1752,6 +1759,29 @@ describe('regex-engine parity with jq (issue #90)', () => {
     // 5b mask of the keyword password is gone with it, and the generic rule then masks the secret
     // behind `-ppassword` - which is precisely the ordering the windowed guard destroyed.
     assert.strictEqual(redact(beyond(4100)), '\u00a9token *** -ppassword ***');
+    assert.strictEqual(redact('\u00a9token mysql --port 3306 -ppassword ' + secret), '\u00a9token *** 3306 -ppassword ***');
+    assert.strictEqual(redact('\u00a9token mysql --skip-pager -ppassword ' + secret), '\u00a9token *** -ppassword ***');
+  });
+
+  /**
+   * A client name with no reachable flag ahead of it is masked at pass 3, not preserved: pass 5b
+   * has nothing to anchor on, so preserving it protects no secret and costs its span. `\u00e9token
+   * mysql ` repeated is the shape - no `-p` anywhere - and the same run with one `-p` behind a `;`
+   * is the mirror, because the span cannot cross a command separator to reach it. Both were 155 s
+   * / 3.7 s on this branch against 3 ms on `main` when the guard deferred unconditionally.
+   */
+  it('masks a client name with no flag pass 5b could reach, instead of leaving it for 5b to retry', () => {
+    for (const input of [
+      '\u00e9token mysql '.repeat(40) + 'done',
+      '\u00e9token mysql '.repeat(40) + '; ls -pX',
+      '\u00e9token mysql '.repeat(40) + '\n-pS3cretPw9 elsewhere',
+    ]) {
+      const out = redact(input);
+      assert.ok(!out.includes('mysql'), `the client name survived with nothing for 5b to mask: ${JSON.stringify(out.slice(0, 60))}`);
+      assert.ok(out.includes('***'), `nothing was masked at all: ${JSON.stringify(out.slice(0, 60))}`);
+    }
+    assert.strictEqual(redact('\u00e9token mysql done'), '\u00e9token *** done');
+    assert.strictEqual(redact('\u00e9token mysql ; ls -pX'), '\u00e9token *** ; ls -pX');
   });
 
   /**
@@ -1763,12 +1793,25 @@ describe('regex-engine parity with jq (issue #90)', () => {
    */
   it('scans for the MySQL -p once per pass instead of once per client name, on a long run of them', () => {
     const input = ('\u00a9token mysql ' + 'x'.repeat(100) + ' ').repeat(1000) + '-ppassword S3cretPw9X';
+    // The two shapes the guard used to route into pass 5b: no `-p` at all, and one `-p` past a
+    // command separator that 5b's span cannot cross. Without masking the client names at pass 3,
+    // 5b retried its line-long span from each of them - quadratic, 155 s at 26,000 repeats.
+    const noFlag = '\u00e9token mysql '.repeat(20000);
+    const flagPastSeparator = '\u00e9token mysql '.repeat(8000) + '; ls -pX';
     const started = Date.now();
     const out = redact(input);
     const elapsed = Date.now() - started;
     assert.ok(out.includes('***'), 'nothing was masked, so the timing proves nothing');
     assert.ok(!out.includes('S3cretPw9X'), `the trailing secret survived: ${JSON.stringify(out.slice(-40))}`);
     assert.ok(elapsed < 4000, `redact() took ${elapsed}ms on a ${input.length}-character command; the -p scan is per client name again`);
+    for (const [name, s] of [['no -p anywhere', noFlag], ['-p past a ;', flagPastSeparator]] as const) {
+      const t0 = Date.now();
+      const masked = redact(s);
+      const ms = Date.now() - t0;
+      assert.ok(masked.includes('***'), `${name}: nothing was masked, so the timing proves nothing`);
+      assert.ok(!masked.includes('mysql'), `${name}: a client name with no reachable flag survived to pass 5b`);
+      assert.ok(ms < 4000, `${name}: redact() took ${ms}ms on a ${s.length}-character command; pass 5b is being handed ${name} again`);
+    }
   });
 
   /**
