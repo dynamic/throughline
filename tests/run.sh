@@ -272,6 +272,20 @@ hasnt "URL credential with no nearby keyword is not stored" "$PLAIN_LINE" 'hunte
 hasnt "internal sentinel never leaks into the buffer" "$PLAIN_LINE" 'TLREDACTSENTINEL'
 has   "URL host/path is preserved" "$PLAIN_LINE" 'example.com/data'
 
+# 2e9b. issue #115: a scheme-relative reference (`git clone
+#       //bob:hunter2@example.com/r`, a copy-pasted `//user:token@host/x`) has
+#       its userinfo masked by `_url` exactly like a scheme-ful URL does - the
+#       anchor is `//`, so a credential in userinfo position is a credential
+#       whether or not a scheme precedes it. The host/path survive, and the
+#       internal sentinel the rule hands the generic pass is converted, not
+#       left in the buffer.
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"relclone","command":"git clone //bob:hunter2@example.com/r"}}'
+REL_LINE=$(grep relclone "$BUF/session-T.md")
+hasnt "scheme-relative URL credential is not stored" "$REL_LINE" 'hunter2'
+has   "scheme-relative userinfo is masked in place" "$REL_LINE" '//bob:***@example.com/r'
+has   "scheme-relative URL path is preserved" "$REL_LINE" 'example.com/r'
+hasnt "internal sentinel never leaks for scheme-relative userinfo" "$REL_LINE" 'TLREDACTSENTINEL'
+
 # 2e10. issue #15: a quoted secret value ("...") is fully masked with NO
 #       orphaned trailing quote left in the output - the value-capture group
 #       used to optionally consume a LEADING quote but never a matching

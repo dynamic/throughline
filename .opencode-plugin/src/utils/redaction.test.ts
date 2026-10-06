@@ -1251,17 +1251,10 @@ const ENGINE_DIVERGENCES: readonly {
     direction: 'over',
     note: 'Co (private use): no Unicode property resolves this one either way, which is the honest limit of any attempt to spell the Oniguruma word set out in JS.',
   },
-  // The URL userinfo anchor. jq's `_url` requires a scheme (`://`); this port anchors on
-  // `//`, so a scheme-relative reference is masked here and left verbatim by jq. Chosen
-  // direction: `hunter2` in userinfo position is a password in any reading, and the
-  // shipped plugin masks these two today - narrowing the anchor to reach jq's text would
-  // have been an un-redaction, not a parity fix. Widening jq's `_url` is the way to close
-  // them, in the hooks repo, not by removing a mask here.
-  {
-    input: '//user:pw@host',
-    direction: 'over',
-    note: 'Scheme-relative userinfo: jq\'s `_url` anchors on `://` and leaves this verbatim; the port anchors on `//` and masks the password. Deliberate, and the direction is pinned - if it ever flips, a credential the shipped plugin masks is being stored in cleartext.',
-  },
+  // Scheme-relative userinfo (`//user:pw@host`, `x//user:pw@host`) is NOT a divergence:
+  // both engines anchor on `//` and mask it (jq's `_url` since issue #115). It is asserted
+  // directly in `SCHEME_RELATIVE_USERINFO` below and carried in the differential corpus,
+  // so a mask dropped on either side fails a test.
   {
     // Same `` mechanism as the two `under` rows before it, on the Token-scheme word rule
     // instead of the SendGrid or MySQL ones, and OLD: `main` leaks this input byte-for-byte
@@ -1272,11 +1265,6 @@ const ENGINE_DIVERGENCES: readonly {
     jq: '\u00fcTOKEN i\u017f ***\nnext line',
     ts: '\u00fcToken *** YWJjZGVmZ2hpamts\nnext line',
     note: 'LEAK: Oniguruma\'s `\b` refuses to anchor after \u00fc, so jq\'s Token-scheme rule never fires and its generic rule masks the value; JS\'s ASCII-only `\b` does fire, the Token rule eats `TOKEN i\u017f` and writes `Token ***`, and the value survives. The plain-ASCII copula (`\u00fcTOKEN is <value>`) diverges identically. Pre-existing on `main`, same class as the two rows above: an over-match at a `\b` the other engine does not have.',
-  },
-  {
-    input: 'x//user:pw@host',
-    direction: 'over',
-    note: 'Same rule, same direction, with the anchor mid-token rather than at the start of the input, so the `//` anchor is pinned in both positions.',
   },
   // Pass 6b re-runs the generic rule over text pass 6a already rewrote, and a guard on the
   // keyword alone cannot see every case of that. When a keyword carries a non-ASCII
@@ -1453,20 +1441,19 @@ describe('regex-engine parity with jq (issue #90)', () => {
   ];
 
   /**
-   * The one place this port masks MORE than jq by design, asserted directly rather
-   * than only through the jq-differential test (which skips where jq is absent): the
-   * userinfo anchor is `//`, jq's `_url` anchor is `://`. Pinned as `over` rows in
-   * `ENGINE_DIVERGENCES` too, so the differential test fails if the direction ever
-   * flips - a flipped row here means a credential the shipped plugin masks today is
-   * being stored in cleartext.
+   * Scheme-relative userinfo: a credential in `//user:password@host` position is
+   * masked with no scheme in front of the `//`. Asserted directly, and not only
+   * through the jq-differential test, because that one skips where `jq` is absent -
+   * without these lines the mask would be unproven on a machine with no second
+   * engine. Both engines anchor on `//` (jq's `_url` since issue #115).
    */
-  const WIDER_THAN_JQ: readonly [string, string][] = [
+  const SCHEME_RELATIVE_USERINFO: readonly [string, string][] = [
     ['//user:pw@host', '//user:***@host'],
     ['x//user:pw@host', 'x//user:***@host'],
   ];
 
-  for (const [input, expected] of WIDER_THAN_JQ) {
-    it(`masks ${JSON.stringify(input)}, which jq leaves verbatim (pinned over-redaction)`, () => {
+  for (const [input, expected] of SCHEME_RELATIVE_USERINFO) {
+    it(`masks scheme-relative userinfo in ${JSON.stringify(input)}`, () => {
       assert.strictEqual(redact(input), expected);
     });
   }
@@ -1544,6 +1531,14 @@ describe('regex-engine parity with jq (issue #90)', () => {
       'echo mynpm_AbCdEfGh1234567890AbCdEfGh123456',
       'https://user:password@example.com/path',
       '//user:pw@host',
+      'x//user:pw@host',
+      'git clone //bob:hunter2@example.com/r',
+      // A `//`-reference that is not a URL at all, and one glued to the end of a
+      // scheme-ful URL: both mask on both engines, and neither matched before the
+      // anchor widened to `//`.
+      'a//b:c@d',
+      'http://REDACTED@h//v:q@w',
+      'file:///u:p@h',
       'token\u4e2d'.repeat(3) + ' 5>&1',
       'config: password="open sesame',
       'ghp_AbcDefGhiJklMnoPqrStuVwxYzaBcDefGhiJ',

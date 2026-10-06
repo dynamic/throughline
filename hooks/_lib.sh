@@ -505,8 +505,16 @@ tl_jq_redact_defs() {
   def _pem:
     gsub("-----BEGIN [A-Z ]*PRIVATE KEY-----[\\s\\S]*?-----END [A-Z ]*PRIVATE KEY-----"; "***private-key-redacted***")
     | gsub("-----BEGIN [A-Z ]*PRIVATE KEY-----[\\s\\S]*"; "***private-key-redacted***");
+  # The anchor is `//`, not `://`: a scheme-relative reference (`git clone
+  # //bob:hunter2@example.com/r`, a copy-pasted `//user:token@host/x`) still
+  # carries `user:password@`, and a credential in userinfo position is a
+  # credential whether or not a scheme precedes it. Scheme-ful URLs are
+  # unaffected - the `:` before `//` stays outside the match, so
+  # `https://user:pw@h` still becomes `https://user:***@h`. Widened for issue
+  # #115 to close the divergence with the OpenCode plugin's TypeScript port,
+  # which has always anchored on `//`.
   def _url:
-    gsub("(?<pfx>://[^:@/\\s]+):(?<pw>[^@/\\s]+)@"; "\(.pfx):\(M)@");
+    gsub("(?<pfx>//[^:@/\\s]+):(?<pw>[^@/\\s]+)@"; "\(.pfx):\(M)@");
   # Vendor prefixes are a maintained allowlist: add a rule when a real capture
   # shows a shape this set misses (issue #81). Keep every floor long enough
   # that an ordinary word/identifier cannot match it - these run over prompt
@@ -818,6 +826,15 @@ tl_jq_redact_defs() {
   # _pem, _url, _prefix_tokens, and _auth_scheme_prose (Bearer/Token/Basic,
   # each length-gated) - things that are never accidentally spelled by an
   # English sentence.
+  #
+  # `_url` is the one of those four that can fire on ordinary text: its anchor is
+  # `//`, so a line carrying `//word:...@` with no space after the slashes - a
+  # `//TODO:fix@later` comment, a `//see:x@y` note - has its `:...@` value masked
+  # on this path too. A space after the slashes (`// see:x@y`) stops the match, so
+  # ordinary prose that merely starts a sentence with `// ` is left alone.
+  # Accepted: the mask replaces only the password run, the prose around it
+  # survives, and the alternative is an unmasked credential in a scheme-relative
+  # URL.
   #
   # Deliberately DOES NOT include a generic keyword+separator rule (unlike
   # `redact`, which has one for the command path). Three rounds of trying to
