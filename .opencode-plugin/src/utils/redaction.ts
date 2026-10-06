@@ -581,7 +581,8 @@ export function redact(str: string): string {
   //
   // `\\w` is re-spelled as TWO passes rather than one widened rule, and the order is
   // the whole point of the shape:
-  //   pass 6a - JS's own ASCII `\\w*` affixes, which is jq's text verbatim;
+  //   pass 6a - JS's own ASCII `\\w*` affixes, jq's text except that the LEAD is word-
+  //             anchored for latency (see `keywordLead6a` below, dynamic/throughline#114);
   //   pass 6b - the same rule with Oniguruma's word set over-approximated on the
   //             SUFFIX only (`JS_WORD_STAR`), so `password\u00e9=S3cret`, where jq's `\\w*`
   //             walks over the accent but JS's stops, the separator alternatives cannot
@@ -616,6 +617,37 @@ export function redact(str: string): string {
   // different class of difference: there even an over-approximation can land on the leaking
   // side, so those stay pinned as divergences too - see ENGINE_DIVERGENCES in
   // redaction.test.ts.
+  // Pass 6a's LEAD is word-anchored rather than the bare `\\w*` jq writes, and this is
+  // the latency fix for dynamic/throughline#114. The shape is load-bearing in both
+  // directions, each pinned by a test:
+  //   - the lookbehind goes BEFORE the lead's `\\w*` (at the start position), not between
+  //     the lead and the keyword - a lookbehind at the KEYWORD position cannot see how far
+  //     the lead got, so it blocks a mid-run keyword that no run-start keyword can grow
+  //     into (`xtoken=v`: `x` is not a keyword, and `(?<=..)` at `token` sees the `x` that
+  //     the lead just consumed as if the match started there), and would mask LESS than
+  //     the jq hooks;
+  //   - at the start position it costs no mask: the unbounded lead tried every start
+  //     inside a long word run, each try re-scanning the keyword alternation, and each
+  //     keyword hit then re-scanned the suffix, so the rule was super-linear in the run
+  //     length - `redact('tokena'.repeat(1000))` measured 17.7 s here before the anchor
+  //     (the issue's machine: 34.6 s; the released plugin on jq: 17.3 s, so this port
+  //     roughly doubled jq) and is milliseconds after it. Every start inside one word run
+  //     that can complete produces the SAME masked output: the keyword group's suffix
+  //     always runs to the end of the run (each separator alternative starts with
+  //     whitespace, `:` or `=`, none of which is a word character, so the separator can
+  //     only match at the run end) and the replacement writes the keyword group back
+  //     verbatim - so the run start reproduces exactly what a mid-run start would write,
+  //     and no mid-run start can complete where the run start fails, because the lead at
+  //     the run start can cover whatever a mid-run lead covered.
+  // The one resume position that is NOT a run start: the value alternative can match
+  // `REDACT_SENTINEL` exactly, and the sentinel is all word characters, so the old scan
+  // could end a match mid-run and resume right after it, masking what followed
+  // (`password=TLREDACTSENTINELtoken=x` -> `password=***token=***` on BOTH engines).
+  // The second lookbehind re-admits exactly that resume position; a latency fix does not
+  // get to mask less than the jq hooks. Pass 6b keeps the unbounded lead: its own
+  // quadratic path on non-ASCII runs is dynamic/throughline#118's, and its fast-path
+  // gate below means ASCII input never pays for it.
+  const keywordLead6a = "(?:(?<!\\w)|(?<=" + REDACT_SENTINEL + "))\\w*";
   const keywordPattern = (lead: string, suffix: string) =>
     "(" + lead + "(?:" + KEYWORD_ALTERNATION + ")" + suffix + ")" +
       "(" + JS_WS + "*[:=]" + JS_WS + "*|" + JS_WS + "+(?:" + SEPARATOR_ALTERNATION + ")" + JS_WS + "+|" + JS_WS + "+)" +
@@ -629,7 +661,7 @@ export function redact(str: string): string {
     return `${keyword}${sep}***`;
   };
 
-  result = result.replace(new RegExp(keywordPattern("\\w*", "\\w*"), "gi"), keywordReplacement);
+  result = result.replace(new RegExp(keywordPattern(keywordLead6a, "\\w*"), "gi"), keywordReplacement);
   /**
    * Pass 6b's guard: mask a match only where the keyword is one pass 6a's keyword group
    * COULD NOT have matched. Two tests, because one is not enough:
@@ -660,9 +692,11 @@ export function redact(str: string): string {
       : match;
   // And the whole-string test is a fast path over that same rule rather than a second
   // condition: with no non-ASCII character in the text, no keyword group can carry one, so
-  // every match pass 6b could see would be returned unchanged. It is here for cost - this
-  // rule is quadratic in the length of a long unbroken run on both engines
-  // (dynamic/throughline#114), the command path runs it on the full unclamped bash command,
+  // every match pass 6b could see would be returned unchanged. It is here for cost - the
+  // WIDENED rule is still quadratic in the length of a long unbroken non-ASCII run on both
+  // engines (dynamic/throughline#118; the ASCII side of that measurement,
+  // dynamic/throughline#114, was fixed by anchoring pass 6a's lead above), the command
+  // path runs it on the full unclamped bash command,
   // and a pasted base64 blob is ASCII, so running the widened pass at all would double the
   // cost of the common case for an output that cannot differ.
   if (/[^\x00-\x7f]/.test(result)) {
