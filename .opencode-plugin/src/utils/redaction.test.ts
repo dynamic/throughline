@@ -1102,7 +1102,8 @@ describe('issue #81 rules, ported to the OpenCode plugin', () => {
  * refuses CR, JS `\s` additionally matches U+FEFF, and JS `\b` is not
  * Unicode-aware. The first two are fixed by spelling the rule out (see
  * `JS_NOT_WS` / the `[ ^\n]` step in `redaction.ts` and `ENGINE_SPELLINGS` here);
- * the third is left as a documented divergence. This suite pins all of it, and
+ * the third is left as a documented divergence, except on the Token-scheme word rule, which
+ * issue #116 split at the anchor seam instead of picking a side. This suite pins all of it, and
  * its differential test is what stops the text-normalization mapping from being
  * used to paper over a real behavioural drift.
  */
@@ -1175,19 +1176,19 @@ const ENGINE_DIVERGENCES: readonly {
     // the extra mask swallows. These two are NEW leaks: `main` masks both secrets (measured
     // against a build of `main` - it returns `\u00e9SG.abc...password=***` and `\u00e9mysql -pxtoken ***`,
     // the same text jq writes), so the rules this port adds are what make them survive. The
-    // third `\b` row, the Token-scheme one further down, is the only one `main` already leaks.
+    // third `\b` row of this class, the Token-scheme one, is deleted below: issue #116 closed it.
     input: '\u00e9SG.abcdefghijklmnopqrst.ABCDEFGHIJKLMNOPQRSTpassword=S3cret',
     direction: 'under',
     jq: '\u00e9SG.abcdefghijklmnopqrst.ABCDEFGHIJKLMNOPQRSTpassword=***',
     ts: '\u00e9SG.***=S3cret',
-    note: 'LEAK, introduced by this port (masks fine on `main`): the port anchors on \u00e9 and the SendGrid token class swallows the following `password`, so the generic keyword rule never fires and `S3cret` survives. jq anchors nowhere and masks `password=S3cret` instead. Accepted as rare: it needs a non-ASCII letter glued directly in front of an `SG.` token that is itself glued to a `keyword=value` pair. Closing it means an Oniguruma-accurate `\b`, which JS has no spelling for - see dynamic/throughline#116.',
+    note: 'LEAK, introduced by this port (masks fine on `main`): the port anchors on \u00e9 and the SendGrid token class swallows the following `password`, so the generic keyword rule never fires and `S3cret` survives. jq anchors nowhere and masks `password=S3cret` instead. Accepted as rare: it needs a non-ASCII letter glued directly in front of an `SG.` token that is itself glued to a `keyword=value` pair. dynamic/throughline#116 closed only the Token-scheme instance of this class, by splitting that rule at its anchor seam; this row and the MySQL one below stay open because the rules that fire there have no generic fall-through to hand the value to.',
   },
   {
     input: '\u00e9mysql -pxtoken abcS3cret',
     direction: 'under',
     jq: '\u00e9mysql -pxtoken ***',
     ts: '\u00e9mysql -p*** abcS3cret',
-    note: 'LEAK, introduced by this port (masks fine on `main`): the port anchors on \u00e9 and the MySQL span eats `token`, so the token-word rule never fires and `abcS3cret` survives. Same mechanism as the row above, different rule order, same acceptance and same #116 anchor decision.',
+    note: 'LEAK, introduced by this port (masks fine on `main`): the port anchors on \u00e9 and the MySQL span eats `token`, so the token-word rule never fires and `abcS3cret` survives. Same mechanism as the row above, different rule order, same acceptance. dynamic/throughline#116 closed the third row of this class, the Token-scheme word rule, by splitting that rule at the anchor seam so it masks through the generic rule where the engines disagree; these two stay pinned because the rules that fire there have no such fall-through to hand the value to.',
   },
   // The `over` rows below are the residue of over-approximating Oniguruma's `\w` in the
   // generic keyword rule (`JS_WORD_STAR`): jq's `\w` refuses a non-ASCII PUNCTUATION,
@@ -1262,16 +1263,61 @@ const ENGINE_DIVERGENCES: readonly {
     direction: 'over',
     note: 'Scheme-relative userinfo: jq\'s `_url` anchors on `://` and leaves this verbatim; the port anchors on `//` and masks the password. Deliberate, and the direction is pinned - if it ever flips, a credential the shipped plugin masks is being stored in cleartext.',
   },
+  // The row that used to sit here is the dynamic/throughline#116 leak, and it is CLOSED, so
+  // per the rule at the top of this table ("a later round that closes one must DELETE its row,
+  // not soften it") it is gone: the port no longer anchors its Token rule with a bare
+  // word-boundary, so `\u00fcTOKEN is <secret>` now reaches the generic keyword rule and masks the
+  // way the hooks do. Both inputs of that leak live in `engineCases` as ordinary parity rows,
+  // and `it('masks the value after a non-ASCII letter …')` asserts them without `jq`.
+  //
+  // The two `over` rows below are what the fix leaves behind. The two `under` rows above it
+  // (`SG.`, MySQL client anchor) are untouched: same mechanism, different rule, still leaking.
   {
-    // Same `` mechanism as the two `under` rows before it, on the Token-scheme word rule
-    // instead of the SendGrid or MySQL ones, and OLD: `main` leaks this input byte-for-byte
-    // the same way, so it is not something the port introduced. Found by the ad-hoc 6,000
-    // -input fuzz run, not by the seeded corpus.
-    input: '\u00fcTOKEN i\u017f YWJjZGVmZ2hpamts\nnext line',
-    direction: 'under',
-    jq: '\u00fcTOKEN i\u017f ***\nnext line',
-    ts: '\u00fcToken *** YWJjZGVmZ2hpamts\nnext line',
-    note: 'LEAK: Oniguruma\'s `\b` refuses to anchor after \u00fc, so jq\'s Token-scheme rule never fires and its generic rule masks the value; JS\'s ASCII-only `\b` does fire, the Token rule eats `TOKEN i\u017f` and writes `Token ***`, and the value survives. The plain-ASCII copula (`\u00fcTOKEN is <value>`) diverges identically. Pre-existing on `main`, same class as the two rows above: an over-match at a `\b` the other engine does not have.',
+    // The residue of that fix, and it points the safe way: an input where the port now masks
+    // MORE than the hooks, because jq's own Token rule ate the copula `is` so jq's generic
+    // rule never reached the value.
+    input: '\u00a9token is S3cretPw',
+    direction: 'over',
+    jq: '\u00a9Token *** S3cretPw',
+    ts: '\u00a9token is ***',
+    note: 'OVER-REDACTION, and the leak here is on the jq side: \u00a9 is not a word character to Oniguruma, so jq anchors a boundary there, its Token rule matches the word `is` as the value, and the copula its generic rule needed is rewritten away - `S3cretPw` survives in the hooks. This port cannot tell that \u00a9 from the \u00fc in the row this replaces (no JS class reproduces Oniguruma\'s word set), so in the ambiguous zone it masks the value through the GENERIC separator and value alternatives and writes the keyword and separator back verbatim, which leaves the copula alive for the pass that needs it. Both outputs pinned because jq masks part of the line too and the direction heuristic cannot describe this row.',
+  },
+  {
+    // Same ambiguous zone, the shape where neither engine leaks and only the literal moved.
+    input: '\u00a9token YWJjZGVmZ2hpamts',
+    direction: 'over',
+    jq: '\u00a9Token ***',
+    ts: '\u00a9token ***',
+    note: 'LITERAL-ONLY residue of the same fix, pinned so it cannot quietly become a leak. Both engines mask the whole value; jq writes its own `Token` spelling and this port leaves the keyword as the input spelled it, because in the ambiguous zone it masks through the generic rule instead of guessing which side of the boundary jq landed on. `over` here means "the port did not mask less" - both outputs are pinned, so any change of shape, including one that stops masking the value, fails.',
+  },
+  {
+    // The chain the ambiguous zone has to answer without knowing which side of the boundary
+    // fired: the VALUE is itself a keyword, so masking just the value would delete the keyword
+    // the generic rule needs next. Review of the first version of dynamic/throughline#116 found
+    // exactly this shape leaking, and no test before it covered it.
+    input: '\u00a0token is password S3cretPw9',
+    direction: 'over',
+    jq: '\u00a0Token *** password ***',
+    ts: '\u00a0token is ***',
+    note: 'OVER-REDACTION by design, and the shape that decides the design: NBSP is not a word character to Oniguruma, so jq anchors a boundary there, its Token rule eats the copula, `password` survives as a keyword and jq\'s generic rule then masks `S3cretPw9`. This port cannot see which side of the boundary NBSP is on, so when the value is keyword-like the mask walks forward over the pairs it heads: ` is password S3cretPw9` goes in one mask. Both outputs pinned - if the walk ever stops one pair short this row fails as a leak, which is exactly what it did before the walk existed.',
+  },
+  {
+    // Same walk, with the head keyword carrying a non-ASCII affix: that is why the walk asks
+    // KEYWORD_CONTAINED (Unicode-aware, like jq) and not KEYWORD_HEAD (ASCII-anchored, like
+    // pass 6a). An ASCII-anchored test stops the walk one pair short here.
+    input: '\u2014token is \u00fcsecret S3cretPw9',
+    direction: 'over',
+    jq: '\u2014Token *** \u00fcsecret ***',
+    ts: '\u2014token is ***',
+    note: 'OVER-REDACTION, the Unicode-affix case of the walk: jq\'s generic keyword group reads `\u00fcsecret` as a keyword because its `\w` is Unicode-aware and JS\'s is ASCII, so the secret behind it is masked by jq and has to be masked here too. An ASCII-anchored keyword test in the walk leaks this input; KEYWORD_CONTAINED is what closes it.',
+  },
+  {
+    // The walk across a copula spelled with a case-fold partner, on an astral prefix.
+    input: '\u{1f600}TOKEN i\u017f password S3cretPw9',
+    direction: 'over',
+    jq: '\u{1f600}Token *** password ***',
+    ts: '\u{1f600}TOKEN i\u017f ***',
+    note: 'OVER-REDACTION: an astral prefix reaches the ambiguous zone as a low surrogate (above ASCII, so this port cannot tell it from a letter), and the copula is spelled with U+017F, which only the fold-spelled separator matches. Same walk as the rows above, pinned so neither half of that can regress silently.',
   },
   {
     input: 'x//user:pw@host',
@@ -1318,6 +1364,58 @@ const ENGINE_DIVERGENCES: readonly {
     jq: 'secret\u00e9 *** credential ***',
     ts: 'secret\u00e9 *** *** hunter2',
     note: 'LEAK, pre-existing on `main` (`secret\u00e9 api_key *** hunter2`): same mechanism one keyword later - `secret\u00e9` cannot fire in pass 6a, so `api_key credential` is matched instead and `hunter2` is never reached. The shape the seeded corpus cannot generate: its two-keyword template puts no affix on the first keyword.',
+  },
+  // The Token-scheme ambiguous zone and the MySQL client anchor both need words out of the same
+  // line, and the two orderings each delete one the other needs. These two `over` rows are what
+  // the shipped order leaves behind; the secrets are masked in both engines on both inputs.
+  {
+    input: '\u00a9token is mysql -pS3cret',
+    direction: 'over',
+    jq: '\u00a9Token *** mysql -p***',
+    ts: '\u00a9token is *** -p***',
+    note: 'OVER-REDACTION, both secrets masked in both engines: \u00a9 is not a word character to Oniguruma, so jq anchors a boundary there, its Token rule eats the copula, and its generic rule never sees a `token is <value>` pair - `mysql` stays visible. This port cannot tell \u00a9 from \u00e9, so in the ambiguous zone it masks the value through the generic alternatives and its own generic pass then masks the client name too. What matters is the ORDER: the client name stays on the line until `_mysql_pw_all` has anchored on it. Masking it at step 3 - what the first version of this fix did - leaked `-pS3cret` on 5,454 of the 150,480-input sweep that found it.',
+  },
+  {
+    input: '\u00a9token token password S3cretPw',
+    direction: 'over',
+    jq: '\u00a9Token *** password ***',
+    ts: '\u00a9token ***',
+    note: 'OVER-REDACTION by the chain walk, pinned because the two engines match at DIFFERENT positions here: jq anchors after \u00a9, so its leftmost match is the first `token` and it eats the second one, leaving `password S3cretPw` to the generic rule; this port refuses the first position, and an ASCII-anchored pass run over the zone\u0027s output then reaches the second `token` and eats `password` - the keyword the generic rule needed - which is exactly how this input leaked. Running the ambiguous zone FIRST means its walk covers the whole run and no ASCII-anchored match is left to eat a keyword the generic pass still needed.',
+  },
+  // The cost of KEYWORD_CONTAINED being a substring test, pinned rather than asserted in a
+  // comment. Review of dynamic/throughline#122 asked that this be named as a known cost; these
+  // two rows are what "named" means in a suite: the prose word masked here, and the prose word
+  // that is NOT masked, both written down with both engines' output.
+  {
+    input: '\u00a9token is authority S3cretPw9',
+    direction: 'over',
+    jq: '\u00a9Token *** authority ***',
+    ts: '\u00a9token is ***',
+    note: 'OVER-REDACTION of ordinary prose, and the cost this branch accepts: `authority` is not a keyword, it CONTAINS one (`auth(?:orization)?`), and KEYWORD_CONTAINED is a substring test on purpose (a Unicode-affixed keyword like `\u00fcsecret` only passes that test, and anchoring it would leak - see the row above). So the walk runs past `authority` and masks the whole run. jq leaves the word standing and masks only the secret. Both engines mask `S3cretPw9`; this one also eats an English word on a line that already has \u00a9 welded to `token`. Siblings measured the same way: `author`, `tokenish`, `credentialist`.',
+  },
+  {
+    input: '\u00a9token is passport S3cretPw9',
+    direction: 'over',
+    jq: '\u00a9Token *** passport S3cretPw9',
+    ts: '\u00a9token is *** S3cretPw9',
+    note: 'THE OTHER HALF of that cost, pinned so the cost cannot be overstated either: `passport` and `keychain` contain no keyword in the list (`pass` and `key` are not keywords alone), so the walk does NOT extend over them and nothing behind them is masked. Both engines then leave `S3cretPw9` visible - jq\u0027s own Token rule ate the copula, so its generic rule has no `token is <value>` pair left, and this port masked the value through the generic alternatives and stopped. Literal-only divergence, no leak on either side, and the reason the walk stays a substring test: widening it further would eat more prose, and narrowing it leaks.',
+  },
+  // The MySQL-anchor guard has a leak direction of its own, and these two rows are what it leaves
+  // once that direction is closed: preserving the client name for pass 5b is only safe while 5b
+  // masks a password that is NOT itself a keyword.
+  {
+    input: '\u00a9token mysql -ppassword S3cretPw9X',
+    direction: 'over',
+    jq: '\u00a9Token *** -ppassword ***',
+    ts: '\u00a9token ***',
+    note: 'LITERAL-ONLY, and the shape that made the client-name guard a leak: where jq\u0027s boundary fires after \u00a9 its Token rule eats `mysql`, `_mysql_pw_all` never anchors, and jq\u0027s generic rule reads the glued `ppassword` as a keyword and masks the secret - so this port has to mask `mysql` too, which the guard now does exactly when the password ahead is keyword-shaped. Deferring to 5b there masked `-ppassword` outright, deleted the keyword the generic rule needed, and left `S3cretPw9X` in cleartext on an input `main` masks (288 inputs in the review\u0027s 233,280-input fuzz, all of them this shape). Both outputs pinned: the only difference left is jq\u0027s `Token` literal.',
+  },
+  {
+    input: '\u00e9token mysql -ppassword S3cretPw9X',
+    direction: 'over',
+    jq: '\u00e9token *** -p*** S3cretPw9X',
+    ts: '\u00e9token ***',
+    note: 'OVER-REDACTION on the boundary-REFUSES side of the same zone, pinned because the two engines mask DIFFERENT words and only this port masks the secret: jq\u0027s `\b` refuses after \u00e9, so its pass 5b anchors on `mysql`, masks the keyword `password` as the password, and leaves `S3cretPw9X`; this port cannot tell \u00e9 from \u00a9, masks the client name, and lets its generic rule mask the secret. That is the accepted asymmetry of the ambiguous zone - it masks the union of the two readings, so it over-masks a word jq ate and never under-masks the credential.',
   },
 ];
 
@@ -1450,6 +1548,43 @@ describe('regex-engine parity with jq (issue #90)', () => {
     // guard can see it; that residue is the pinned `over` row `token\u00e9token="a b"c`.
     ['pa\u017f\u017fword "open sesame passwd:"open sesame', 'pa\u017f\u017fword ***open sesame'],
     ['x pa\u017f\u017fword="a b"c d', 'x pa\u017f\u017fword=***c d'],
+    // The Token-scheme word rule on the prefix characters where Oniguruma's `\b` REFUSES
+    // (\u00fc, \u0663, \u4e2d: letters, digits and marks in Unicode terms). jq falls through to its
+    // generic keyword rule and masks the value; this port's ambiguous-prefix pass now
+    // reproduces that fall-through instead of eating `TOKEN is` and writing `Token ***`. The
+    // first two are the inputs dynamic/throughline#116 reported, demoted to ordinary parity
+    // rows because the fix closed them; the rest are the shapes around them.
+    ['\u00fcTOKEN is YWJjZGVmZ2hpamts', '\u00fcTOKEN is ***'],
+    ['\u00fcTOKEN i\u017f YWJjZGVmZ2hpamts\nnext line', '\u00fcTOKEN i\u017f ***\nnext line'],
+    ['\u00fctoken abc', '\u00fctoken ***'],
+    ['\u00fcAPI_TOKEN=YWJjZGVmZ2hpamts', '\u00fcAPI_TOKEN=***'],
+    ['\u00fc\u0663TOKEN \u017fup3rS3cret', '\u00fc\u0663TOKEN ***'],
+    // The prefix the comment above names but no row exercised (ADVISORY from the review of
+    // dynamic/throughline#122): a CJK ideograph is a letter to Oniguruma's `\b` and a non-ASCII
+    // code unit to this port, so it lands in the same ambiguous zone as \u00fc. Pinned by row now,
+    // not by prose.
+    ['\u4e2dTOKEN is S3cretPw9', '\u4e2dTOKEN is ***'],
+    ['\u4e2dtoken \u017fup3rS3cret', '\u4e2dtoken ***'],
+    // The Token pass and the MySQL pass both need words out of the same line, and every one the
+    // other rule consumed first is a password that survives. These are the shapes the
+    // 150,480-input sweep found leaking on the first version of the anchor split (5,454 inputs,
+    // every one of them `<non-ascii>token <sep> mysql -p<password>`): the client name now stays
+    // on the line for `_mysql_pw_all`, and the generic pass masks it afterwards exactly where
+    // jq's does - byte for byte here, because on these prefixes jq's `\b` refuses too.
+    ['\u00e9token is mysql -pS3cret', '\u00e9token is *** -p***'],
+    ['\u00e9token is password mysql -pS3cret', '\u00e9token is *** mysql -p***'],
+    // The mirror shape, and the reason the ambiguous mask cannot be deferred past
+    // `_mysql_pw_all` (which a previous round tried, at 144 leaks of its own): here the MySQL
+    // span eats `\u00a9token` and a deferred Token pass has no keyword left to anchor on.
+    ['mysql -p\u00a9token S3cretPw', 'mysql -p*** ***'],
+    // The ASCII-prefixed sibling of the leftmost-match hazard, where both engines AGREE about
+    // the boundary and so about the leftmost match: `\b` fires after the ASCII space, the first
+    // `token` is the match, and it eats the second one, leaving `password` to the generic rule.
+    // This row pins the AGREEMENT - it passes under either pass order, which is why the
+    // order-sensitive version is the `\u00a9token token password S3cretPw` row in
+    // `ENGINE_DIVERGENCES` (a review round of #122 flagged that this row's comment used to describe
+    // that \u00a9 case while the row's own prefix is a plain space).
+    [' token token password S3cretPw', ' Token *** password ***'],
   ];
 
   /**
@@ -1470,6 +1605,216 @@ describe('regex-engine parity with jq (issue #90)', () => {
       assert.strictEqual(redact(input), expected);
     });
   }
+
+  /**
+   * The dynamic/throughline#116 leak, asserted on this port's own output so it is checked on a
+   * machine with no `jq` on PATH - where the differential test skips and the `engineCases`
+   * parity rows only prove this port agrees with itself. The property that matters is the
+   * negative one: the value must not survive. `Token *** YWJjZGVmZ2hpamts`, which is what
+   * `main` wrote, masks the keyword and stores the secret, and no amount of `***` elsewhere in
+   * the line makes that safe.
+   */
+  it('masks the value after a non-ASCII letter in front of TOKEN, instead of eating the keyword the generic rule needs (issue #116)', () => {
+    const secret = 'YWJjZGVmZ2hpamts';
+    const inputs: readonly string[] = [
+      '\u00fcTOKEN is ' + secret,
+      '\u00fcTOKEN i\u017f ' + secret + '\nnext line',
+    ];
+    for (const input of inputs) {
+      const out = redact(input);
+      assert.ok(!out.includes(secret), `the secret survived: ${JSON.stringify(out)}`);
+      assert.ok(out.includes('***'), `nothing was masked at all, so the line above proves nothing: ${JSON.stringify(out)}`);
+    }
+    // And as text, because "no cleartext" alone would also pass if a future change collapsed
+    // the whole line into one `***`.
+    assert.strictEqual(redact('\u00fcTOKEN is ' + secret), '\u00fcTOKEN is ***');
+    assert.strictEqual(redact('\u00fcTOKEN i\u017f ' + secret + '\nnext line'), '\u00fcTOKEN i\u017f ***\nnext line');
+  });
+
+  /**
+   * The chain the first version of the fix leaked: a keyword sitting behind the copula. Masking
+   * only the value deletes the keyword the generic rule needs to reach the secret, so the mask
+   * walks forward over the pairs a keyword-like value heads. Asserted on this port's own output
+   * so a machine without `jq` still checks that the secret is gone.
+   */
+  it('masks a keyword behind the copula\u0027s own value, where the ambiguous zone cannot tell which anchor fired (issue #116 review)', () => {
+    const secret = 'S3cretPw9';
+    const inputs: readonly string[] = [
+      '\u00a0token is password ' + secret,
+      '\u2014token is \u00fcsecret ' + secret,
+      '\u{1f600}TOKEN i\u017f password ' + secret,
+      '\u00a0token is password auth ' + secret,
+    ];
+    for (const input of inputs) {
+      const out = redact(input);
+      assert.ok(!out.includes(secret), `the secret survived: ${JSON.stringify(out)}`);
+      assert.ok(out.includes('***'), `nothing was masked at all, so the line above proves nothing: ${JSON.stringify(out)}`);
+    }
+  });
+
+  /**
+   * BLOCKING 1 of the review of dynamic/throughline#122, asserted on this port's own output so it
+   * is checked on a machine with no `jq` on PATH. The Token pass runs at step 3 and the MySQL
+   * client-anchored pass at step 5b, so a step-3 mask that CONSUMES the client name deletes the
+   * only anchor step 5b has, and the `-p<password>` behind it survives. Every input here is that
+   * shape or its mirror; the property is the negative one - the password must not survive.
+   */
+  it('leaves the MySQL client name on the line for _mysql_pw_all when the Token zone masks around it (#122 review)', () => {
+    const pw = 'S3cretPw9';
+    const inputs: readonly string[] = [
+      '\u00a9token is mysql -p' + pw,
+      '\u00e9token is mysql -p' + pw,
+      '\u00e9token is password mysql -p' + pw,
+      '\u4e2dTOKEN was mysqldump -p' + pw,
+      '\u2014token is mariadb-dump -p' + pw,
+      '\u00a9token token password mysql -p' + pw,
+    ];
+    for (const input of inputs) {
+      const out = redact(input);
+      assert.ok(!out.includes(pw), `the client-anchored password survived: ${JSON.stringify(out)}`);
+      assert.ok(out.includes('***'), `nothing was masked at all, so the line above proves nothing: ${JSON.stringify(out)}`);
+    }
+    // And as text, on the two inputs whose shape the fix settles:
+    assert.strictEqual(redact('\u00e9token is mysql -p' + pw), '\u00e9token is *** -p***');
+    assert.strictEqual(redact('\u00e9token is password mysql -p' + pw), '\u00e9token is *** mysql -p***');
+  });
+
+  /**
+   * BLOCKING 1 of the SECOND review round of dynamic/throughline#122, and the mirror image of the
+   * test above: preserving the client name for `_mysql_pw_all` is only safe while that pass masks
+   * a NON-keyword password. When the password is itself a keyword (`mysql -ppassword <secret>`) the
+   * 5b mask deletes the keyword the generic rule needs, and on the prefixes where jq's boundary
+   * fires jq's own Token rule had already eaten the client name, so jq reaches that secret and this
+   * port did not. Asserted on the port's own output, with no `jq` needed.
+   */
+  it('does not defer the Token zone mask when the MySQL password is itself a keyword (#122 round 2 review)', () => {
+    const secret = 'S3cretPw9X';
+    const inputs: readonly string[] = [
+      '\u00a9token mysql -ppassword ' + secret,
+      '\u00a9token mysql -ptoken ' + secret,
+      '\u00a9token is mysql -pauthority ' + secret,
+      '\u00a9token was mariadb-dump -pcredential ' + secret,
+      '\u00a9token mysql -papi_key ' + secret,
+      '\u4e2dTOKEN mysql -ppassword ' + secret,
+      // The boundary-REFUSES side of the same zone: here jq's pass 5b masks the keyword
+      // `password` outright and leaves `S3cretPw9X` in the clear, so masking it here is an
+      // over-mask, not parity - the port has to mask the secret either way.
+      '\u00e9token mysql -ppassword ' + secret,
+      // The in-walk half of the same guard: the pair whose value is the CLIENT name sits
+      // behind a keyword pair, so this exercises `MYSQL_ANCHOR_IN_VALUE` inside the walked run
+      // rather than at the first match. Review of #122 flagged that the previous input here
+      // (a `password \u00fcsecret` run) carried no client name at all and so never reached it.
+      '\u00a0token is password \u00fcsecret ' + secret,
+      '\u00a0token is password mysql -ppassword ' + secret,
+      '\u00a9token is mysql -ptoken password ' + secret,
+      '\u00e9token: mysql -ppassword password ' + secret,
+    ];
+    for (const input of inputs) {
+      const out = redact(input);
+      assert.ok(!out.includes(secret), `the secret behind the keyword-shaped MySQL password survived: ${JSON.stringify(out)}`);
+      assert.ok(out.includes('***'), `nothing was masked at all, so the line above proves nothing: ${JSON.stringify(out)}`);
+    }
+    // And as text, on the two inputs whose shape the fix settles.
+    assert.strictEqual(redact('\u00a9token mysql -ppassword ' + secret), '\u00a9token ***');
+    assert.strictEqual(redact('\u00e9token mysql -ppassword ' + secret), '\u00e9token ***');
+  });
+
+  /**
+   * The `-p` the client-name guard asks about must be IN RANGE, not merely close. The first version
+   * of the guard sliced a 4096-code-unit window per ambiguous match to keep the pass off the
+   * quadratic that `\u00e9token mysql ` repeated 26,000 times measured (238 s against `main`'s 21 ms), and
+   * the window silently un-fixed the thing the guard exists to fix: past 4096 code units the `-p`
+   * was invisible, the guard answered "the 5b mask will not swallow a keyword", the client name was
+   * preserved, 5b masked a keyword password, and the generic rule was left with no keyword - so the
+   * secret survived on an input both `jq` (with the hooks' own defs) and `main` mask. Measured on the
+   * windowed build before this test existed: `\u00a9token mysql ` + 5,000 `x` + ` -ppassword S3cretPw9X`
+   * leaked, and so did the same at 100,000. The scan is now amortised over the pass instead of
+   * windowed, so no `-p` is out of range and the pass does not go back to O(matches x window).
+   */
+  it('finds the keyword-shaped MySQL password beyond the window the first guard used, where a bounded lookahead leaked (#122 round 7 review)', () => {
+    const secret = 'S3cretPw9X';
+    const beyond = (n: number) => '\u00a9token mysql ' + 'x'.repeat(n) + ' -ppassword ' + secret;
+    const inputs: readonly string[] = [
+      // Just past the old 4096 bound, so a regression to a window of that size fails here too.
+      beyond(4100),
+      beyond(5000),
+      beyond(20000),
+      // The same distance inside a WALKED run: the client-name pair sits behind a keyword pair, so
+      // this is the in-walk call site, not the first-match one.
+      '\u00a0token is password ' + beyond(4100),
+      // And the same distance behind a flag whose NAME contains `-p`: `--port`, `--port=`,
+      // `--skip-pager`. The first version of the scan matched the `-p` inside those names, read
+      // `ort` as "not a keyword", deferred the client name to a pass that masks no flag with a lead
+      // in front of it, and 5b then masked `-ppassword` outright.
+      '\u00a9token mysql --port 3306 -ppassword ' + secret,
+      '\u00a9token mysql --port=3306 -ppassword ' + secret,
+      '\u00a9token mysql --skip-pager -ppassword ' + secret,
+    ];
+    for (const input of inputs) {
+      const out = redact(input);
+      assert.ok(!out.includes(secret), `the secret behind the out-of-window keyword password survived: ${JSON.stringify(out.slice(-60))}`);
+      assert.ok(out.includes('***'), `nothing was masked at all, so the line above proves nothing: ${JSON.stringify(out.slice(0, 60))}`);
+    }
+    // And as text on the shortest of them. The zone masks the client name (that is the fix), the
+    // 5b mask of the keyword password is gone with it, and the generic rule then masks the secret
+    // behind `-ppassword` - which is precisely the ordering the windowed guard destroyed.
+    assert.strictEqual(redact(beyond(4100)), '\u00a9token *** -ppassword ***');
+    assert.strictEqual(redact('\u00a9token mysql --port 3306 -ppassword ' + secret), '\u00a9token *** 3306 -ppassword ***');
+    assert.strictEqual(redact('\u00a9token mysql --skip-pager -ppassword ' + secret), '\u00a9token *** -ppassword ***');
+  });
+
+  /**
+   * A client name with no reachable flag ahead of it is masked at pass 3, not preserved: pass 5b
+   * has nothing to anchor on, so preserving it protects no secret and costs its span. `\u00e9token
+   * mysql ` repeated is the shape - no `-p` anywhere - and the same run with one `-p` behind a `;`
+   * is the mirror, because the span cannot cross a command separator to reach it. Both were 155 s
+   * / 3.7 s on this branch against 3 ms on `main` when the guard deferred unconditionally.
+   */
+  it('masks a client name with no flag pass 5b could reach, instead of leaving it for 5b to retry', () => {
+    for (const input of [
+      '\u00e9token mysql '.repeat(40) + 'done',
+      '\u00e9token mysql '.repeat(40) + '; ls -pX',
+      '\u00e9token mysql '.repeat(40) + '\n-pS3cretPw9 elsewhere',
+    ]) {
+      const out = redact(input);
+      assert.ok(!out.includes('mysql'), `the client name survived with nothing for 5b to mask: ${JSON.stringify(out.slice(0, 60))}`);
+      assert.ok(out.includes('***'), `nothing was masked at all: ${JSON.stringify(out.slice(0, 60))}`);
+    }
+    assert.strictEqual(redact('\u00e9token mysql done'), '\u00e9token *** done');
+    assert.strictEqual(redact('\u00e9token mysql ; ls -pX'), '\u00e9token *** ; ls -pX');
+  });
+
+  /**
+   * The cost side of the same change, pinned so it cannot regress into either direction: the guard
+   * may not slice a window per match again (it leaks, per the test above) and it may not rescan the
+   * rest of the line per match either (that is the 238 s). One `-p` found ahead is reused, and a line
+   * with no `-p` at all is scanned once for the whole pass. Bound is loose (observed low single-digit
+   * ms); it exists to fail a change that puts a per-match slice or a per-match rescan back.
+   */
+  it('scans for the MySQL -p once per pass instead of once per client name, on a long run of them', () => {
+    const input = ('\u00a9token mysql ' + 'x'.repeat(100) + ' ').repeat(1000) + '-ppassword S3cretPw9X';
+    // The two shapes the guard used to route into pass 5b: no `-p` at all, and one `-p` past a
+    // command separator that 5b's span cannot cross. Without masking the client names at pass 3,
+    // 5b retried its line-long span from each of them - quadratic, 155 s at 26,000 repeats, and the
+    // scan itself went quadratic again at 26,000 with a trailing ';' (6.1 s) until the stop was cached
+    // too, which is why both of these run at 20,000 repeats rather than a size that passes either way.
+    const noFlag = '\u00e9token mysql '.repeat(20000);
+    const flagPastSeparator = '\u00e9token mysql '.repeat(20000) + '; ls -pX';
+    const started = Date.now();
+    const out = redact(input);
+    const elapsed = Date.now() - started;
+    assert.ok(out.includes('***'), 'nothing was masked, so the timing proves nothing');
+    assert.ok(!out.includes('S3cretPw9X'), `the trailing secret survived: ${JSON.stringify(out.slice(-40))}`);
+    assert.ok(elapsed < 4000, `redact() took ${elapsed}ms on a ${input.length}-character command; the -p scan is per client name again`);
+    for (const [name, s] of [['no -p anywhere', noFlag], ['-p past a ;', flagPastSeparator]] as const) {
+      const t0 = Date.now();
+      const masked = redact(s);
+      const ms = Date.now() - t0;
+      assert.ok(masked.includes('***'), `${name}: nothing was masked, so the timing proves nothing`);
+      assert.ok(!masked.includes('mysql'), `${name}: a client name with no reachable flag survived to pass 5b`);
+      assert.ok(ms < 4000, `${name}: redact() took ${ms}ms on a ${s.length}-character command; pass 5b is being handed ${name} again`);
+    }
+  });
 
   /**
    * The `under` rows, asserted the same way but on the port's own output only, so a pinned

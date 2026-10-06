@@ -55,7 +55,10 @@
  *     `foldSpelled`.
  *   - `\b` IS left as a difference, not fixed: Oniguruma's is Unicode-aware and no
  *     approximation of it lands on the safe side, so each input where the two disagree
- *     is pinned by direction in `ENGINE_DIVERGENCES` in `redaction.test.ts`.
+ *     is pinned by direction in `ENGINE_DIVERGENCES` in `redaction.test.ts`. The Token-scheme
+ *     word rule is the one exception (issue #116): there the port cannot even say which side of
+ *     the boundary it is on, so that rule splits at the seam and masks through the generic rule
+ *     in the zone where the engines disagree - see TOKEN_ASCII_ANCHOR.
  *
  * `.omp-plugin` is NOT affected by any of this: its shim shells out to the same
  * `hooks/*.sh` scripts, so it inherits the jq rules directly.
@@ -479,6 +482,286 @@ function unmaskSentinel(str: string): string {
 // --- Auth scheme patterns ---
 
 /**
+ * The generic keyword rule's separator and value alternatives, hoisted to module scope so the
+ * ambiguous-prefix Token pass can reuse the SAME shape (issue #116). Composed into
+ * `keywordPattern` byte for byte as it was when both strings were inline there.
+ *
+ * The Token pass needs the generic separators rather than its own because of the copula:
+ * in `\u00fctoken is S3cretPw` the Token rule's own `\s+[A-Za-z0-9._-]+` matches the word `is` as
+ * the VALUE, so any replacement that deletes the value deletes the copula the generic rule
+ * needs to reach the secret - which is the same "ate the keyword a later rule needed" leak
+ * this function exists to stop, one character further left.
+ */
+const KEYWORD_SEPARATOR =
+  JS_WS + "*[:=]" + JS_WS + "*|" + JS_WS + "+(?:" + SEPARATOR_ALTERNATION + ")" + JS_WS + "+|" + JS_WS + "+";
+const KEYWORD_VALUE = "\"[^\"]*\"|" + REDACT_SENTINEL + "|\"[^\\r\\n]*|" + jsNotWs("\"") + "+";
+
+/**
+ * One `separator value` pair, matched STICKILY, for the chain walk in `redactTokenScheme`.
+ * Same two alternatives as `KEYWORD_SEPARATOR` / `KEYWORD_VALUE`, so a pair this walk sees is
+ * a pair the generic rule would have seen; the sticky flag is what keeps the walk from
+ * searching ahead for a pair instead of extending over the next one.
+ */
+const KEYWORD_PAIR_STICKY = new RegExp("(?:" + KEYWORD_SEPARATOR + ")(" + KEYWORD_VALUE + ")", "iy");
+/**
+ * A keyword as pass 6a's ASCII keyword group could match it, anchored whole. Built from
+ * `KEYWORD_ALTERNATION` at module scope so `redactTokenScheme`'s chain walk and pass 6b's
+ * keyword guard ask the SAME question - `redact` used to build its own copy inline.
+ */
+const KEYWORD_HEAD = new RegExp("^\\w*(?:" + KEYWORD_ALTERNATION + ")\\w*$", "i");
+/**
+ * Does this value CONTAIN a keyword at all - the question the chain walk in
+ * `redactTokenScheme` asks, which is wider than `KEYWORD_HEAD` on purpose. jq's generic keyword
+ * group is Unicode-aware, so `üsecret` heads a pair for it and the secret behind that value has
+ * to be masked by the walk too; anchoring on ASCII `\w` would stop the walk one pair short and
+ * leak. Over-approximating here costs masking on a line that already has a non-ASCII character
+ * glued in front of `token`, never a mask the hooks have.
+ *
+ * KNOWN COST of the substring test, named because it is real and measured (review of
+ * dynamic/throughline#122 asked for it to be named, not fixed): the alternation is unanchored,
+ * so an ORDINARY PROSE value that merely CONTAINS a keyword substring extends the walk. On this
+ * build \u00a9token is authority S3cretPw9 and \u00a9token is author S3cretPw9 walk over both words and
+ * write `\u00a9token is ***` where the hooks write `\u00a9Token *** authority ***` - `author`/`authority`
+ * match the `auth(?:orization)?` keyword, `tokenish` matches `token`, `credentialist` matches
+ * `credential`. Two of the words that review named do NOT extend it, and they are the safe half
+ * of the class: `passport` and `keychain` contain no keyword in the list (`pass` and `key` are
+ * not keywords on their own), so the walk stops there and nothing behind them gets masked -
+ * which is what jq does too (`\u00a9Token *** passport S3cretPw9`, secret and all). The direction is
+ * what makes this acceptable: every input in this class over-masks ordinary English on a line
+ * that already carries a non-ASCII character welded to `token`, and none of them masks LESS than
+ * the hooks do. Pinned as an `over` row in `ENGINE_DIVERGENCES` so the cost cannot grow silently.
+ */
+const KEYWORD_CONTAINED = new RegExp("(?:" + KEYWORD_ALTERNATION + ")", "i");
+/**
+ * Does this ambiguous-zone value carry a MySQL/MariaDB CLIENT NAME - the one word a LATER
+ * pass (`_mysql_pw_all`, pass 5b) needs intact as its anchor? Searches rather than anchors
+ * whole-word, and reuses `MYSQL_CLIENT` rather than a hand-copied list, for the same reason
+ * the parity test reuses it: a client name added on the jq side must not have to be remembered
+ * here too. Case-sensitive, like the rule it guards (jq's `_mysql_anchor` has no `(?i)`).
+ *
+ * This is the last of the "a mask deletes the word a later rule needs" family that issue #116
+ * opened, and it is measured, not reasoned about: 5,454 of 150,480 generated inputs leaked on
+ * the first version of this fix, every one of them shaped `<non-ascii>token <sep> mysql
+ * -p<password>`. Masking `mysql` as `token`'s value deletes the only anchor `_mysql_pw_all`
+ * has, so the client-anchored `-p<password>` behind it - a password this port masks on `main`
+ * and in jq - survives. Deferring the whole ambiguous pass past 5b is not the fix either: in
+ * the mirror shape (`mysql -p\u00a9token S3cretPw`) the span eats `\u00a9token` and the deferred pass
+ * is left with no keyword to anchor on, which measured 144 leaks of its own. So the mask stays
+ * at step 3 and stops in front of the client name instead.
+ *
+ * Stopping here costs nothing in masking: the generic keyword rule (pass 6) runs the SAME
+ * separator and value alternatives over the SAME keyword, one pass later, and masks this value
+ * then - which is exactly what jq's own generic rule does with it, since jq's Token rule either
+ * ate the copula (boundary fires) or never fired (boundary refuses) and left the client name
+ * standing for `_mysql_pw_all` to use. What it does NOT cover is a client name glued into a
+ * longer word (`mysql-pw`, `xbmysql`): the search says yes, the real anchor may say no, and the
+ * cost of that false positive is the mask waiting for pass 6 instead of happening at pass 3.
+ */
+const MYSQL_ANCHOR_IN_VALUE = new RegExp(MYSQL_CLIENT);
+
+/**
+ * Pass 5b's `-p` and the head of its value, enough to ask what that mask WOULD swallow. The lead is
+ * part of the pattern rather than decoration: pass 5b anchors on `MYSQL_LEAD` + `-p`, so a `-p` with
+ * no space or tab (or backslash-newline continuation) in front of it is part of a flag NAME, not a
+ * password - `--port 3306`, `--skip-pager`, `--protocol`. Matching the bare `-p` text instead asked
+ * the keyword question about `--port`'s `ort`, answered "not a keyword", left the client name for a
+ * pass that then masked `-ppassword` outright, and kept the secret: `©token mysql --port 3306
+ * -ppassword S3cretPw9X` leaked on the first version of this scanner while `jq` (with the hooks' own
+ * defs) and a build of `main` both masked it. The value head stops at whitespace and at the span's
+ * hard stops, so a captured value never reads past the argument `_mysql_pw_all` masks - a newline
+ * included, since `\s` covers it.
+ */
+const MYSQL_PW_AHEAD = new RegExp(MYSQL_LEAD + "(-p[\"']?[^\\s\"'`;|&]+)");
+
+/**
+ * The characters that end the region pass 5b's span can reach from a client name: a shell command
+ * separator or a newline. A `-p` behind one of those sits behind a mask 5b will never anchor on, so
+ * answering the keyword question about it protects nothing - which is why the scanner stops here
+ * instead of scanning on to the end of the string.
+ */
+const MYSQL_PW_STOP = /[;|&\r\n]/;
+
+/**
+ * Which of three things sits ahead of an ambiguous-zone client name, as seen from position `from`.
+ * (Review of dynamic/throughline#122, second round wrote the first version of this as a two-valued
+ * question - "would 5b swallow a keyword?" - as though preserving the client name were always the
+ * safe move. It is not, in either of two directions.)
+ *
+ * `\u00a9token mysql -ppassword S3cretPw9X` is the input that made it three-valued-ish to begin with.
+ * Where jq's boundary FIRES after \u00a9 its Token rule eats `mysql` outright, `_mysql_pw_all` never
+ * anchors, and jq's generic keyword rule reads the glued `ppassword` as a keyword and masks the
+ * secret behind it: `\u00a9Token *** -ppassword ***`. This port preserved `mysql` for pass 5b, pass 5b
+ * masked `-ppassword` - a password that is also a keyword - and the generic rule was left with no
+ * keyword to anchor on: `\u00a9token *** -p*** S3cretPw9X`, secret in cleartext, on an input `main`
+ * masks. 288 such inputs in the review's 233,280-input fuzz, all of them this shape. So a
+ * keyword-shaped password ahead is answered by MASKING the client name (`eats-keyword`), which is
+ * what the boundary-fires reading masks and, on the boundary-refuses side, more than jq - the
+ * accepted direction of this zone.
+ *
+ * `none` is the third answer, and it is a mask for the opposite reason: when no `-p` that pass 5b
+ * could reach lies ahead (none before a `MYSQL_PW_STOP`, or none at all), keeping the client name
+ * intact buys nothing - there is no 5b mask to protect - while the cost is real. `\u00e9token mysql `
+ * repeated 26,000 times has no `-p` anywhere, so every `mysql` was left standing for pass 5b, which
+ * retried its line-long span from each of the 26,000 client names: 155 s on this branch against
+ * 3 ms on `main` (`redactMysqlPw` accounted for all of it; the same class shape `mysql ` repeated
+ * 4,000 times costs 1.6 s on `main` too, so the span's cost predates this PR - what is new is this
+ * branch routing a whole class of input into it). Masking the client name here is what `main`'s
+ * single `\b` rule did at pass 3, so `none` goes back to the older, cheaper behaviour and masks no
+ * less.
+ *
+ * THE SCAN IS BOUND BY AMORTISATION AND BY REACH, NOT BY A WINDOW, and the window it replaced
+ * leaked. The first version sliced `source.slice(from, from + 4096)` per ambiguous match - that was
+ * the O(matches x window) cost - and past 4096 code units the `-p` was invisible, so the guard
+ * answered "5b will not swallow a keyword", the client name was preserved, and 5b masked a keyword
+ * password: `\u00a9token mysql ` + 5,000 `x` + ` -ppassword S3cretPw9X` kept its secret, and so did the
+ * same at 100,000 filler and at 4,100 (just past the bound), while `jq` and a build of `main` mask
+ * all three. A bound that trades masking for time is not an option in this zone, so the bound is in
+ * the work: one forward scan for the whole Token pass, resumed where the last scan stopped, because
+ * the positions asked about only move right. A hit ahead of the question is cached and reused; a
+ * region with nothing to find is scanned once and answered from the `exhausted` flag. Total regex
+ * work is O(source) per Token pass instead of O(matches x window) - with the caveat that a STOP is
+ * cached too (`stopPos`), because a stop that has to be rediscovered by every question behind it is
+ * the same quadratic wearing a different hat: `\u00e9token mysql ` repeated 26,000 times with a trailing
+ * `;` measured 6.1 s against `main`'s 15 ms before that cache existed, and about 5 ms with it.
+ *
+ * Two things this deliberately does NOT do. It does not restart the scan at a `MYSQL_PW_STOP` for a
+ * question positioned BEFORE the stop (that question's own region really has no reachable flag, which
+ * is the `none` answer), and it does not reset the `exhausted` flag at a stop, because a question
+ * positioned past the stop rescans from its own position and can still find a flag in its own region
+ * - so `exhausted` means "nothing ahead of the furthest point scanned", which is all the callers ask.
+ *
+ * A THIRD thing it does not do, stated as an open gap rather than a claim: `MYSQL_PW_STOP` is a
+ * single-character class, and pass 5b's real span (`MYSQL_SPAN_STEPS`) walks past four things this
+ * class stops at - a `;` or `|` inside quotes, a backslash-newline continuation, an `N>&M` redirect,
+ * and an `&>` redirect. For a client name followed by one of those and then a password, the scanner
+ * answers `none`, the client name is masked at pass 3, pass 5b loses its anchor, and the password
+ * survives: `\u00e9token mysql -e "select 1;" -pS3cretPw9X`, `\u00e9token mysql db \` newline
+ * `-pS3cretPw9X`, `\u00e9token mysql 2>&1 -pS3cretPw9X` and `\u00e9token mysql &>/dev/null -pS3cretPw9X`
+ * all do this (review round 2 of dynamic/throughline#122, finding 2, verified against `jq` there).
+ * `main` leaks all four too, so this is not a regression - it is the part of the class this round ran
+ * out of budget on. Closing it means driving the scanner with `MYSQL_SPAN_STEP` itself, and that has
+ * to be measured rather than assumed: 5b's own span is what makes `mysql ` repeated 4,000 times cost
+ * 1.6 s on `main`, so asking 5b's question exactly re-buys 5b's cost and needs its own linearity
+ * proof. The timing test below pins the two shapes that are covered, not these four.
+ */
+type MysqlPwAhead = 'none' | 'safe-to-defer' | 'eats-keyword';
+
+function makeMysqlPwKeywordScanner(source: string): (from: number) => MysqlPwAhead {
+  // One alternation, so "which comes first" is answered by the match itself rather than by two
+  // searches that could disagree: either a flag pass 5b could anchor on, or the end of the region
+  // that flag could reach.
+  const scan = new RegExp(MYSQL_PW_AHEAD.source + "|[" + MYSQL_PW_STOP.source.slice(1, -1) + "]", "g");
+  let hitPos = -1;
+  let hitState: MysqlPwAhead = 'none';
+  let stopPos = -1;
+  let exhausted = false;
+  return function mysqlPwAhead(from: number): MysqlPwAhead {
+    // A cached flag still ahead of the question answers it. Neither alternative can match zero
+    // width (the first carries its lead and the `-p`, the second is one character), so `exec`
+    // always advances and a null result is final for every question asked from behind it.
+    if (hitPos >= from && hitPos !== -1) return hitState;
+    if (exhausted) return 'none';
+    // The same answer for a cached STOP, and this one is load-bearing rather than a micro-optimisation:
+    // without it every question asked from before the stop rescans the whole run to reach it again,
+    // which put `\u00e9token mysql ` repeated 26,000 times plus a trailing `;` at 6.1 s (15 ms on `main`).
+    // A stop ahead of `from` means the region this question could reach has already been walked and
+    // held no flag, so the answer is `none` without a scan. Cached separately from `hitPos` because a
+    // stop does not end the scan - a question positioned past it rescans and may well find a flag in
+    // its own region.
+    if (stopPos >= from && stopPos !== -1) return 'none';
+    // Every path that gets here was asked from behind the last hit and behind the last stop, so the
+    // scan resumes at the question's own position; nothing is re-walked, because the answers that
+    // would have needed re-walking are the two caches above.
+    scan.lastIndex = from;
+    const m = scan.exec(source);
+    if (m === null) {
+      exhausted = true;
+      hitPos = -1;
+      hitState = 'none';
+      return 'none';
+    }
+    if (m[1] === undefined) {
+      // Reached the end of the region pass 5b can cover before reaching any flag. Reported as
+      // `none`, which the caller answers with a mask, and remembered as `stopPos` so the questions
+      // that sit behind the same stop do not walk back to it one at a time.
+      stopPos = m.index;
+      hitPos = -1;
+      hitState = 'none';
+      return 'none';
+    }
+    hitPos = m.index;
+    // The capture carries its lead and the `-p` itself; the value is the part 5b would replace.
+    hitState = KEYWORD_CONTAINED.test(m[1].replace(/^[ \t]?-p["']?/, '')) ? 'eats-keyword' : 'safe-to-defer';
+    return hitState;
+  };
+}
+
+/**
+ * The two anchors the Token-scheme word rule is split across, and why one rule became two
+ * (issue #116).
+ *
+ * `\b` is the one anchor this port cannot copy: Oniguruma reads it as Unicode-aware and JS
+ * reads it as ASCII-only. That is not a boundary that shifts by one character, it is a rule
+ * that fires on one engine and not the other, and a scheme rule that fires early EATS the
+ * keyword a later rule needs: on `\u00fcTOKEN is <secret>` jq's `\b` refuses to anchor after \u00fc,
+ * its Token rule never fires, and its GENERIC keyword rule masks the value; JS's `\b` does
+ * fire, this rule ate `TOKEN is` and wrote `Token ***`, and the value survived in cleartext.
+ * That is the leak dynamic/throughline#116 reports, and it is the third instance of the
+ * mechanism the `\b` rows in `ENGINE_DIVERGENCES` pin for `SG.` and the MySQL client anchor.
+ *
+ * The obvious fix - refuse every non-ASCII code unit in front of `token`, over-approximating
+ * Oniguruma's refusing side - was measured over 36,480 generated inputs and is WRONG: it
+ * closed those 2,016 leaks and opened 1,008 new ones in the same sweep. Standing down is not
+ * neutral either, because the generic rule can then read the whole `<non-ascii>token` as the
+ * VALUE of an earlier keyword (`password \u00a9token S3cretPw`) and leave the real secret behind
+ * it with no keyword in front of it at all. Firing too often eats a keyword; refusing too
+ * often turns one into a value. Both leak.
+ *
+ * So the rule is split at the seam instead of being moved to one side of it:
+ *   - TOKEN_ASCII_ANCHOR: where the two engines AGREE about the boundary (start of input, or
+ *     an ASCII non-word character in front), this rule fires and writes jq's literal
+ *     `Token ***`;
+ *   - TOKEN_AMBIGUOUS_ANCHOR: where the character in front is non-ASCII, this port cannot
+ *     know which side of `\b` jq lands on - no JS class reproduces Oniguruma's word set
+ *     (`[\p{L}\p{N}\p{M}_]` disagrees on 583 of 19,979 probed code points, and `\p{...}` needs
+ *     the `u` flag the identity escapes in this file's `\S`-spelled classes reject). It masks
+ *     the value EITHER WAY, but through the GENERIC rule's separator and value alternatives
+ *     (KEYWORD_SEPARATOR / KEYWORD_VALUE) and with the keyword and separator written back
+ *     intact, so it deletes neither the keyword nor the copula a later pass needs.
+ *
+ * That ordering is what makes the ambiguous branch safe in both directions: it never masks
+ * less than jq's Token rule (its separator alternatives are a superset of jq's `\s+`, its value
+ * class a superset of jq's `[A-Za-z0-9._-]+`, so every value jq's rule masks gets masked), and it
+ * stops in front of a word a later rule still needs - the copula, and the MySQL client name
+ * `_mysql_pw_all` anchors on (`MYSQL_ANCHOR_IN_VALUE`). The client-name half of that sentence is
+ * CONDITIONAL, and this comment used to state it unconditionally while the 288-input
+ * keyword-password class disproved it: preserving the client name is only the safe move while pass
+ * 5b masks a password that is not itself a keyword AND can reach it, so `makeMysqlPwKeywordScanner`
+ * is asked which of three things lies ahead and the mask goes ahead over the client name both when
+ * 5b would swallow a keyword and when 5b can reach no flag at all (see that function and the
+ * `mysqlPwAhead` use sites below). Where jq's `\b` refuses (\u00fc, \u00e9, \u0663,
+ * \u4e2d: letters and digits in Unicode terms) and the walked run stops at a pair the generic rule
+ * can still reach, the output is jq's byte for byte. It is NOT byte for byte in general, and this
+ * comment used to claim it was: when the value behind the copula is itself a keyword the mask
+ * walks over the whole run (`\u00a0token is password S3cretPw9` \u2192 this port ` token is ***`, the
+ * hooks ` Token *** password ***`), so ordinary words inside that run get masked here and left
+ * visible by jq. Those over-masks are pinned row by row in `ENGINE_DIVERGENCES` (several `over`
+ * rows, not one) and they are the accepted cost of a zone this port cannot resolve. Where jq's
+ * `\b` fires (\u00a9, an em dash, an astral character - the port sees the low surrogate, which is
+ * above ASCII either way, so the astral planes land on the safe side too) the port keeps the
+ * keyword's own spelling where jq writes `Token ***`, a literal difference on a line where both
+ * engines masked the value.
+ *
+ * The prompt path deliberately keeps a single `\b` rule (see `redactAuthSchemesProse`):
+ * `redactPrompt` runs no generic keyword rule at all, so there is nothing to reproduce jq's
+ * fall-through with - masking there is an over-mask in the safe direction, and splitting the
+ * anchor would only remove a mask.
+ */
+const TOKEN_ASCII_ANCHOR = String.raw`(?<![A-Za-z0-9_\u0080-\uffff])`;
+/** See TOKEN_ASCII_ANCHOR: the prefix characters where the two engines disagree about `\b`. */
+const TOKEN_AMBIGUOUS_ANCHOR = String.raw`(?<=[\u0080-\uffff])`;
+
+/**
  * Bearer scheme redaction (command path, min length 1).
  */
 function redactBearerScheme(str: string, minLen: number): string {
@@ -502,9 +785,108 @@ function redactBasicScheme(str: string, minLen: number): string {
 /**
  * Token scheme redaction (command path).
  */
+function maskAmbiguousTokenZone(source: string): string {
+  const ambiguous = new RegExp(
+    `(?<k>${TOKEN_AMBIGUOUS_ANCHOR}${foldSpelled("token")})(?<s>${KEYWORD_SEPARATOR})(?<v>${KEYWORD_VALUE})`,
+    "gi",
+  );
+  /**
+   * The ambiguous-zone mask, applied as an explicit scan rather than a `replace` callback
+   * because of the one case the match cannot answer on its own: a value that is itself a
+   * keyword (`<NBSP>token is password S3cretPw`). Under the reading where jq's boundary fires
+   * there, jq's Token rule ate the copula, `password` survived as a keyword, and jq's generic
+   * rule went on to mask `S3cretPw`. Masking only the value here deletes that keyword and leaks
+   * the secret behind it - the same mistake the anchor change made in the other direction, one
+   * word further right. So when the value is keyword-like the mask walks forward over the pairs
+   * it heads and masks the whole run: a superset of what either reading masks, at the cost of a
+   * few ordinary words on a line that already carries a non-ASCII character glued in front of
+   * `token`. A `replace` callback cannot do this - it replaces its own match region and no
+   * farther - hence the scan.
+   *
+   * The walk stops after the first pair whose value does not contain a keyword
+   * (`KEYWORD_CONTAINED`, deliberately wider than the ASCII-anchored `KEYWORD_HEAD`: see its
+   * comment), so it is linear and never runs past the pair that holds the secret - and it stops
+   * BEFORE a pair whose value carries a MySQL client name, because that pair is pass 5b's
+   * anchor and a run that swallowed it leaks the `-p<password>` behind it.
+   *
+   * The sentinel branch is unreachable today (`redactUrlUserinfo` runs after this pass, so no
+   * user text can contain the sentinel) and is kept so this pass stays the same function of its
+   * groups as `keywordReplacement`.
+   */
+  let out = "";
+  let cursor = 0;
+  // One forward `-p` scan for this whole pass, not one per question - see
+  // `makeMysqlPwKeywordScanner` for why the bound can be neither a window nor unbounded work.
+  const mysqlPwAhead = makeMysqlPwKeywordScanner(source);
+  ambiguous.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = ambiguous.exec(source)) !== null) {
+    const { k, s, v } = match.groups as { k: string; s: string; v: string };
+    if (v === REDACT_SENTINEL) continue;
+    // The value is a later rule's anchor: mask nothing here and let `_mysql_pw_all` have it - but
+    // only when that pass has something it can actually reach to mask, and only when what it masks
+    // is not a keyword.
+    let end = match.index + match[0].length;
+    const clientName = MYSQL_ANCHOR_IN_VALUE.test(v);
+    // Three answers, not two (see `makeMysqlPwKeywordScanner`): deferring is right only when pass
+    // 5b has a REACHABLE, NON-keyword password in front of it. When it would swallow a keyword the
+    // mask has to happen here, because deleting that keyword is what leaves the generic rule no
+    // anchor - and the run behind it has to be walked too, because the same consumption problem
+    // sits one word further right (`\u00a9token is mysql -ptoken password S3cretPw9X`: the generic rule
+    // masks `-ptoken`'s value `password` and the real secret behind it survives, while jq masked
+    // `-ptoken` at 5b and kept `password` intact as a keyword). When 5b can reach no flag at all
+    // (`none`), deferring protects nothing and leaves the client name standing for 5b's span to
+    // retry - which is the 155 s on `\u00e9token mysql ` repeated 26,000 times, where `main` masked the
+    // name at pass 3 in milliseconds. So `none` masks here, like `main` did, and does not walk.
+    const ahead = clientName ? mysqlPwAhead(end) : 'safe-to-defer';
+    if (clientName && ahead === 'safe-to-defer') continue;
+    const walksAsKeyword = KEYWORD_CONTAINED.test(v) || (clientName && ahead === 'eats-keyword');
+    if (walksAsKeyword) {
+      KEYWORD_PAIR_STICKY.lastIndex = end;
+      let pair: RegExpExecArray | null;
+      while ((pair = KEYWORD_PAIR_STICKY.exec(source)) !== null) {
+        // Same guard one pair further right: the walk masks a RUN, and a run that swallows a
+        // client name starves pass 5b exactly as the single-pair mask above would. It stops
+        // BEFORE this pair rather than over it, so the client name stays on the line - but only
+        // while 5b still has a reachable flag of its own to mask past here.
+        if (MYSQL_ANCHOR_IN_VALUE.test(pair[1]) && mysqlPwAhead(KEYWORD_PAIR_STICKY.lastIndex) === 'safe-to-defer') break;
+        end = KEYWORD_PAIR_STICKY.lastIndex;
+        if (!KEYWORD_CONTAINED.test(pair[1])) break;
+        KEYWORD_PAIR_STICKY.lastIndex = end;
+      }
+    }
+    out += source.slice(cursor, match.index + k.length + s.length) + "***";
+    cursor = end;
+    // Never let the scan re-enter what the walk already masked: a second `token` inside the
+    // walked run would otherwise emit its own `***` and rewind the cursor, duplicating text.
+    if (ambiguous.lastIndex < cursor) ambiguous.lastIndex = cursor;
+    if (ambiguous.lastIndex === match.index) ambiguous.lastIndex++;
+  }
+  return out + source.slice(cursor);
+}
+
+/**
+ * The two-anchor Token pass, command path. The ambiguous zone is masked FIRST, over the
+ * untouched input, and the ASCII-anchored rule runs over its output - not the other way round,
+ * which is what leaked `\u00a9token token password S3cretPw` (found by the 150,480-input sweep that
+ * was built to check the MySQL-anchor fix):
+ *
+ *   - jq's `\b` fires after \u00a9, so its leftmost match is the FIRST `token` and eats the second
+ *     one as its value, leaving `password S3cretPw` for the generic rule to mask;
+ *   - this port refused that first position (that is the whole point of the split), so an
+ *     ASCII-anchored pass run afterwards found its leftmost match at the SECOND `token` and ate
+ *     `password` - the keyword the generic rule needed - and `S3cretPw` survived.
+ *
+ * Masking the ambiguous zone first removes that mismatch: the zone's own scan already walks
+ * past the pairs a refused earlier match would have left reachable, so anything the ASCII rule
+ * can still see past the zone is text where the two engines agree about the match, and a
+ * `***` written by the zone is not a keyword either anchor can re-match.
+ */
 function redactTokenScheme(str: string): string {
-  // jq: the bare `\\btoken\\s+...` gsub in `redact`, command path, no length floor.
-  return str.replace(new RegExp(`\\b${foldSpelled("token")}${JS_WS}+([${FOLD_ALNUM}._-]+)`, "gi"), "Token ***");
+  // jq: the bare `\\btoken\\s+...` gsub in `redact`, command path, no length floor - split
+  // into the two anchors above, whose comment carries the reason (issue #116).
+  const agreed = new RegExp(`${TOKEN_ASCII_ANCHOR}${foldSpelled("token")}${JS_WS}+([${FOLD_ALNUM}._-]+)`, "gi");
+  return maskAmbiguousTokenZone(str).replace(agreed, "Token ***");
 }
 
 /**
@@ -523,6 +905,11 @@ function redactAuthSchemes(str: string): string {
 function redactAuthSchemesProse(str: string): string {
   let result = str;
   result = redactBearerScheme(result, 16);
+  // `\b` stays here on purpose, where the command path split its anchor at the seam (see
+  // TOKEN_ASCII_ANCHOR): this path has no generic keyword rule to fall through to, so a
+  // non-ASCII letter in front of `TOKEN` is a case where jq's `\b` refuses, jq stores the value
+  // whole, and this port masks it anyway. That is an over-mask in the safe direction; copying the lookbehind
+  // here would turn it into a leak on both engines.
   result = result.replace(new RegExp(`\\b${foldSpelled("token")}${JS_WS}+([${FOLD_ALNUM}._-]{16,})`, "gi"), "Token ***");
   result = redactBasicScheme(result, 16);
   return result;
@@ -620,8 +1007,8 @@ export function redact(str: string): string {
   // redaction.test.ts.
   const keywordPattern = (lead: string, suffix: string) =>
     "(" + lead + "(?:" + KEYWORD_ALTERNATION + ")" + suffix + ")" +
-      "(" + JS_WS + "*[:=]" + JS_WS + "*|" + JS_WS + "+(?:" + SEPARATOR_ALTERNATION + ")" + JS_WS + "+|" + JS_WS + "+)" +
-      "(\"[^\"]*\"|" + REDACT_SENTINEL + "|\"[^\\r\\n]*|" + jsNotWs("\"") + "+)";
+      "(" + KEYWORD_SEPARATOR + ")" +
+      "(" + KEYWORD_VALUE + ")";
   const keywordReplacement = (_match: string, keyword: string, sep: string, value: string) => {
     // If value is the sentinel, keep it as-is (will be unmasked later)
     if (value === REDACT_SENTINEL) {
@@ -655,7 +1042,7 @@ export function redact(str: string): string {
    * leaves visible. The over-mask those two pins cover is over-masking, never a leak, but it
    * is a divergence from the hooks on ordinary-looking text.
    */
-  const asciiKeywordSeenByPass6a = new RegExp("^\\w*(?:" + KEYWORD_ALTERNATION + ")\\w*$", "i");
+  const asciiKeywordSeenByPass6a = KEYWORD_HEAD;
   const widenedKeywordReplacement = (match: string, keyword: string, sep: string, value: string) =>
     /[^\x00-\x7f]/.test(keyword) && !asciiKeywordSeenByPass6a.test(keyword)
       ? keywordReplacement(match, keyword, sep, value)
