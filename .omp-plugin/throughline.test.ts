@@ -18,6 +18,14 @@ import * as path from "node:path";
 const SHIM = path.join(import.meta.dir, "..", "hooks", "post", "throughline.ts");
 const SESSION_ID = "test-session-id";
 
+// The suite controls its own environment: an ambient THROUGHLINE_DISABLE in the
+// calling shell propagates to the hooks/*.sh scripts this shim spawns (they
+// inherit process.env), so every buffer assertion fails with nothing wrong in the
+// code. Clear it at module load, before any test runs. The kill switch itself, and
+// the EPIPE regression below that sets the variable deliberately, stay owned by
+// their own tests (see dynamic/throughline#120).
+delete process.env.THROUGHLINE_DISABLE;
+
 let scratchDir: string;
 let originalCwd: string;
 let registered: Record<string, ((event: unknown, ctx: unknown) => Promise<void> | void)[]>;

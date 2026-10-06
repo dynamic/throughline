@@ -14,6 +14,15 @@ import { sessionCompacted, sessionCompactionRecovery } from './hooks/session-com
 import { sessionIdle } from './hooks/session-idle.js';
 import { tlDataDir, tlSafeSid } from './lib.js';
 
+// The suite controls its own environment: an ambient THROUGHLINE_DISABLE in the
+// calling shell (exported by a harness running CI locally) makes tlDisabled()
+// true for every hook, so all capture assertions fail with nothing wrong in the
+// code — a red check whose cause is invisible gets attributed to the change under
+// test. Clear it at module load, before any hook runs. Case 12m of tests/run.sh still
+// covers the kill switch for the shell hooks; this TypeScript tlDisabled() has no test of
+// its own, before or after this change (see dynamic/throughline#120).
+delete process.env.THROUGHLINE_DISABLE;
+
 // --- Real-shaped fixture builders --------------------------------------
 //
 // These mirror what @opencode-ai/sdk's generated types (and the OpenCode
