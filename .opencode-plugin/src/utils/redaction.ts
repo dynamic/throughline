@@ -121,7 +121,18 @@ function jsNotWs(extras: string): string {
  * over-match eats a later rule's keyword. The `over` residue of THIS class is pinned
  * alongside them, so a future change that turns one into a leak fails.
  */
-const JS_WORD_STAR = "(?:\\w|[^\\x00-\\x7f" + JS_WS_CHARS + "])*";
+/** One character of the over-approximated `\w` set, ready to quantify. */
+const JS_WORD_CHAR = "(?:\\w|[^\\x00-\\x7f" + JS_WS_CHARS + "])";
+const JS_WORD_STAR = JS_WORD_CHAR + "*";
+/**
+ * ASCII `\w` by code point, for the scan in `redact`'s pass 6b that has to walk a keyword
+ * occurrence back to the earliest start its ASCII lead could begin at. Same set as `\w`,
+ * written as code-point ranges because it runs per character.
+ */
+function isAsciiWordChar(code: number): boolean {
+  return (code >= 48 && code <= 57) || (code >= 65 && code <= 90) ||
+    (code >= 97 && code <= 122) || code === 95;
+}
 
 /**
  * Oniguruma's case folding, spelled out, because `(?i)` in jq and the `i` flag in JS
@@ -644,14 +655,19 @@ export function redact(str: string): string {
   // could end a match mid-run and resume right after it, masking what followed
   // (`password=TLREDACTSENTINELtoken=x` -> `password=***token=***` on BOTH engines).
   // The second lookbehind re-admits exactly that resume position; a latency fix does not
-  // get to mask less than the jq hooks. Pass 6b keeps the unbounded lead: its own
-  // quadratic path on non-ASCII runs is dynamic/throughline#118's, and its fast-path
-  // gate below means ASCII input never pays for it.
+  // get to mask less than the jq hooks. Pass 6b also drops its unbounded lead, but by
+  // DRIVING the scan rather than by anchoring it - see `widenedWordPass` below
+  // (dynamic/throughline#118) - and its fast-path gate means ASCII input never pays for it.
   const keywordLead6a = "(?:(?<!\\w)|(?<=" + REDACT_SENTINEL + "))\\w*";
+  // The two tail groups of the generic rule, split out of the single expression below so
+  // the pass 6b comment can name what a match needs after the keyword group; the
+  // concatenation is byte-identical to what this used to be.
+  const keywordSeparatorGroup =
+    "(" + JS_WS + "*[:=]" + JS_WS + "*|" + JS_WS + "+(?:" + SEPARATOR_ALTERNATION + ")" + JS_WS + "+|" + JS_WS + "+)";
+  const keywordValueGroup =
+    "(\"[^\"]*\"|" + REDACT_SENTINEL + "|\"[^\\r\\n]*|" + jsNotWs("\"") + "+)";
   const keywordPattern = (lead: string, suffix: string) =>
-    "(" + lead + "(?:" + KEYWORD_ALTERNATION + ")" + suffix + ")" +
-      "(" + JS_WS + "*[:=]" + JS_WS + "*|" + JS_WS + "+(?:" + SEPARATOR_ALTERNATION + ")" + JS_WS + "+|" + JS_WS + "+)" +
-      "(\"[^\"]*\"|" + REDACT_SENTINEL + "|\"[^\\r\\n]*|" + jsNotWs("\"") + "+)";
+    "(" + lead + "(?:" + KEYWORD_ALTERNATION + ")" + suffix + ")" + keywordSeparatorGroup + keywordValueGroup;
   const keywordReplacement = (_match: string, keyword: string, sep: string, value: string) => {
     // If value is the sentinel, keep it as-is (will be unmasked later)
     if (value === REDACT_SENTINEL) {
@@ -690,17 +706,113 @@ export function redact(str: string): string {
     /[^\x00-\x7f]/.test(keyword) && !asciiKeywordSeenByPass6a.test(keyword)
       ? keywordReplacement(match, keyword, sep, value)
       : match;
+  /**
+   * Pass 6b, driven so it cannot re-scan a word run it has already stepped over
+   * (dynamic/throughline#118). Measured on this machine BEFORE this driver, with the rule
+   * handed to `String.replace` as one global `replace`: `('token\u00e9').repeat(k)` took 207ms at
+   * 28,091 characters and 3,350ms at 112,331 - a 16.2x scaling ratio for a 4x-longer input -
+   * and `('password' + '\u6f22'.repeat(20)).repeat(k)` took 145ms / 2,313ms (15.9x) at the same
+   * two sizes; the issue's machine saw 300ms / 6,045ms and 139ms / 2,222ms for those two
+   * shapes. Quadratic, and `redact()` runs this in-process on the full unclamped bash
+   * command. After it both shapes are linear: 2.7ms / 3.6ms and 2.2ms / 2.5ms at the same
+   * sizes (pinned as a latency guard in `redaction.test.ts`). The mask this produces is
+   * byte-identical to what the global replace produced, by the two arguments below; only the
+   * cost changes.
+   *
+   * Why the old shape was quadratic. The suffix `JS_WORD_STAR` matches any word character
+   * plus any non-ASCII non-whitespace character, so from any start inside a long run of such
+   * text - CJK prose, or a base64-ish blob with an accent in it - it walks to the end of that
+   * run, then the separator alternatives - which all need a whitespace, `:` or `=` - fail, and
+   * the engine gives the suffix back one character at a time, re-trying the separator at each
+   * step. Every start whose lead can reach a keyword pays that, and a start can be reached
+   * O(run length) places away from the run end, so a run with no separator inside it costs
+   * O(run length)^2. Which is what the issue's two inputs are: CJK prose has no spaces, and a
+   * base64-ish blob that happens to carry `token` has no separator either.
+   *
+   * Why skipping the rest of a run after one failed attempt cannot change the output.
+   * Inside one maximal `JS_WORD_CHAR` run [rs, re):
+   *   1. the suffix always ends at `re`. Giving it back a character puts the next start
+   *      position on a character the suffix itself matched, and no separator alternative
+   *      can match such a character (`[:=]` and the whitespace classes are all outside the
+   *      class), so every backtracking step of the suffix is doomed;
+   *   2. therefore whether a start in the run completes at all depends only on what starts
+   *      at `re`, which is the same for every start in the run. The lead is written back
+   *      verbatim by the replacement and the suffix is part of the keyword group, so the
+   *      TEXT a completing match writes is also the same for every start, and so is where
+   *      the scan resumes (end of the value). The earliest start only decides which
+   *      equivalent match the engine reports;
+   *   3. so one failed attempt at the earliest start means no start in the run completes.
+   *      The driver emits the run verbatim and resumes at `re`.
+   * The earliest start is NOT `rs`, and that is the one place a naive linearisation would
+   * leak: the lead is ASCII `\\w*`, so a run like `\u4e2d\u4e2dtoken=x` has no match at its own
+   * first character (the lead cannot step over `\u4e2d` and no keyword starts there) while the
+   * start at `token` does complete. So the driver first asks whether the run holds a keyword
+   * occurrence at all - one failure from that scan means none is left anywhere in the text,
+   * because every match of the rule contains a keyword - and then anchors the single attempt
+   * where that keyword's ASCII word prefix starts, which is the earliest start that could
+   * reach any keyword. Both scans move strictly left to right, so the pass costs O(text) in
+   * total rather than O(run)^2.
+   */
+  const widenedWordPass = (text: string): string => {
+    // `y` on top of `g` makes `lastIndex` an ANCHOR rather than a hint: the attempt either
+    // completes at exactly `start` or reports nothing, so a failed attempt can never be
+    // read as "nothing here, but there is one further along" and skip work still owed.
+    const rule = new RegExp(keywordPattern("\\w*", JS_WORD_STAR), "giy");
+    // Word runs and keyword occurrences, each enumerated once, left to right.
+    const runs = new RegExp(JS_WORD_CHAR + "+", "g");
+    const keywords = new RegExp("(?:" + KEYWORD_ALTERNATION + ")", "gi");
+    let out = "";
+    let pos = 0;
+    let run: RegExpExecArray | null = null;
+    let runEnd = -1;
+    let keyword: RegExpExecArray | null = null;
+    for (;;) {
+      if (pos >= text.length) return out;
+      if (run === null || runEnd <= pos) {
+        runs.lastIndex = pos;
+        run = runs.exec(text);
+        if (run === null) return out + text.slice(pos);
+        runEnd = run.index + run[0].length;
+      }
+      const runStart = Math.max(run.index, pos);
+      if (keyword === null || keyword.index < runStart) {
+        keywords.lastIndex = runStart;
+        keyword = keywords.exec(text);
+        // Every match of the rule contains a keyword, so with none left in the text at or
+        // after this point there is nothing left to mask either.
+        if (keyword === null) return out + text.slice(pos);
+      }
+      if (keyword.index < runEnd) {
+        let start = keyword.index;
+        while (start > runStart && isAsciiWordChar(text.charCodeAt(start - 1))) start -= 1;
+        rule.lastIndex = start;
+        const match = rule.exec(text);
+        if (match !== null) {
+          out += text.slice(pos, start);
+          out += widenedKeywordReplacement(match[0], match[1], match[2], match[3]);
+          pos = start + match[0].length;
+          run = null;
+          runEnd = -1;
+          keyword = null;
+          continue;
+        }
+      }
+      out += text.slice(pos, runEnd);
+      pos = runEnd;
+    }
+  };
   // And the whole-string test is a fast path over that same rule rather than a second
   // condition: with no non-ASCII character in the text, no keyword group can carry one, so
   // every match pass 6b could see would be returned unchanged. It is here for cost - the
-  // WIDENED rule is still quadratic in the length of a long unbroken non-ASCII run on both
-  // engines (dynamic/throughline#118; the ASCII side of that measurement,
+  // WIDENED rule is quadratic in the length of a long unbroken non-ASCII run on both
+  // engines when handed to `String.replace` (dynamic/throughline#118, which
+  // `widenedWordPass` above now bounds; the ASCII side of that measurement,
   // dynamic/throughline#114, was fixed by anchoring pass 6a's lead above), the command
   // path runs it on the full unclamped bash command,
   // and a pasted base64 blob is ASCII, so running the widened pass at all would double the
   // cost of the common case for an output that cannot differ.
   if (/[^\x00-\x7f]/.test(result)) {
-    result = result.replace(new RegExp(keywordPattern("\\w*", JS_WORD_STAR), "gi"), widenedKeywordReplacement);
+    result = widenedWordPass(result);
   }
 
   // 7. Unmask sentinel
