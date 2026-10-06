@@ -567,6 +567,17 @@ const MYSQL_ANCHOR_IN_VALUE = new RegExp(MYSQL_CLIENT);
 const MYSQL_PW_AHEAD = /-p["']?([^\s"'`;|&]+)/;
 
 /**
+ * How far `mysqlMaskWouldEatKeyword` looks for that `-p`, in code units. A BOUND, and the reason
+ * is cost, not semantics: the guard runs per ambiguous-zone match, so an unbounded "rest of the
+ * line" makes the pass O(matches x line length) - the review of dynamic/throughline#122 measured
+ * `\u00e9token mysql ` repeated 26,000 times at 238 s against `main`'s 16 ms, and `redact()` runs
+ * in-process on the whole bash command. A client name whose password sits beyond this window
+ * defers to pass 5b as it did before the guard existed, which is the older, cheaper behaviour;
+ * past-the-window shapes are stated as a gap rather than fixed here.
+ */
+const MYSQL_PW_LOOKAHEAD = 4096;
+
+/**
  * Would the MySQL mask this ambiguous-zone value is being preserved for swallow a KEYWORD?
  * (Review of dynamic/throughline#122, second round: the guard above was written as though
  * preserving the client name were always the safe move, and it is not.)
@@ -588,9 +599,7 @@ const MYSQL_PW_AHEAD = /-p["']?([^\s"'`;|&]+)/;
  * `S3cretPw9X` in the clear), which is the accepted direction of this zone.
  */
 function mysqlMaskWouldEatKeyword(source: string, from: number): boolean {
-  const lineEnd = source.indexOf("\n", from);
-  const rest = lineEnd < 0 ? source.slice(from) : source.slice(from, lineEnd);
-  const m = MYSQL_PW_AHEAD.exec(rest);
+  const m = MYSQL_PW_AHEAD.exec(source.slice(from, from + MYSQL_PW_LOOKAHEAD));
   return m !== null && KEYWORD_CONTAINED.test(m[1]);
 }
 
@@ -715,9 +724,19 @@ function maskAmbiguousTokenZone(source: string): string {
     if (v === REDACT_SENTINEL) continue;
     // The value is a later rule's anchor: mask nothing here and let `_mysql_pw_all` have it -
     // unless that mask would swallow a keyword, which is the case the guard cannot defer in.
-    if (MYSQL_ANCHOR_IN_VALUE.test(v) && !mysqlMaskWouldEatKeyword(source, match.index + match[0].length)) continue;
     let end = match.index + match[0].length;
-    if (KEYWORD_CONTAINED.test(v)) {
+    // Both halves of the client-name question at once: defer, or mask and walk. Deferring is
+    // right when pass 5b masks a NON-keyword password; when it would swallow a keyword, masking
+    // the client name here is what leaves the generic rule an anchor - and the run behind it has
+    // to be walked too, because the same consumption problem sits one word further right
+    // (`\u00a9token is mysql -ptoken password S3cretPw9X`: the generic rule masks `-ptoken`'s value
+    // `password` and the real secret behind it survives, while jq masked `-ptoken` at 5b and kept
+    // `password` intact as a keyword).
+    const walksAsKeyword =
+      KEYWORD_CONTAINED.test(v) ||
+      (MYSQL_ANCHOR_IN_VALUE.test(v) && mysqlMaskWouldEatKeyword(source, end));
+    if (MYSQL_ANCHOR_IN_VALUE.test(v) && !walksAsKeyword) continue;
+    if (walksAsKeyword) {
       KEYWORD_PAIR_STICKY.lastIndex = end;
       let pair: RegExpExecArray | null;
       while ((pair = KEYWORD_PAIR_STICKY.exec(source)) !== null) {

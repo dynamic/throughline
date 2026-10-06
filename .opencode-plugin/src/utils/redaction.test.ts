@@ -1407,14 +1407,14 @@ const ENGINE_DIVERGENCES: readonly {
     input: '\u00a9token mysql -ppassword S3cretPw9X',
     direction: 'over',
     jq: '\u00a9Token *** -ppassword ***',
-    ts: '\u00a9token *** -ppassword ***',
+    ts: '\u00a9token ***',
     note: 'LITERAL-ONLY, and the shape that made the client-name guard a leak: where jq\u0027s boundary fires after \u00a9 its Token rule eats `mysql`, `_mysql_pw_all` never anchors, and jq\u0027s generic rule reads the glued `ppassword` as a keyword and masks the secret - so this port has to mask `mysql` too, which the guard now does exactly when the password ahead is keyword-shaped. Deferring to 5b there masked `-ppassword` outright, deleted the keyword the generic rule needed, and left `S3cretPw9X` in cleartext on an input `main` masks (288 inputs in the review\u0027s 233,280-input fuzz, all of them this shape). Both outputs pinned: the only difference left is jq\u0027s `Token` literal.',
   },
   {
     input: '\u00e9token mysql -ppassword S3cretPw9X',
     direction: 'over',
     jq: '\u00e9token *** -p*** S3cretPw9X',
-    ts: '\u00e9token *** -ppassword ***',
+    ts: '\u00e9token ***',
     note: 'OVER-REDACTION on the boundary-REFUSES side of the same zone, pinned because the two engines mask DIFFERENT words and only this port masks the secret: jq\u0027s `\b` refuses after \u00e9, so its pass 5b anchors on `mysql`, masks the keyword `password` as the password, and leaves `S3cretPw9X`; this port cannot tell \u00e9 from \u00a9, masks the client name, and lets its generic rule mask the secret. That is the accepted asymmetry of the ambiguous zone - it masks the union of the two readings, so it over-masks a word jq ate and never under-masks the credential.',
   },
 ];
@@ -1700,9 +1700,14 @@ describe('regex-engine parity with jq (issue #90)', () => {
       // `password` outright and leaves `S3cretPw9X` in the clear, so masking it here is an
       // over-mask, not parity - the port has to mask the secret either way.
       '\u00e9token mysql -ppassword ' + secret,
-      // And the walk: the pair whose value is the client name sits behind a keyword pair, so
-      // this is the guard applied from inside the walked run rather than from the first match.
+      // The in-walk half of the same guard: the pair whose value is the CLIENT name sits
+      // behind a keyword pair, so this exercises `MYSQL_ANCHOR_IN_VALUE` inside the walked run
+      // rather than at the first match. Review of #122 flagged that the previous input here
+      // (a `password \u00fcsecret` run) carried no client name at all and so never reached it.
       '\u00a0token is password \u00fcsecret ' + secret,
+      '\u00a0token is password mysql -ppassword ' + secret,
+      '\u00a9token is mysql -ptoken password ' + secret,
+      '\u00e9token: mysql -ppassword password ' + secret,
     ];
     for (const input of inputs) {
       const out = redact(input);
@@ -1710,8 +1715,8 @@ describe('regex-engine parity with jq (issue #90)', () => {
       assert.ok(out.includes('***'), `nothing was masked at all, so the line above proves nothing: ${JSON.stringify(out)}`);
     }
     // And as text, on the two inputs whose shape the fix settles.
-    assert.strictEqual(redact('\u00a9token mysql -ppassword ' + secret), '\u00a9token *** -ppassword ***');
-    assert.strictEqual(redact('\u00e9token mysql -ppassword ' + secret), '\u00e9token *** -ppassword ***');
+    assert.strictEqual(redact('\u00a9token mysql -ppassword ' + secret), '\u00a9token ***');
+    assert.strictEqual(redact('\u00e9token mysql -ppassword ' + secret), '\u00e9token ***');
   });
 
   /**
