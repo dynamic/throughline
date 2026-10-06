@@ -1382,6 +1382,24 @@ const ENGINE_DIVERGENCES: readonly {
     ts: '\u00a9token ***',
     note: 'OVER-REDACTION by the chain walk, pinned because the two engines match at DIFFERENT positions here: jq anchors after \u00a9, so its leftmost match is the first `token` and it eats the second one, leaving `password S3cretPw` to the generic rule; this port refuses the first position, and an ASCII-anchored pass run over the zone\u0027s output then reaches the second `token` and eats `password` - the keyword the generic rule needed - which is exactly how this input leaked. Running the ambiguous zone FIRST means its walk covers the whole run and no ASCII-anchored match is left to eat a keyword the generic pass still needed.',
   },
+  // The cost of KEYWORD_CONTAINED being a substring test, pinned rather than asserted in a
+  // comment. Review of dynamic/throughline#122 asked that this be named as a known cost; these
+  // two rows are what "named" means in a suite: the prose word masked here, and the prose word
+  // that is NOT masked, both written down with both engines' output.
+  {
+    input: '\u00a9token is authority S3cretPw9',
+    direction: 'over',
+    jq: '\u00a9Token *** authority ***',
+    ts: '\u00a9token is ***',
+    note: 'OVER-REDACTION of ordinary prose, and the cost this branch accepts: `authority` is not a keyword, it CONTAINS one (`auth(?:orization)?`), and KEYWORD_CONTAINED is a substring test on purpose (a Unicode-affixed keyword like `\u00fcsecret` only passes that test, and anchoring it would leak - see the row above). So the walk runs past `authority` and masks the whole run. jq leaves the word standing and masks only the secret. Both engines mask `S3cretPw9`; this one also eats an English word on a line that already has \u00a9 welded to `token`. Siblings measured the same way: `author`, `tokenish`, `credentialist`.',
+  },
+  {
+    input: '\u00a9token is passport S3cretPw9',
+    direction: 'over',
+    jq: '\u00a9Token *** passport S3cretPw9',
+    ts: '\u00a9token is *** S3cretPw9',
+    note: 'THE OTHER HALF of that cost, pinned so the cost cannot be overstated either: `passport` and `keychain` contain no keyword in the list (`pass` and `key` are not keywords alone), so the walk does NOT extend over them and nothing behind them is masked. Both engines then leave `S3cretPw9` visible - jq\u0027s own Token rule ate the copula, so its generic rule has no `token is <value>` pair left, and this port masked the value through the generic alternatives and stopped. Literal-only divergence, no leak on either side, and the reason the walk stays a substring test: widening it further would eat more prose, and narrowing it leaks.',
+  },
 ];
 
 describe('regex-engine parity with jq (issue #90)', () => {

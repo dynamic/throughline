@@ -516,6 +516,20 @@ const KEYWORD_HEAD = new RegExp("^\\w*(?:" + KEYWORD_ALTERNATION + ")\\w*$", "i"
  * to be masked by the walk too; anchoring on ASCII `\w` would stop the walk one pair short and
  * leak. Over-approximating here costs masking on a line that already has a non-ASCII character
  * glued in front of `token`, never a mask the hooks have.
+ *
+ * KNOWN COST of the substring test, named because it is real and measured (review of
+ * dynamic/throughline#122 asked for it to be named, not fixed): the alternation is unanchored,
+ * so an ORDINARY PROSE value that merely CONTAINS a keyword substring extends the walk. On this
+ * build \u00a9token is authority S3cretPw9 and \u00a9token is author S3cretPw9 walk over both words and
+ * write `\u00a9token is ***` where the hooks write `\u00a9Token *** authority ***` - `author`/`authority`
+ * match the `auth(?:orization)?` keyword, `tokenish` matches `token`, `credentialist` matches
+ * `credential`. Two of the words that review named do NOT extend it, and they are the safe half
+ * of the class: `passport` and `keychain` contain no keyword in the list (`pass` and `key` are
+ * not keywords on their own), so the walk stops there and nothing behind them gets masked -
+ * which is what jq does too (`\u00a9Token *** passport S3cretPw9`, secret and all). The direction is
+ * what makes this acceptable: every input in this class over-masks ordinary English on a line
+ * that already carries a non-ASCII character welded to `token`, and none of them masks LESS than
+ * the hooks do. Pinned as an `over` row in `ENGINE_DIVERGENCES` so the cost cannot grow silently.
  */
 const KEYWORD_CONTAINED = new RegExp("(?:" + KEYWORD_ALTERNATION + ")", "i");
 /**
