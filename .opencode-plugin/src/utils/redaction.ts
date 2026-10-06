@@ -561,21 +561,13 @@ const MYSQL_ANCHOR_IN_VALUE = new RegExp(MYSQL_CLIENT);
 
 /**
  * Pass 5b's `-p` and the head of its value, enough to ask what that mask WOULD swallow. The
- * value head stops at whitespace and at the span's hard stops, so it never reads past the
- * argument `_mysql_pw_all` masks; the newline cut below mirrors the span's own hard stop.
+ * value head stops at whitespace and at the span's hard stops, so a captured value never reads
+ * past the argument `_mysql_pw_all` masks - a newline included, since `\s` covers it. The SEARCH
+ * for the `-p` is not line-bounded, in this pattern or in the scanner that consumes it: pass 5b is
+ * a whole-string `gsub`, so a `-p` on a later line is a real mask, and a question asked about an
+ * earlier line is answered about it too.
  */
 const MYSQL_PW_AHEAD = /-p["']?([^\s"'`;|&]+)/;
-
-/**
- * How far `mysqlMaskWouldEatKeyword` looks for that `-p`, in code units. A BOUND, and the reason
- * is cost, not semantics: the guard runs per ambiguous-zone match, so an unbounded "rest of the
- * line" makes the pass O(matches x line length) - the review of dynamic/throughline#122 measured
- * `\u00e9token mysql ` repeated 26,000 times at 238 s against `main`'s 16 ms, and `redact()` runs
- * in-process on the whole bash command. A client name whose password sits beyond this window
- * defers to pass 5b as it did before the guard existed, which is the older, cheaper behaviour;
- * past-the-window shapes are stated as a gap rather than fixed here.
- */
-const MYSQL_PW_LOOKAHEAD = 4096;
 
 /**
  * Would the MySQL mask this ambiguous-zone value is being preserved for swallow a KEYWORD?
@@ -597,10 +589,59 @@ const MYSQL_PW_LOOKAHEAD = 4096;
  * on its own - which is what it does under the boundary-fires reading, and under the
  * boundary-refuses reading it masks MORE than jq (jq's own pass 5b ate `password` there and left
  * `S3cretPw9X` in the clear), which is the accepted direction of this zone.
+ *
+ * THE SCAN IS BOUND BY AMORTISATION, NOT BY A WINDOW, and the window it replaced leaked. The first
+ * version of this guard sliced `source.slice(from, from + 4096)` per ambiguous match, which is what
+ * made the pass O(matches x window): `\u00e9token mysql ` repeated 26,000 times measured 238 s against
+ * `main`'s 16 ms, and `redact()` runs in-process on the whole unclamped bash command. Trimming the
+ * window to 4096 code units fixed the time and silently created a LEAK: the -p beyond the window is
+ * invisible, the guard answers "no", the client name is preserved for pass 5b, and pass 5b masks a
+ * keyword password - the exact failure this guard exists to prevent. Measured on this branch before
+ * the scan below replaced it, `\u00a9token mysql ` + 5,000 `x` + ` -ppassword S3cretPw9X`: the secret
+ * SURVIVES here, while `jq` (with the hooks' own defs) and a build of `main` both mask it. Same at
+ * 100,000 filler characters. So a bound that trades masking for time is not an option in this zone;
+ * the bound has to be in the work, not in the distance.
+ *
+ * This factory is that bound: one forward scan of `source` for the whole Token pass, resumed from
+ * where the last scan stopped, because the positions asked about only move right (the ambiguous
+ * matches are executed left to right and the walk only advances). One `-p` found ahead is cached and
+ * reused by every question whose position sits before it; a line with no `-p` anywhere costs a single
+ * scan and then answers from the `exhausted` flag. Total regex work is O(source) per pass instead of
+ * O(matches x window), and no `-p` is ever out of range. Widening the visible distance only ever
+ * turns a "defer" into a "mask", never the reverse, so this masks MORE than the windowed version
+ * wherever the two differ - the safe direction, and the reason the pinned `over` rows absorb it
+ * rather than a new leak row.
+ *
+ * What it does NOT change: the search is not line-bounded, so on a multi-line command the `-p` it
+ * finds may sit on a later line than the client name that motivated the question (the windowed
+ * version had the same property, just a shorter reach). Pass 5b is a whole-string `gsub`, so a later
+ * line's client-anchored mask is real, and the direction here is still to mask.
  */
-function mysqlMaskWouldEatKeyword(source: string, from: number): boolean {
-  const m = MYSQL_PW_AHEAD.exec(source.slice(from, from + MYSQL_PW_LOOKAHEAD));
-  return m !== null && KEYWORD_CONTAINED.test(m[1]);
+function makeMysqlPwKeywordScanner(source: string): (from: number) => boolean {
+  const scan = new RegExp(MYSQL_PW_AHEAD.source, "g");
+  let hitPos = -1;
+  let hitKeyword = false;
+  let scanFrom = 0;
+  let exhausted = false;
+  return function mysqlMaskWouldEatKeyword(from: number): boolean {
+    // A cached `-p` still ahead of the question answers it; the pattern cannot match zero width
+    // (its own literal is two characters), so `scanFrom` always advances and a null result is
+    // final for every later question.
+    if (hitPos >= from && hitPos !== -1) return hitKeyword;
+    if (exhausted) return false;
+    scan.lastIndex = hitPos >= from ? scanFrom : from;
+    const m = scan.exec(source);
+    if (m === null) {
+      exhausted = true;
+      hitPos = -1;
+      hitKeyword = false;
+      return false;
+    }
+    hitPos = m.index;
+    hitKeyword = KEYWORD_CONTAINED.test(m[1]);
+    scanFrom = hitPos + 1;
+    return hitKeyword;
+  };
 }
 
 
@@ -639,9 +680,14 @@ function mysqlMaskWouldEatKeyword(source: string, from: number): boolean {
  *
  * That ordering is what makes the ambiguous branch safe in both directions: it never masks
  * less than jq's Token rule (its separator alternatives are a superset of jq's `\s+`, its value
- * class a superset of jq's `[A-Za-z0-9._-]+`, so every value jq's rule masks gets masked), and
- * it stops in front of a word a later rule still needs - the copula, and the MySQL client name
- * `_mysql_pw_all` anchors on (`MYSQL_ANCHOR_IN_VALUE`). Where jq's `\b` refuses (\u00fc, \u00e9, \u0663,
+ * class a superset of jq's `[A-Za-z0-9._-]+`, so every value jq's rule masks gets masked), and it
+ * stops in front of a word a later rule still needs - the copula, and the MySQL client name
+ * `_mysql_pw_all` anchors on (`MYSQL_ANCHOR_IN_VALUE`). The client-name half of that sentence is
+ * CONDITIONAL, and this comment used to state it unconditionally while the 288-input
+ * keyword-password class disproved it: preserving the client name is only the safe move while pass
+ * 5b masks a password that is not itself a keyword, so `makeMysqlPwKeywordScanner` is asked which
+ * one it is and the mask goes ahead over the client name when 5b would swallow a keyword (see that
+ * function and `mysqlMaskWouldEatKeyword`'s use sites below). Where jq's `\b` refuses (\u00fc, \u00e9, \u0663,
  * \u4e2d: letters and digits in Unicode terms) and the walked run stops at a pair the generic rule
  * can still reach, the output is jq's byte for byte. It is NOT byte for byte in general, and this
  * comment used to claim it was: when the value behind the copula is itself a keyword the mask
@@ -717,6 +763,9 @@ function maskAmbiguousTokenZone(source: string): string {
    */
   let out = "";
   let cursor = 0;
+  // One forward `-p` scan for this whole pass, not one per question - see
+  // `makeMysqlPwKeywordScanner` for why the bound cannot be a window.
+  const mysqlMaskWouldEatKeyword = makeMysqlPwKeywordScanner(source);
   ambiguous.lastIndex = 0;
   let match: RegExpExecArray | null;
   while ((match = ambiguous.exec(source)) !== null) {
@@ -734,7 +783,7 @@ function maskAmbiguousTokenZone(source: string): string {
     // `password` intact as a keyword).
     const walksAsKeyword =
       KEYWORD_CONTAINED.test(v) ||
-      (MYSQL_ANCHOR_IN_VALUE.test(v) && mysqlMaskWouldEatKeyword(source, end));
+      (MYSQL_ANCHOR_IN_VALUE.test(v) && mysqlMaskWouldEatKeyword(end));
     if (MYSQL_ANCHOR_IN_VALUE.test(v) && !walksAsKeyword) continue;
     if (walksAsKeyword) {
       KEYWORD_PAIR_STICKY.lastIndex = end;
@@ -743,7 +792,7 @@ function maskAmbiguousTokenZone(source: string): string {
         // Same guard one pair further right: the walk masks a RUN, and a run that swallows a
         // client name starves pass 5b exactly as the single-pair mask above would. It stops
         // BEFORE this pair rather than over it, so the client name stays on the line.
-        if (MYSQL_ANCHOR_IN_VALUE.test(pair[1]) && !mysqlMaskWouldEatKeyword(source, KEYWORD_PAIR_STICKY.lastIndex)) break;
+        if (MYSQL_ANCHOR_IN_VALUE.test(pair[1]) && !mysqlMaskWouldEatKeyword(KEYWORD_PAIR_STICKY.lastIndex)) break;
         end = KEYWORD_PAIR_STICKY.lastIndex;
         if (!KEYWORD_CONTAINED.test(pair[1])) break;
         KEYWORD_PAIR_STICKY.lastIndex = end;

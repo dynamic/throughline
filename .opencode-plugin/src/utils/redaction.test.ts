@@ -1720,6 +1720,58 @@ describe('regex-engine parity with jq (issue #90)', () => {
   });
 
   /**
+   * The `-p` the client-name guard asks about must be IN RANGE, not merely close. The first version
+   * of the guard sliced a 4096-code-unit window per ambiguous match to keep the pass off the
+   * quadratic that `\u00e9token mysql ` repeated 26,000 times measured (238 s against `main`'s 21 ms), and
+   * the window silently un-fixed the thing the guard exists to fix: past 4096 code units the `-p`
+   * was invisible, the guard answered "the 5b mask will not swallow a keyword", the client name was
+   * preserved, 5b masked a keyword password, and the generic rule was left with no keyword - so the
+   * secret survived on an input both `jq` (with the hooks' own defs) and `main` mask. Measured on the
+   * windowed build before this test existed: `\u00a9token mysql ` + 5,000 `x` + ` -ppassword S3cretPw9X`
+   * leaked, and so did the same at 100,000. The scan is now amortised over the pass instead of
+   * windowed, so no `-p` is out of range and the pass does not go back to O(matches x window).
+   */
+  it('finds the keyword-shaped MySQL password beyond the window the first guard used, where a bounded lookahead leaked (#122 round 7 review)', () => {
+    const secret = 'S3cretPw9X';
+    const beyond = (n: number) => '\u00a9token mysql ' + 'x'.repeat(n) + ' -ppassword ' + secret;
+    const inputs: readonly string[] = [
+      // Just past the old 4096 bound, so a regression to a window of that size fails here too.
+      beyond(4100),
+      beyond(5000),
+      beyond(20000),
+      // The same distance inside a WALKED run: the client-name pair sits behind a keyword pair, so
+      // this is the in-walk call site, not the first-match one.
+      '\u00a0token is password ' + beyond(4100),
+    ];
+    for (const input of inputs) {
+      const out = redact(input);
+      assert.ok(!out.includes(secret), `the secret behind the out-of-window keyword password survived: ${JSON.stringify(out.slice(-60))}`);
+      assert.ok(out.includes('***'), `nothing was masked at all, so the line above proves nothing: ${JSON.stringify(out.slice(0, 60))}`);
+    }
+    // And as text on the shortest of them. The zone masks the client name (that is the fix), the
+    // 5b mask of the keyword password is gone with it, and the generic rule then masks the secret
+    // behind `-ppassword` - which is precisely the ordering the windowed guard destroyed.
+    assert.strictEqual(redact(beyond(4100)), '\u00a9token *** -ppassword ***');
+  });
+
+  /**
+   * The cost side of the same change, pinned so it cannot regress into either direction: the guard
+   * may not slice a window per match again (it leaks, per the test above) and it may not rescan the
+   * rest of the line per match either (that is the 238 s). One `-p` found ahead is reused, and a line
+   * with no `-p` at all is scanned once for the whole pass. Bound is loose (observed low single-digit
+   * ms); it exists to fail a change that puts a per-match slice or a per-match rescan back.
+   */
+  it('scans for the MySQL -p once per pass instead of once per client name, on a long run of them', () => {
+    const input = ('\u00a9token mysql ' + 'x'.repeat(100) + ' ').repeat(1000) + '-ppassword S3cretPw9X';
+    const started = Date.now();
+    const out = redact(input);
+    const elapsed = Date.now() - started;
+    assert.ok(out.includes('***'), 'nothing was masked, so the timing proves nothing');
+    assert.ok(!out.includes('S3cretPw9X'), `the trailing secret survived: ${JSON.stringify(out.slice(-40))}`);
+    assert.ok(elapsed < 4000, `redact() took ${elapsed}ms on a ${input.length}-character command; the -p scan is per client name again`);
+  });
+
+  /**
    * The `under` rows, asserted the same way but on the port's own output only, so a pinned
    * LEAK is checked on a machine where the differential test skips for want of `jq`. Without
    * this the leak pins are only as strong as the machine they run on, which is the wrong
