@@ -1251,10 +1251,10 @@ const ENGINE_DIVERGENCES: readonly {
     direction: 'over',
     note: 'Co (private use): no Unicode property resolves this one either way, which is the honest limit of any attempt to spell the Oniguruma word set out in JS.',
   },
-  // The two scheme-relative userinfo inputs that used to be `over` rows here are NO
-  // LONGER divergences: jq's `_url` anchor was widened from `://` to `//` for issue #115,
-  // so both engines now mask them. They are asserted directly in `WIDER_THAN_JQ` below
-  // and carried in the differential corpus, which fails if either side stops masking.
+  // Scheme-relative userinfo (`//user:pw@host`, `x//user:pw@host`) is NOT a divergence:
+  // both engines anchor on `//` and mask it (jq's `_url` since issue #115). It is asserted
+  // directly in `SCHEME_RELATIVE_USERINFO` below and carried in the differential corpus,
+  // so a mask dropped on either side fails a test.
   {
     // Same `` mechanism as the two `under` rows before it, on the Token-scheme word rule
     // instead of the SendGrid or MySQL ones, and OLD: `main` leaks this input byte-for-byte
@@ -1441,21 +1441,19 @@ describe('regex-engine parity with jq (issue #90)', () => {
   ];
 
   /**
-   * Scheme-relative userinfo, asserted directly rather than only through the
-   * jq-differential test (which skips where jq is absent). This used to be the one
-   * place the port masked MORE than jq - jq's `_url` anchored on `://` while this port
-   * anchored on `//` - and the two inputs were pinned as `over` rows in
-   * `ENGINE_DIVERGENCES`. Issue #115 widened jq's anchor to `//` too, closing the
-   * divergence; these assertions stay as the direct, jq-free pin that neither engine
-   * un-masks a credential in userinfo position.
+   * Scheme-relative userinfo: a credential in `//user:password@host` position is
+   * masked with no scheme in front of the `//`. Asserted directly, and not only
+   * through the jq-differential test, because that one skips where `jq` is absent -
+   * without these lines the mask would be unproven on a machine with no second
+   * engine. Both engines anchor on `//` (jq's `_url` since issue #115).
    */
-  const WIDER_THAN_JQ: readonly [string, string][] = [
+  const SCHEME_RELATIVE_USERINFO: readonly [string, string][] = [
     ['//user:pw@host', '//user:***@host'],
     ['x//user:pw@host', 'x//user:***@host'],
   ];
 
-  for (const [input, expected] of WIDER_THAN_JQ) {
-    it(`masks scheme-relative userinfo in ${JSON.stringify(input)} (closed divergence, issue #115)`, () => {
+  for (const [input, expected] of SCHEME_RELATIVE_USERINFO) {
+    it(`masks scheme-relative userinfo in ${JSON.stringify(input)}`, () => {
       assert.strictEqual(redact(input), expected);
     });
   }

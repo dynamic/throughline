@@ -827,6 +827,13 @@ tl_jq_redact_defs() {
   # each length-gated) - things that are never accidentally spelled by an
   # English sentence.
   #
+  # `_url` is the one of those four that can fire on ordinary text: since issue
+  # #115 its anchor is `//` rather than `://`, so a line carrying `//word:...@`
+  # - a `//TODO:fix@later` comment, a `// see:x@y` note - is masked on this path
+  # too. Accepted: the mask replaces only the userinfo password run, the prose
+  # around it survives, and the alternative is an unmasked credential in a
+  # scheme-relative URL.
+  #
   # Deliberately DOES NOT include a generic keyword+separator rule (unlike
   # `redact`, which has one for the command path). Three rounds of trying to
   # make a keyword-boundary regex tell "real credential label" from "ordinary
