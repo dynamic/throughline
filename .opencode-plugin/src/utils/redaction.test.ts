@@ -1901,8 +1901,8 @@ describe('regex-engine parity with jq (issue #90)', () => {
    * 3,350ms at 112,331 (a 16.2x scaling ratio for a 4x-longer input); `('password' +
    * '\u6f22'.repeat(20)).repeat(k)` took 145ms / 2,313ms (15.9x) at 28,011 and 112,011
    * characters. Quadratic, in-process, on the full unclamped bash command, and the issue's
-   * machine saw the same shapes at 300ms / 6,045ms and 139ms / 2,222ms. After it: 2.7ms /
-   * 3.6ms (1.4x) and 2.2ms / 2.5ms (1.1x). The inputs are the issue's own reproducers ON
+   * machine saw the same shapes at 300ms / 6,045ms and 139ms / 2,222ms. After it: 2.9ms /
+   * 4.1ms (1.4x) and 2.1ms / 2.7ms (1.3x). The inputs are the issue's own reproducers ON
    * PURPOSE - a run with no separator inside it is what makes the widened suffix walk to the
    * run end from every start the lead can reach. The mask is asserted on a LEADING
    * `password=x` rather than inside the run, because nothing inside such a run is maskable (no
@@ -1946,7 +1946,13 @@ describe('regex-engine parity with jq (issue #90)', () => {
    * output the pre-#118 code gives (every one of them also matches the jq hooks; the
    * `\u4e2d`/`\u6f22`-prefixed shapes are outside the seeded corpus's alphabet, which is why they
    * are pinned here rather than fuzzed - a 22,000-input differential run over an alphabet that
-   * includes them found no difference either, but that harness is not in the suite).
+   * includes them found no difference either, but that harness is not in the suite). The
+   * hyphenated rows are the shape the first version of this rewrite got wrong: `api-key`,
+   * `access-key` and `client-id` contain a character that is neither a word character nor
+   * non-ASCII, so such a keyword starts in one run and ends in the next, and an attempt
+   * anchored on an earlier keyword in the first run fails at the hyphen without ever reaching
+   * the start that can complete. Each row was run through the jq hooks as well and the pinned
+   * string is what jq gives.
    */
   it('still finds the keyword inside a non-ASCII run when the run does not start with one', () => {
     const cases: readonly [string, string][] = [
@@ -1972,6 +1978,15 @@ describe('regex-engine parity with jq (issue #90)', () => {
       ['\u4e2d\u4e2dauth\u4e2d\u4e2d\u4e2d client_id=v', '\u4e2d\u4e2dauth\u4e2d\u4e2d\u4e2d ***'],
       ['token\u00e9=S3cret', 'token\u00e9=***'],
       ['token\u00e9token="a b"c', 'token\u00e9token=***'],
+      ['token\u6f22api-key\u6f22=S3cret', 'token\u6f22api-key\u6f22=***'],
+      ['token\u6f22client-id\u6f22=S3cret', 'token\u6f22client-id\u6f22=***'],
+      ['password\u00e9access-key\u00e9: S3cret', 'password\u00e9access-key\u00e9: ***'],
+      ['\u6f22api-key\u6f22=S3cret', '\u6f22api-key\u6f22=***'],
+      ['\u6f22access-key\u6f22x was S3cret', '\u6f22access-key\u6f22x was ***'],
+      ['token\u6f22api-key\u6f22secret\u6f22=S3cret', 'token\u6f22api-key\u6f22secret\u6f22=***'],
+      ['\u6f22api-key\u6f22=***S3cret', '\u6f22api-key\u6f22=***'],
+      ['\u6f22client-id\u6f22', '\u6f22client-id\u6f22'],
+      ['\u6f22\u6f22api-key\u6f22"x y"', '\u6f22\u6f22api-key\u6f22"x y"'],
       ['pa\u017f\u017fword "open sesame passwd:"open sesame', 'pa\u017f\u017fword ***open sesame'],
       ['password=TLREDACTSENTINELtoken=x', 'password=***token=***'],
       ['pa\u00dfword=S3cret', 'pa\u00dfword=***'],
@@ -1983,5 +1998,50 @@ describe('regex-engine parity with jq (issue #90)', () => {
     for (const [input, expected] of cases) {
       assert.strictEqual(redact(input), expected, `redact(${JSON.stringify(input)}) changed output`);
     }
+  });
+
+  /**
+   * The same class again, against jq rather than against a table (the second BLOCKING
+   * finding on dynamic/throughline#131: the table above cannot see a keyword that leaves the
+   * run it starts in, and `api-key` in `token漢api-key漢=S3cret` does exactly that). Three of
+   * the nine keywords in `KEYWORD_WORDS` are spelled with `[_-]`, so a hyphenated keyword can
+   * straddle a run boundary, and a pass that adjudicates a run from one anchor has to attempt
+   * the straddling start separately - `token漢api-key漢=S3cret` masks nothing at the hyphen and
+   * is reachable only from the `api-key` start.
+   *
+   * The seeded corpus already carries `api-key` in its keyword list and `漢` in its affixes,
+   * and still cannot produce this: its one-affix-per-keyword template puts a single keyword
+   * in a run, and the two-keyword template puts no affix on either (see the NOTE on that
+   * case - affixing it means teaching the fuzz to expect a pinned leak per shape). So this
+   * grid is the deterministic version of the shape the template cannot reach, run against jq
+   * as the oracle rather than against pinned strings. Every cell is asserted to agree with
+   * jq, and the count of cells jq masks is asserted non-zero so a rule that stopped firing
+   * altogether could not pass it.
+   */
+  it('matches jq on a keyword that straddles a word-run boundary inside non-ASCII text', () => {
+    const defs = jqDefs();
+    const heads = ['token', 'password', 'api-key', 'access-key', 'client-id', 'api_key'];
+    const affixes = ['', '\u6f22', '\u00e9'];
+    const tails = ['api-key', 'access-key', 'client-id', 'token'];
+    const separators = ['=', ':', ' '];
+    const diffs: string[] = [];
+    let jqMasked = 0;
+    for (const head of heads) {
+      for (const affix of affixes) {
+        for (const tail of tails) {
+          for (const separator of separators) {
+            const input = `${head}${affix}${tail}${affix}${separator}S3cretPw`;
+            const jqOut = execFileSync('jq', ['-nr', '--arg', 's', input, defs + ' $s | redact'], { encoding: 'utf8' }).replace(/\n$/, '');
+            const portOut = redact(input);
+            if (!jqOut.includes('S3cretPw')) jqMasked++;
+            if (portOut !== jqOut) {
+              diffs.push(`${JSON.stringify(input)}\n    jq: ${JSON.stringify(jqOut)}\n    ts: ${JSON.stringify(portOut)}`);
+            }
+          }
+        }
+      }
+    }
+    assert.ok(jqMasked > 0, `jq masked none of the ${heads.length * affixes.length * tails.length * separators.length} grid inputs; the grid no longer reaches the generic rule`);
+    assert.deepStrictEqual(diffs, [], `${diffs.length} straddling-keyword grid input(s) diverge from jq`);
   });
 });

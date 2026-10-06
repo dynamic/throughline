@@ -714,7 +714,7 @@ export function redact(str: string): string {
    * and `('password' + '\u6f22'.repeat(20)).repeat(k)` took 145ms / 2,313ms (15.9x) at the same
    * two sizes; the issue's machine saw 300ms / 6,045ms and 139ms / 2,222ms for those two
    * shapes. Quadratic, and `redact()` runs this in-process on the full unclamped bash
-   * command. After it both shapes are linear: 2.7ms / 3.6ms and 2.2ms / 2.5ms at the same
+   * command. After it both shapes are linear: 2.9ms / 4.1ms and 2.1ms / 2.7ms at the same
    * sizes (pinned as a latency guard in `redaction.test.ts`). The mask this produces is
    * byte-identical to what the global replace produced, by the two arguments below; only the
    * cost changes.
@@ -729,29 +729,39 @@ export function redact(str: string): string {
    * O(run length)^2. Which is what the issue's two inputs are: CJK prose has no spaces, and a
    * base64-ish blob that happens to carry `token` has no separator either.
    *
-   * Why skipping the rest of a run after one failed attempt cannot change the output.
-   * Inside one maximal `JS_WORD_CHAR` run [rs, re):
-   *   1. the suffix always ends at `re`. Giving it back a character puts the next start
-   *      position on a character the suffix itself matched, and no separator alternative
-   *      can match such a character (`[:=]` and the whitespace classes are all outside the
-   *      class), so every backtracking step of the suffix is doomed;
-   *   2. therefore whether a start in the run completes at all depends only on what starts
-   *      at `re`, which is the same for every start in the run. The lead is written back
-   *      verbatim by the replacement and the suffix is part of the keyword group, so the
-   *      TEXT a completing match writes is also the same for every start, and so is where
-   *      the scan resumes (end of the value). The earliest start only decides which
-   *      equivalent match the engine reports;
-   *   3. so one failed attempt at the earliest start means no start in the run completes.
-   *      The driver emits the run verbatim and resumes at `re`.
-   * The earliest start is NOT `rs`, and that is the one place a naive linearisation would
-   * leak: the lead is ASCII `\\w*`, so a run like `\u4e2d\u4e2dtoken=x` has no match at its own
-   * first character (the lead cannot step over `\u4e2d` and no keyword starts there) while the
-   * start at `token` does complete. So the driver first asks whether the run holds a keyword
-   * occurrence at all - one failure from that scan means none is left anywhere in the text,
-   * because every match of the rule contains a keyword - and then anchors the single attempt
-   * where that keyword's ASCII word prefix starts, which is the earliest start that could
-   * reach any keyword. Both scans move strictly left to right, so the pass costs O(text) in
-   * total rather than O(run)^2.
+   * Why skipping the rest of a run after a failed attempt cannot change the output.
+   * Inside one maximal `JS_WORD_CHAR` run [rs, re), take any start whose lead reaches a
+   * keyword:
+   *   1. the suffix always ends at the end of the run that its KEYWORD END falls in. Giving
+   *      it back a character puts the next position on a character the suffix itself matched,
+   *      and no separator alternative can match such a character (`[:=]` and the whitespace
+   *      classes are all outside the class), so every backtracking step of the suffix is
+   *      doomed;
+   *   2. so whether that start completes at all depends only on what starts at that run end,
+   *      and the text a completing match writes, and where the scan resumes (end of the
+   *      value), are the same for every start that shares that run end. The earliest such
+   *      start only decides which equivalent match the engine reports;
+   *   3. so a failed attempt adjudicates every start that shares its keyword-end run, and
+   *      once each distinct run end in the run has been attempted, the driver emits the run
+   *      verbatim and resumes at `re`.
+   * How many distinct keyword-end runs a run can hold is what bounds the attempts, and it is
+   * two. A keyword leaves its run only through the `[-_]` of `api[_-]?key`, `access[_-]?key`
+   * and `client[_-]?id`: underscore is a word character and never splits a run, and a hyphen
+   * inside one of those three is exactly the character that ends the run - so a start whose
+   * keyword crosses the boundary always ends in the run after `re`, and every other start
+   * ends at `re` itself. Two anchors, constant work per run. Without the second one the pass
+   * leaks in the direction that matters: `token\u6f22api-key\u6f22=S3cret` has no separator at the hyphen,
+   * so the `token` attempt fails there, and the secret is reachable only from the `api-key`
+   * start - skipping the run on the first failure leaves it in cleartext where both the jq
+   * hooks and the pre-#118 port mask it.
+   * Neither anchor is `rs`, and that is the other place a naive linearisation would leak: the
+   * lead is ASCII `\\w*`, so a run like `\u4e2d\u4e2dtoken=x` has no match at its own first character
+   * (the lead cannot step over `\u4e2d` and no keyword starts there) while the start at `token`
+   * does complete. So the driver first asks whether the run holds a keyword occurrence at all
+   * - one failure from that scan means none is left anywhere in the text, because every match
+   * of the rule contains a keyword - and anchors each attempt where that keyword's ASCII word
+   * prefix starts, the earliest start that could reach it. Both scans move strictly left to
+   * right, so the pass costs O(text) in total rather than O(run)^2.
    */
   const widenedWordPass = (text: string): string => {
     // `y` on top of `g` makes `lastIndex` an ANCHOR rather than a hint: the attempt either
@@ -766,6 +776,7 @@ export function redact(str: string): string {
     let run: RegExpExecArray | null = null;
     let runEnd = -1;
     let keyword: RegExpExecArray | null = null;
+    let scannedTo = 0;
     for (;;) {
       if (pos >= text.length) return out;
       if (run === null || runEnd <= pos) {
@@ -775,16 +786,48 @@ export function redact(str: string): string {
         runEnd = run.index + run[0].length;
       }
       const runStart = Math.max(run.index, pos);
-      if (keyword === null || keyword.index < runStart) {
-        keywords.lastIndex = runStart;
+      if (keyword !== null && keyword.index < runStart) keyword = null;
+      if (keyword === null) {
+        keywords.lastIndex = Math.max(runStart, scannedTo);
         keyword = keywords.exec(text);
         // Every match of the rule contains a keyword, so with none left in the text at or
         // after this point there is nothing left to mask either.
         if (keyword === null) return out + text.slice(pos);
       }
-      if (keyword.index < runEnd) {
-        let start = keyword.index;
+      // This run's anchors: the earliest start whose keyword ends inside the run, and the
+      // earliest start whose keyword ends past it. Two, because the fate of a start is the
+      // separator at the end of the run its KEYWORD END falls in, and a keyword can leave its
+      // own run only through the `[-_]` of `api[_-]?key`, `access[_-]?key`, `client[_-]?id` -
+      // underscore is a word character so it never splits a run, and a hyphen inside one of
+      // those three is exactly the character that ends the run. Both anchors therefore see
+      // the same two run ends, whatever the text, and one attempt per anchor is still
+      // constant work per run.
+      let inRunStart = -1;
+      let acrossStart = -1;
+      let scan: RegExpExecArray | null = keyword;
+      while (scan !== null && scan.index < runEnd) {
+        const keywordEnd = scan.index + scan[0].length;
+        let start = scan.index;
         while (start > runStart && isAsciiWordChar(text.charCodeAt(start - 1))) start -= 1;
+        if (keywordEnd <= runEnd) {
+          if (inRunStart < 0) inRunStart = start;
+        } else if (acrossStart < 0) {
+          acrossStart = start;
+        }
+        if (inRunStart >= 0 && acrossStart >= 0) break;
+        scan = keywords.exec(text);
+      }
+      // `scan` is the last occurrence examined if both anchors were filled, and the first
+      // occurrence past the run otherwise; either way the next run resumes the scan from
+      // where it left off, and `scannedTo` keeps that resume from walking back over text
+      // whose occurrences were already adjudicated.
+      scannedTo = scan === null ? text.length : scan.index + scan[0].length;
+      keyword = scan;
+      const anchors = acrossStart < 0 ? [inRunStart] : inRunStart < 0 ? [acrossStart] :
+        inRunStart < acrossStart ? [inRunStart, acrossStart] : [acrossStart, inRunStart];
+      let matched = false;
+      for (const start of anchors) {
+        if (start < 0) continue;
         rule.lastIndex = start;
         const match = rule.exec(text);
         if (match !== null) {
@@ -794,9 +837,12 @@ export function redact(str: string): string {
           run = null;
           runEnd = -1;
           keyword = null;
-          continue;
+          scannedTo = pos;
+          matched = true;
+          break;
         }
       }
+      if (matched) continue;
       out += text.slice(pos, runEnd);
       pos = runEnd;
     }
