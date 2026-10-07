@@ -1887,4 +1887,173 @@ describe('regex-engine parity with jq (issue #90)', () => {
         `redact() took ${big.ms.toFixed(1)}ms on a ${big.out.length}-character ASCII command; the unbounded keyword lead is back (issue #114)`);
     }
   });
+
+  /**
+   * Latency guard for the OTHER side of the word pass: pass 6b's widened SUFFIX, over text
+   * that carries a keyword inside a run with no separator in it (dynamic/throughline#118).
+   * The non-ASCII guard above cannot see this either - its run is `token\u6f22` repeated, whose
+   * very first start completes at the trailing ` password=x`, so the widened suffix never
+   * has to walk a long run to death - and issue #114's guard is ASCII-only, which pass 6b's
+   * whole-string fast path skips outright.
+   *
+   * Measured on this machine BEFORE pass 6b was driven from a scan, with the widened rule
+   * handed to `String.replace`: `('token\u00e9').repeat(k)` took 207ms at 28,091 characters and
+   * 3,350ms at 112,331 (a 16.2x scaling ratio for a 4x-longer input); `('password' +
+   * '\u6f22'.repeat(20)).repeat(k)` took 145ms / 2,313ms (15.9x) at 28,011 and 112,011
+   * characters. Quadratic, in-process, on the full unclamped bash command, and the issue's
+   * machine saw the same shapes at 300ms / 6,045ms and 139ms / 2,222ms. After it: 2.9ms /
+   * 4.1ms (1.4x) and 2.1ms / 2.7ms (1.3x). The inputs are the issue's own reproducers ON
+   * PURPOSE - a run with no separator inside it is what makes the widened suffix walk to the
+   * run end from every start the lead can reach. The mask is asserted on a LEADING
+   * `password=x` rather than inside the run, because nothing inside such a run is maskable (no
+   * separator to trigger on) and - unlike a trailing one - a leading secret does not let the
+   * first start complete, so it does not hide the scan. `big.ms` is bounded absolutely as well
+   * as by ratio: the floored denominator keeps CI noise from flipping the ratio verdict, and
+   * the pre-fix run overshoots the absolute bound by 9.3x-13.4x here and more on the issue's.
+   */
+  it('stays linear on a long non-ASCII run that carries a keyword and no separator (issue #118)', () => {
+    const timed = (input: string) => {
+      const started = process.hrtime.bigint();
+      const out = redact(input);
+      const ms = Number(process.hrtime.bigint() - started) / 1e6;
+      return { ms, out };
+    };
+    const shapes: readonly [string, number][] = [
+      ['token\u00e9', 4680],
+      ['password' + '\u6f22'.repeat(20), 1000],
+    ];
+    for (const [unit, n] of shapes) {
+      const small = timed('password=x ' + unit.repeat(n));
+      const big = timed('password=x ' + unit.repeat(n * 4));
+      assert.strictEqual(small.out, 'password=*** ' + unit.repeat(n), `the x${n} ${JSON.stringify(unit)} input was not masked to exactly the expected output`);
+      assert.strictEqual(big.out, 'password=*** ' + unit.repeat(n * 4), `the x${n * 4} ${JSON.stringify(unit)} input was not masked to exactly the expected output`);
+      const ratio = big.ms / Math.max(small.ms, 5);
+      assert.ok(ratio < 8,
+        `redact() scaled ${ratio.toFixed(1)}x for a 4x-longer ${JSON.stringify(unit)} run (${small.ms.toFixed(1)}ms -> ${big.ms.toFixed(1)}ms); pass 6b's widened suffix is re-scanning runs it already stepped over`);
+      assert.ok(big.ms < 250,
+        `redact() took ${big.ms.toFixed(1)}ms on a ${big.out.length}-character command with a keyword inside one non-ASCII run; pass 6b is quadratic again (issue #118)`);
+    }
+  });
+
+  /**
+   * The masking side of the same rewrite (dynamic/throughline#118). Making pass 6b linear
+   * rests on "one attempt per word run", and the one way that goes wrong is anchoring the
+   * attempt at the run's FIRST character: the lead is ASCII `\\w*`, so a run that opens with
+   * non-ASCII has no match at its first character while a start further in does complete, and
+   * a driver that skipped the run on that first failure would hand the secret back in
+   * cleartext. `\u4e2d\u4e2dpassword\u4e2d is S3cret` is exactly that input - its keyword group
+   * itself carries a non-ASCII character, so pass 6a never masks it and the row stays red
+   * under that breakage (`\u4e2d\u4e2dtoken=x` shows the same anchor failure, but end to end
+   * pass 6a masks it through the lookbehind, so that row alone would not catch the
+   * regression) - and `\u6f22token\u6f22 x=1` the case where the
+   * attempt has to reach a run end the keyword is nowhere near. Each row is pinned to
+   * the output the pre-#118 code gives. Every row but two also matches the jq hooks:
+   * `\u4e2d\u4e2dtoken\nS3cret` and `token\u00e9token="a b"c` are pinned to the port's output where
+   * jq's differs (the second is the over-mask already pinned in `ENGINE_DIVERGENCES`).
+   * The double-`\u4e2d`-prefix and `\u6f22` shapes are outside what the seeded corpus's
+   * one-affix-per-side template can produce, which is why these rows are pinned here
+   * rather than fuzzed - a 22,000-input differential run over an alphabet that includes
+   * them found no difference either, but that harness is not in the suite. The
+   * hyphenated rows pin why the driver needs its cross-run anchor: `api-key`,
+   * `access-key` and `client-id` contain a character that is neither a word character nor
+   * non-ASCII, so such a keyword starts in one run and ends in the next, and an attempt
+   * anchored on an earlier keyword in the first run fails at the hyphen without ever reaching
+   * the start that can complete. Each row was run through the jq hooks as well; where
+   * the two disagree the pinned string is the port's, not jq's.
+   */
+  it('still finds the keyword inside a non-ASCII run when the run does not start with one', () => {
+    const cases: readonly [string, string][] = [
+      ['', ''],
+      ['\u4e2d\u4e2dtoken=x', '\u4e2d\u4e2dtoken=***'],
+      ['\u4e2d\u4e2dtoken\u6f22\u6f22', '\u4e2d\u4e2dtoken\u6f22\u6f22'],
+      ['a\u6f22token=x', 'a\u6f22token=***'],
+      ['\u4e2d\u4e2da\u6f22token=x', '\u4e2d\u4e2da\u6f22token=***'],
+      ['a_b\u6f22token=x', 'a_b\u6f22token=***'],
+      ['\u4e2d\u4e2dpassword\u4e2d is S3cret', '\u4e2d\u4e2dpassword\u4e2d is ***'],
+      ['\u4e2d\u4e2dtoken\nS3cret', '\u4e2d\u4e2dToken ***'],
+      ['\u4e2d\u4e2dtoken="a b"', '\u4e2d\u4e2dtoken=***'],
+      ['\u4e2d\u4e2dtoken=\u6f22\u6f22\u6f22', '\u4e2d\u4e2dtoken=***'],
+      ['\u4e2d\u4e2dtoken=\u6f22\u6f22\u6f22 tail', '\u4e2d\u4e2dtoken=*** tail'],
+      ['\u4e2d\u4e2dtoken=***S3cretPw', '\u4e2d\u4e2dtoken=***'],
+      ['\u4e2dtoken\u4e2dsecret=v', '\u4e2dtoken\u4e2dsecret=***'],
+      ['\u4e2dtoken\u4e2dsecret= v', '\u4e2dtoken\u4e2dsecret= ***'],
+      ['token\u4e2dsecret=x S3cret', 'token\u4e2dsecret=*** S3cret'],
+      ['\u6f22token\u6f22 x=1 \u6f22passwd=2', '\u6f22token\u6f22 *** \u6f22passwd=***'],
+      ['token=1 \u6f22token=2', 'token=*** \u6f22token=***'],
+      ['\u6f22a\u6f22b token: S3cret \u6f22secret: hush', '\u6f22a\u6f22b token: *** \u6f22secret: ***'],
+      ['\u6f22auth\u6f22orization=x', '\u6f22auth\u6f22orization=***'],
+      ['\u4e2d\u4e2dauth\u4e2d\u4e2d\u4e2d client_id=v', '\u4e2d\u4e2dauth\u4e2d\u4e2d\u4e2d ***'],
+      ['token\u00e9=S3cret', 'token\u00e9=***'],
+      ['token\u00e9token="a b"c', 'token\u00e9token=***'],
+      ['token\u6f22api-key\u6f22=S3cret', 'token\u6f22api-key\u6f22=***'],
+      ['token\u6f22client-id\u6f22=S3cret', 'token\u6f22client-id\u6f22=***'],
+      ['password\u00e9access-key\u00e9: S3cret', 'password\u00e9access-key\u00e9: ***'],
+      ['\u6f22api-key\u6f22=S3cret', '\u6f22api-key\u6f22=***'],
+      ['\u6f22access-key\u6f22x was S3cret', '\u6f22access-key\u6f22x was ***'],
+      ['token\u6f22api-key\u6f22secret\u6f22=S3cret', 'token\u6f22api-key\u6f22secret\u6f22=***'],
+      ['\u6f22api-key\u6f22=***S3cret', '\u6f22api-key\u6f22=***'],
+      ['\u6f22client-id\u6f22', '\u6f22client-id\u6f22'],
+      ['\u6f22\u6f22api-key\u6f22"x y"', '\u6f22\u6f22api-key\u6f22"x y"'],
+      ['pa\u017f\u017fword "open sesame passwd:"open sesame', 'pa\u017f\u017fword ***open sesame'],
+      ['password=TLREDACTSENTINELtoken=x', 'password=***token=***'],
+      ['pa\u00dfword=S3cret', 'pa\u00dfword=***'],
+      ['\u4e2d\u4e2dtoken', '\u4e2d\u4e2dtoken'],
+      ['\u6f22token:', '\u6f22token:'],
+      ['\u6f22token: S3cret', '\u6f22token: ***'],
+      ['YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXp8fH14\u00e9', 'YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXp8fH14\u00e9'],
+    ];
+    for (const [input, expected] of cases) {
+      assert.strictEqual(redact(input), expected, `redact(${JSON.stringify(input)}) changed output`);
+    }
+  });
+
+  /**
+   * The same class again, against jq rather than against a table: the table above cannot
+   * see a keyword that leaves the run it starts in, and `api-key` in
+   * `token漢api-key漢=S3cret` does exactly that. Three of
+   * the nine keywords in `KEYWORD_WORDS` are spelled with `[_-]`, so a hyphenated keyword can
+   * straddle a run boundary, and a pass that adjudicates a run from one anchor has to attempt
+   * the straddling start separately - `token漢api-key漢=S3cret` masks nothing at the hyphen and
+   * is reachable only from the `api-key` start.
+   *
+   * The seeded corpus already carries `api-key` in its keyword list and `\u4e2d` (中) in
+   * its affixes,
+   * and its fuzz can stumble into a cross-run shape by chance, but it cannot produce the
+   * two-keyword-per-run shape deterministically: its one-affix-per-keyword template puts a
+   * single keyword
+   * in a run, and the two-keyword template puts no affix on either (see the NOTE on that
+   * case - affixing it means teaching the fuzz to expect a pinned leak per shape). So this
+   * grid is the deterministic version of that shape, run against jq
+   * as the oracle rather than against pinned strings. Every cell is asserted to agree with
+   * jq, and the count of cells jq masks is asserted non-zero so a rule that stopped firing
+   * altogether could not pass it.
+   */
+  it('matches jq on a keyword that straddles a word-run boundary inside non-ASCII text', {
+    skip: JQ_PRESENT ? false : 'jq is not on PATH on this machine',
+  }, () => {
+    const defs = jqDefs();
+    const heads = ['token', 'password', 'api-key', 'access-key', 'client-id', 'api_key'];
+    const affixes = ['', '\u6f22', '\u00e9'];
+    const tails = ['api-key', 'access-key', 'client-id', 'token'];
+    const separators = ['=', ':', ' '];
+    const diffs: string[] = [];
+    let jqMasked = 0;
+    for (const head of heads) {
+      for (const affix of affixes) {
+        for (const tail of tails) {
+          for (const separator of separators) {
+            const input = `${head}${affix}${tail}${affix}${separator}S3cretPw`;
+            const jqOut = execFileSync('jq', ['-nr', '--arg', 's', input, defs + ' $s | redact'], { encoding: 'utf8' }).replace(/\n$/, '');
+            const portOut = redact(input);
+            if (!jqOut.includes('S3cretPw')) jqMasked++;
+            if (portOut !== jqOut) {
+              diffs.push(`${JSON.stringify(input)}\n    jq: ${JSON.stringify(jqOut)}\n    ts: ${JSON.stringify(portOut)}`);
+            }
+          }
+        }
+      }
+    }
+    assert.ok(jqMasked > 0, `jq masked none of the ${heads.length * affixes.length * tails.length * separators.length} grid inputs; the grid no longer reaches the generic rule`);
+    assert.deepStrictEqual(diffs, [], `${diffs.length} straddling-keyword grid input(s) diverge from jq`);
+  });
 });
