@@ -1942,17 +1942,20 @@ describe('regex-engine parity with jq (issue #90)', () => {
    * non-ASCII has no match at its first character while a start further in does complete, and
    * a driver that skipped the run on that first failure would hand the secret back in
    * cleartext. `\u4e2d\u4e2dtoken=x` is exactly that input, and `\u6f22token\u6f22 x=1` the case where the
-   * attempt has to reach a run end the keyword is nowhere near. Each row is pinned to the
-   * output the pre-#118 code gives (every one of them also matches the jq hooks; the
-   * `\u4e2d`/`\u6f22`-prefixed shapes are outside the seeded corpus's alphabet, which is why they
-   * are pinned here rather than fuzzed - a 22,000-input differential run over an alphabet that
-   * includes them found no difference either, but that harness is not in the suite). The
+   * attempt has to reach a run end the keyword is nowhere near. Each row is pinned to
+   * the output the pre-#118 code gives. Every row but two also matches the jq hooks:
+   * `\u4e2d\u4e2dtoken\nS3cret` and `token\u00e9token="a b"c` are pinned to the port's output where
+   * jq's differs (the second is the over-mask already pinned in `ENGINE_DIVERGENCES`).
+   * The double-`\u4e2d`-prefix and `\u6f22` shapes are outside what the seeded corpus's
+   * one-affix-per-side template can produce, which is why these rows are pinned here
+   * rather than fuzzed - a 22,000-input differential run over an alphabet that includes
+   * them found no difference either, but that harness is not in the suite. The
    * hyphenated rows pin why the driver needs its cross-run anchor: `api-key`,
    * `access-key` and `client-id` contain a character that is neither a word character nor
    * non-ASCII, so such a keyword starts in one run and ends in the next, and an attempt
    * anchored on an earlier keyword in the first run fails at the hyphen without ever reaching
-   * the start that can complete. Each row was run through the jq hooks as well and the pinned
-   * string is what jq gives.
+   * the start that can complete. Each row was run through the jq hooks as well; where
+   * the two disagree the pinned string is the port's, not jq's.
    */
   it('still finds the keyword inside a non-ASCII run when the run does not start with one', () => {
     const cases: readonly [string, string][] = [
@@ -2009,7 +2012,8 @@ describe('regex-engine parity with jq (issue #90)', () => {
    * the straddling start separately - `token漢api-key漢=S3cret` masks nothing at the hyphen and
    * is reachable only from the `api-key` start.
    *
-   * The seeded corpus already carries `api-key` in its keyword list and `漢` in its affixes,
+   * The seeded corpus already carries `api-key` in its keyword list and `\u4e2d` (中) in
+   * its affixes,
    * and its fuzz can stumble into a cross-run shape by chance, but it cannot produce the
    * two-keyword-per-run shape deterministically: its one-affix-per-keyword template puts a
    * single keyword
