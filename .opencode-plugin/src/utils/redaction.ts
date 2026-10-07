@@ -758,7 +758,8 @@ export function redact(str: string): string {
    * would leak: the
    * lead is ASCII `\\w*`, so a run like `\u4e2d\u4e2dtoken=x` has no match at its own first character
    * (the lead cannot step over `\u4e2d` and no keyword starts there) while the start at `token`
-   * does complete. So the driver first asks whether the run holds a keyword occurrence at all
+   * does complete - about the 6b rule on its own; end to end, pass 6a's lookbehind already
+   * masks that input. So the driver first asks whether the run holds a keyword occurrence at all
    * - one failure from that scan means none is left anywhere in the text, because every match
    * of the rule contains a keyword - and anchors each attempt where that keyword's ASCII word
    * prefix starts, the earliest start that could reach it. Both scans move strictly left to

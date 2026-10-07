@@ -1941,7 +1941,11 @@ describe('regex-engine parity with jq (issue #90)', () => {
    * attempt at the run's FIRST character: the lead is ASCII `\\w*`, so a run that opens with
    * non-ASCII has no match at its first character while a start further in does complete, and
    * a driver that skipped the run on that first failure would hand the secret back in
-   * cleartext. `\u4e2d\u4e2dtoken=x` is exactly that input, and `\u6f22token\u6f22 x=1` the case where the
+   * cleartext. `\u4e2d\u4e2dpassword\u4e2d is S3cret` is exactly that input - its keyword group
+   * itself carries a non-ASCII character, so pass 6a never masks it and the row stays red
+   * under that breakage (`\u4e2d\u4e2dtoken=x` shows the same anchor failure, but end to end
+   * pass 6a masks it through the lookbehind, so that row alone would not catch the
+   * regression) - and `\u6f22token\u6f22 x=1` the case where the
    * attempt has to reach a run end the keyword is nowhere near. Each row is pinned to
    * the output the pre-#118 code gives. Every row but two also matches the jq hooks:
    * `\u4e2d\u4e2dtoken\nS3cret` and `token\u00e9token="a b"c` are pinned to the port's output where
