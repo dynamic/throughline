@@ -1947,7 +1947,7 @@ describe('regex-engine parity with jq (issue #90)', () => {
    * `\u4e2d`/`\u6f22`-prefixed shapes are outside the seeded corpus's alphabet, which is why they
    * are pinned here rather than fuzzed - a 22,000-input differential run over an alphabet that
    * includes them found no difference either, but that harness is not in the suite). The
-   * hyphenated rows are the shape the first version of this rewrite got wrong: `api-key`,
+   * hyphenated rows pin why the driver needs its cross-run anchor: `api-key`,
    * `access-key` and `client-id` contain a character that is neither a word character nor
    * non-ASCII, so such a keyword starts in one run and ends in the next, and an attempt
    * anchored on an earlier keyword in the first run fails at the hyphen without ever reaching
@@ -2001,19 +2001,21 @@ describe('regex-engine parity with jq (issue #90)', () => {
   });
 
   /**
-   * The same class again, against jq rather than against a table (the second BLOCKING
-   * finding on dynamic/throughline#131: the table above cannot see a keyword that leaves the
-   * run it starts in, and `api-key` in `token漢api-key漢=S3cret` does exactly that). Three of
+   * The same class again, against jq rather than against a table: the table above cannot
+   * see a keyword that leaves the run it starts in, and `api-key` in
+   * `token漢api-key漢=S3cret` does exactly that. Three of
    * the nine keywords in `KEYWORD_WORDS` are spelled with `[_-]`, so a hyphenated keyword can
    * straddle a run boundary, and a pass that adjudicates a run from one anchor has to attempt
    * the straddling start separately - `token漢api-key漢=S3cret` masks nothing at the hyphen and
    * is reachable only from the `api-key` start.
    *
    * The seeded corpus already carries `api-key` in its keyword list and `漢` in its affixes,
-   * and still cannot produce this: its one-affix-per-keyword template puts a single keyword
+   * and its fuzz can stumble into a cross-run shape by chance, but it cannot produce the
+   * two-keyword-per-run shape deterministically: its one-affix-per-keyword template puts a
+   * single keyword
    * in a run, and the two-keyword template puts no affix on either (see the NOTE on that
    * case - affixing it means teaching the fuzz to expect a pinned leak per shape). So this
-   * grid is the deterministic version of the shape the template cannot reach, run against jq
+   * grid is the deterministic version of that shape, run against jq
    * as the oracle rather than against pinned strings. Every cell is asserted to agree with
    * jq, and the count of cells jq masks is asserted non-zero so a rule that stopped firing
    * altogether could not pass it.

@@ -120,8 +120,10 @@ function jsNotWs(extras: string): string {
  * leaking on `main` as well); the other `under` rows there are earlier rules whose
  * over-match eats a later rule's keyword. The `over` residue of THIS class is pinned
  * alongside them, so a future change that turns one into a leak fails.
+ *
+ * `JS_WORD_CHAR` below is one character of this over-approximated set, ready to
+ * quantify; `JS_WORD_STAR` is that class quantified with `*`.
  */
-/** One character of the over-approximated `\w` set, ready to quantify. */
 const JS_WORD_CHAR = "(?:\\w|[^\\x00-\\x7f" + JS_WS_CHARS + "])";
 const JS_WORD_STAR = JS_WORD_CHAR + "*";
 /**
@@ -655,13 +657,13 @@ export function redact(str: string): string {
   // could end a match mid-run and resume right after it, masking what followed
   // (`password=TLREDACTSENTINELtoken=x` -> `password=***token=***` on BOTH engines).
   // The second lookbehind re-admits exactly that resume position; a latency fix does not
-  // get to mask less than the jq hooks. Pass 6b also drops its unbounded lead, but by
-  // DRIVING the scan rather than by anchoring it - see `widenedWordPass` below
-  // (dynamic/throughline#118) - and its fast-path gate means ASCII input never pays for it.
+  // get to mask less than the jq hooks. Pass 6b keeps the unbounded lead but bounds its
+  // scan by DRIVING the attempts, not by anchoring the lead - see `widenedWordPass`
+  // below (dynamic/throughline#118) - and its fast-path gate means ASCII input never
+  // pays for it.
   const keywordLead6a = "(?:(?<!\\w)|(?<=" + REDACT_SENTINEL + "))\\w*";
-  // The two tail groups of the generic rule, split out of the single expression below so
-  // the pass 6b comment can name what a match needs after the keyword group; the
-  // concatenation is byte-identical to what this used to be.
+  // The two tail groups of the generic rule, split out of the single expression below;
+  // the concatenation is byte-identical to what this used to be.
   const keywordSeparatorGroup =
     "(" + JS_WS + "*[:=]" + JS_WS + "*|" + JS_WS + "+(?:" + SEPARATOR_ALTERNATION + ")" + JS_WS + "+|" + JS_WS + "+)";
   const keywordValueGroup =
@@ -708,16 +710,14 @@ export function redact(str: string): string {
       : match;
   /**
    * Pass 6b, driven so it cannot re-scan a word run it has already stepped over
-   * (dynamic/throughline#118). Measured on this machine BEFORE this driver, with the rule
-   * handed to `String.replace` as one global `replace`: `('token\u00e9').repeat(k)` took 207ms at
-   * 28,091 characters and 3,350ms at 112,331 - a 16.2x scaling ratio for a 4x-longer input -
-   * and `('password' + '\u6f22'.repeat(20)).repeat(k)` took 145ms / 2,313ms (15.9x) at the same
-   * two sizes; the issue's machine saw 300ms / 6,045ms and 139ms / 2,222ms for those two
-   * shapes. Quadratic, and `redact()` runs this in-process on the full unclamped bash
-   * command. After it both shapes are linear: 2.9ms / 4.1ms and 2.1ms / 2.7ms at the same
-   * sizes (pinned as a latency guard in `redaction.test.ts`). The mask this produces is
-   * byte-identical to what the global replace produced, by the two arguments below; only the
-   * cost changes.
+   * (dynamic/throughline#118). Handed to `String.replace` as one global `replace`, the
+   * rule was quadratic in the length of a long word run that carries a keyword and no
+   * separator - a ~16x scaling ratio for a 4x-longer input on the issue's two shapes;
+   * the machine-specific timings, before and after, are recorded once, beside the
+   * latency guard in `redaction.test.ts`, so the two copies cannot drift apart.
+   * Quadratic, and `redact()` runs this in-process on the full unclamped bash command.
+   * The mask this produces is byte-identical to what the global replace produced, by the
+   * two arguments below; only the cost changes.
    *
    * Why the old shape was quadratic. The suffix `JS_WORD_STAR` matches any word character
    * plus any non-ASCII non-whitespace character, so from any start inside a long run of such
@@ -754,7 +754,8 @@ export function redact(str: string): string {
    * so the `token` attempt fails there, and the secret is reachable only from the `api-key`
    * start - skipping the run on the first failure leaves it in cleartext where both the jq
    * hooks and the pre-#118 port mask it.
-   * Neither anchor is `rs`, and that is the other place a naive linearisation would leak: the
+   * Neither anchor is pinned to `rs`, and that is the other place a naive linearisation
+   * would leak: the
    * lead is ASCII `\\w*`, so a run like `\u4e2d\u4e2dtoken=x` has no match at its own first character
    * (the lead cannot step over `\u4e2d` and no keyword starts there) while the start at `token`
    * does complete. So the driver first asks whether the run holds a keyword occurrence at all
@@ -768,10 +769,9 @@ export function redact(str: string): string {
    * backs off character by character with the suffix re-walking the run at each hit - the cost
    * pass 6a has too, and the reason `('token').repeat(k) + '\u00e9'` (the trailing character is what
    * lets pass 6b run at all) takes 59ms at 10,001 characters and 917ms at 40,001 here against
-   * 29ms / 457ms for pass 6a alone. That is issue #114's remaining territory, not this issue's
-   * quadratic: the same 10,001-character input cost the review round 96s on `main` (its
-   * measurement; a local re-run of that figure did not finish inside its own timeout), where
-   * this branch takes 59ms, so the pass no longer adds a second quadratic on top of 6a.
+   * 29ms / 457ms for pass 6a alone. That is issue #114's remaining territory, not this
+   * issue's quadratic: the driver removes the second, non-ASCII quadratic that the
+   * undriven rule added on top of 6a; what remains is #114's own, shared with 6a.
    */
   const widenedWordPass = (text: string): string => {
     // `y` on top of `g` makes `lastIndex` an ANCHOR rather than a hint: the attempt either
