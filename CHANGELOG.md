@@ -145,8 +145,30 @@ All notable changes to throughline are documented here. Format loosely follows
   credential in userinfo position is a credential, and the gap was closed by widening
   `_url` in the hooks rather than by narrowing this port (see the issue #115 entry
   below). The generic keyword rule is quadratic in the length of a long unbroken run
-  of text, on both engines, on the full unclamped bash command.
+  of text, on both engines, on the full unclamped bash command; on the plugin side that
+  cost now lives only in the second (widened) word pass, because the first, ASCII pass is
+  driven from one scan of the word runs - see the issue #129 entry below.
   (`.omp-plugin` never had this gap: its shim shells out to the same `hooks/*.sh` scripts.)
+- **OpenCode plugin redaction pass 6a driven from one scan** (issue #129): the port's
+  ASCII word pass was quadratic in the length of a single unbroken word run - one scan
+  start per run, and each start re-walked the run once per keyword it held - so a
+  base64-ish blob that happens to contain `token` cost 147 ms at 24 KB and climbing,
+  in-process on the full unclamped bash command, and an input repeating a
+  sentinel-plus-keyword pair was worse than quadratic (no completion inside 300 s at
+  88 KB). The pass is now driven from one left-to-right scan of the word runs in
+  `.opencode-plugin/src/utils/redaction.ts`: a run is adjudicated by asking at most two
+  run ends with the rule's own separator and value groups made sticky, keyword
+  occurrences are enumerated by one cursor that remembers both its current hit and its
+  exhaustion, and the mask is byte-identical to the global replace's - single-digit
+  milliseconds at 160 KB. Two regressions the first revisions of that driver introduced
+  were caught in review and fixed on the same PR: a case-sensitive sentinel resume (a
+  secret opening on U+017F right after a lowercase `tlredactsentinel` value survived
+  where `main` masked it), and a keyword search restarted from every run in front of the
+  next keyword (an ordinary 100 KB command whose secret sits at the end went from 1.3 ms
+  undriven to 1.7 s). The remaining #114 quadratic - measured at ~461 ms for a 40 KB
+  ASCII run with a single accented character, which admits the widened pass through its
+  whole-string gate - now sits in the plugin's second word pass alone and is tracked as
+  dynamic/throughline#134.
 - **Capture hook dropped every event on Windows** (issue #81 review): the jq program
   is one command-line argument (`redaction defs + capture filter`) and Windows caps a
   command line at 32,767 characters; the explanatory comments inside the defs had grown

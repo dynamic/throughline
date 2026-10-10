@@ -1909,7 +1909,8 @@ describe('regex-engine parity with jq (issue #90)', () => {
     const shapes: readonly [string, number, number, string][] = [
       ['tokena', 1000, 4000, 'tokena'],
       ['my_token_value_', 600, 2400, 'my_token_value_'],
-      // Every sentinel in this run is a resume position the rule's own lookbehind re-admits,
+      // Every sentinel in this run ends a match, and the driver resumes at the position
+      // right after it, so this is the shape that punishes a per-start scan hardest.
       // so it is the shape that punishes a per-start scan hardest.
       ['TLREDACTSENTINELtokena', 1000, 4000, '***tokena'],
       // Many short runs with NO keyword: the pass has to stop looking for one (see the
@@ -2013,7 +2014,7 @@ describe('regex-engine parity with jq (issue #90)', () => {
    * cleartext. `\u4e2d\u4e2dpassword\u4e2d is S3cret` is exactly that input - its keyword group
    * itself carries a non-ASCII character, so pass 6a never masks it and the row stays red
    * under that breakage (`\u4e2d\u4e2dtoken=x` shows the same anchor failure, but end to end
-   * pass 6a masks it through the lookbehind, so that row alone would not catch the
+   * pass 6a masks it from its own scan, so that row alone would not catch the
    * regression) - and `\u6f22token\u6f22 x=1` the case where the
    * attempt has to reach a run end the keyword is nowhere near. Each row is pinned to
    * the output the pre-#118 code gives. Every row but two also matches the jq hooks:
@@ -2097,13 +2098,14 @@ describe('regex-engine parity with jq (issue #90)', () => {
    *     end, and the mask lives entirely in the second one.
    *   - the resume position after a `REDACT_SENTINEL` value, which is mid-run and is the
    *     only reason `password=TLREDACTSENTINELtoken=x` masks both halves.
-   *   - the START test after such a sentinel-valued match, which is the rule's own
-   *     case-INSENSITIVE lookbehind. A keyword opening on U+017F directly after a
-   *     lowercase-valued sentinel (`password=tlredactsentinel` + `\u017fecret=hunter2`) is
-   *     admitted there and must be admitted here - a case-sensitive compare hands
+   *   - the START test after such a sentinel-valued match, which is case-INSENSITIVE: the
+   *     value alternative matched any case spelling of the sentinel under `i`, so the
+   *     resume after it must admit any spelling too. A keyword opening on U+017F directly
+   *     after a lowercase-valued sentinel (`password=tlredactsentinel` + `\u017fecret=hunter2`)
+   *     is admitted there and must be admitted here - a case-sensitive compare hands
    *     `hunter2` back in cleartext where both engines mask it. `toUpperCase()` folding is
    *     NOT equivalent: U+017F folds to `S`, so a folded compare admits start positions
-   *     the rule's own lookbehind does not.
+   *     this resume does not.
    * Each row is pinned to the output the pre-driver code gives, and every ASCII-only row
    * runs with pass 6b's whole-string gate closed, so these rows can only pass or fail on
    * pass 6a. Two differential runs back the same claim from the other side: 160,000 inputs
@@ -2146,9 +2148,10 @@ describe('regex-engine parity with jq (issue #90)', () => {
       ['ſecret=x', 'ſecret=***'],
       ['xſecret=S3cret', 'xſecret=***'],
       ['aſecret=x', 'aſecret=***'],
-      // The start test after a sentinel-valued match is the rule's own lookbehind and runs
-      // case-insensitively: ANY case spelling of the sentinel admits the keyword opening
-      // right after it, including one that opens on U+017F and so belongs to no ASCII run.
+      // The resume after a sentinel-valued match is case-insensitive: the value alternative
+      // matched ANY case spelling of the sentinel under `i`, so the start test right after
+      // it admits every spelling, including one whose next keyword opens on U+017F and so
+      // belongs to no ASCII run.
       ['password=tlredactsentinelſecret=hunter2', 'password=***ſecret=***'],
       ['echo password=TlRedactSentinelſecret=hunter2 done', 'echo password=***ſecret=*** done'],
       ['paßword=TlRedactSentinelſecret=x', 'paßword=***ſecret=***'],

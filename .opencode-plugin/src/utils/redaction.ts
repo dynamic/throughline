@@ -745,16 +745,17 @@ export function redact(str: string): string {
       while (end < text.length && isAsciiWordChar(text.charCodeAt(end))) end += 1;
       return end;
     };
-    // The rule's own start test (`(?<!\\w)`, plus the `REDACT_SENTINEL` resume) as a
-    // predicate, for the positions that are not run starts. The resume carries the rule's
-    // own case-insensitivity: the undriven lookbehind ran under `gi`, so a value ending in
-    // ANY case spelling of the sentinel admitted the position right after it there and must
-    // here - a case-SENSITIVE compare leaks `password=tlredactsentinel\u017fecret=hunter2`
-    // (the keyword after the sentinel opens on U+017F, so no ASCII `\\w` run reaches it and
-    // this test is the only thing admitting it) where both engines mask it. Folding with
-    // `toUpperCase()` is not equivalent either: U+017F folds to `S`, so a case-folded
-    // compare would admit positions the rule's own lookbehind does not. A sticky lookaround
-    // asks the regex engine the same question the lookbehind asked, with the same flags.
+    // The driver's start test, for the positions that are not run starts: a position opens
+    // for an attempt when the character before it is not a word character, or when it sits
+    // right after a sentinel-valued match. The second arm carries the case-insensitivity of
+    // the undriven rule, which reached this position through a `gi` lookbehind alternative:
+    // the value alternative matches ANY case spelling of the sentinel under `i`, so the
+    // resume after it must admit any case spelling too - a case-SENSITIVE compare leaks
+    // `password=tlredactsentinel\u017fecret=hunter2` (the keyword after the sentinel opens on
+    // U+017F, so no ASCII `\\w` run reaches it and this test is the only thing admitting it)
+    // where both engines mask it. Folding with `toUpperCase()` is not equivalent either:
+    // U+017F folds to `S`, so a case-folded compare would admit positions this resume does
+    // not. A sticky lookaround asks the regex engine the question with the rule's own flags.
     const afterSentinel = new RegExp("(?<=" + REDACT_SENTINEL + ")", "iy");
     const isStartPosition = (at: number): boolean =>
       at === 0 ||
@@ -979,7 +980,7 @@ export function redact(str: string): string {
    * would leak: the
    * lead is ASCII `\\w*`, so a run like `\u4e2d\u4e2dtoken=x` has no match at its own first character
    * (the lead cannot step over `\u4e2d` and no keyword starts there) while the start at `token`
-   * does complete - about the 6b rule on its own; end to end, pass 6a's lookbehind already
+   * does complete - about the 6b rule on its own; end to end, pass 6a's own scan already
    * masks that input. So the driver first asks whether the run holds a keyword occurrence at all
    * - one failure from that scan means none is left anywhere in the text, because every match
    * of the rule contains a keyword - and anchors each attempt where that keyword's ASCII word
