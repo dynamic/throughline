@@ -808,7 +808,7 @@ describe('Throughline Plugin Integration Tests', () => {
       assert.strictEqual(tlDisabled(), false);
     });
 
-    it('suppresses sessionCreated entirely: no block, no bootstrapped data dir', async () => {
+    it('suppresses sessionCreated on a fresh project: no block, no bootstrapped data dir', async () => {
       const sessionID = 'kill-switch-session';
       const prev = process.env.THROUGHLINE_DISABLE;
       try {
@@ -827,6 +827,39 @@ describe('Throughline Plugin Integration Tests', () => {
         assert.ok(
           !existsSync(tlDataDir(ctx)),
           'disabled plugin must not even create its data directory',
+        );
+        assert.ok(!existsSync(bufferPath(sessionID)), 'disabled plugin must write no buffer file');
+      } finally {
+        if (prev === undefined) delete process.env.THROUGHLINE_DISABLE;
+        else process.env.THROUGHLINE_DISABLE = prev;
+      }
+    });
+
+    it('suppresses sessionCreated on an already-active project, where only its own guard can', async () => {
+      // The case above deletes the data dir before the disabled call, which
+      // leaves it provable by tlActive()'s redundant "disabled" answer alone:
+      // with no data dir, `!dataExists && !state.active` returns null even when
+      // sessionCreated's own `if (tlDisabled()) return null` guard is gone. The
+      // real kill-switch situation is a project that is already active - data
+      // dir present - where that guard is the ONLY thing between the hook and a
+      // full onboarding block printed under THROUGHLINE_DISABLE. So bootstrap
+      // first, then throw the switch, and assert null.
+      const sessionID = 'kill-switch-active';
+      const prev = process.env.THROUGHLINE_DISABLE;
+      try {
+        delete process.env.THROUGHLINE_DISABLE;
+        assert.ok(
+          (await sessionCreated(ctx, { sessionID })) !== null,
+          'control: an active project must get a block while the switch is off',
+        );
+        assert.ok(existsSync(tlDataDir(ctx)), 'control: the data dir must exist before the switch');
+
+        process.env.THROUGHLINE_DISABLE = '1';
+        assert.strictEqual(tlDisabled(), true);
+        assert.strictEqual(
+          await sessionCreated(ctx, { sessionID }),
+          null,
+          'sessionCreated must return null on its own guard, not via tlActive()',
         );
         assert.ok(!existsSync(bufferPath(sessionID)), 'disabled plugin must write no buffer file');
       } finally {

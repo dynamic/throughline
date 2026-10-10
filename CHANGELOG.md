@@ -267,12 +267,15 @@ All notable changes to throughline are documented here. Format loosely follows
   dropped `val !== "0"` or `val !== ""` clause in `lib.ts` - which would disable
   capture for every operator who exports the variable at all - fails a test instead
   of only showing up in the field. Pins that the previous environment is restored
-  after each case (the suite's module-load clear must survive the block), and that
-  under `"1"` `sessionCreated` returns nothing and does not even bootstrap the data
-  directory, with an enabled control in the same test so the absence assertions are
-  not vacuous. The shell hooks' copy stays covered by case 12m of `tests/run.sh`;
-  the OMP plugin is unchanged, it calls the shell hooks and has no separate copy of
-  the check.
+  after each case (the suite's module-load clear must survive the block). Two
+  behavior cases under `"1"`: a fresh project, where `sessionCreated` must return
+  nothing and must not even bootstrap the data directory, and an already-active
+  project whose data dir exists - there the hook's own `tlDisabled()` guard is the
+  only thing that can suppress the onboarding block, `tlActive()`'s second check
+  cannot, so removing that guard now fails a test. Both cases run the enabled call
+  first so the absence assertions are not vacuous. The shell hooks' copy stays
+  covered by case 12m of `tests/run.sh`; the OMP plugin is unchanged, it calls the
+  shell hooks and has no separate copy of the check.
 
 ## [0.16.0]
 
