@@ -828,7 +828,9 @@ describe('Throughline Plugin Integration Tests', () => {
           !existsSync(tlDataDir(ctx)),
           'disabled plugin must not even create its data directory',
         );
-        assert.ok(!existsSync(bufferPath(sessionID)), 'disabled plugin must write no buffer file');
+        // No buffer-file assertion here: sessionCreated never writes a buffer,
+        // so that check would hold whatever the switch does. The capture path is
+        // pinned by the chatMessage case below.
       } finally {
         if (prev === undefined) delete process.env.THROUGHLINE_DISABLE;
         else process.env.THROUGHLINE_DISABLE = prev;
@@ -837,9 +839,13 @@ describe('Throughline Plugin Integration Tests', () => {
 
     it('suppresses sessionCreated on an already-active project, where only its own guard can', async () => {
       // The case above deletes the data dir before the disabled call, which
-      // leaves it provable by tlActive()'s redundant "disabled" answer alone:
-      // with no data dir, `!dataExists && !state.active` returns null even when
-      // sessionCreated's own `if (tlDisabled()) return null` guard is gone. The
+      // leaves it provable by tlActive()'s own "disabled" answer alone (that
+      // answer is NOT redundant in general: it is the sole kill switch for
+      // chatMessage and toolExecuteAfter, which have no guard of their own - see
+      // the chatMessage case below. It is redundant only inside sessionCreated,
+      // whose early return fires first): with no data dir,
+      // `!dataExists && !state.active` returns null even when sessionCreated's
+      // own `if (tlDisabled()) return null` guard is gone. The
       // real kill-switch situation is a project that is already active - data
       // dir present - where that guard is the ONLY thing between the hook and a
       // full onboarding block printed under THROUGHLINE_DISABLE. So bootstrap
@@ -861,7 +867,55 @@ describe('Throughline Plugin Integration Tests', () => {
           null,
           'sessionCreated must return null on its own guard, not via tlActive()',
         );
-        assert.ok(!existsSync(bufferPath(sessionID)), 'disabled plugin must write no buffer file');
+      } finally {
+        if (prev === undefined) delete process.env.THROUGHLINE_DISABLE;
+        else process.env.THROUGHLINE_DISABLE = prev;
+      }
+    });
+
+    it('suppresses chatMessage capture, whose only guard is tlActive()', async () => {
+      // chatMessage and toolExecuteAfter carry no tlDisabled() guard of their
+      // own: the `active: false` that tlActive() returns under the switch is
+      // their ONLY kill switch. The sessionCreated cases above cannot cover that
+      // path (that hook returns earlier, on its own guard), so without this case
+      // tlActive()'s disabled check could be deleted and every prompt, tool call
+      // and flush would go back to capturing under THROUGHLINE_DISABLE with the
+      // whole suite green. Captured here by asserting a real prompt written
+      // before the switch stays the only line in the buffer after it.
+      const sessionID = 'kill-switch-chat';
+      const prev = process.env.THROUGHLINE_DISABLE;
+      try {
+        delete process.env.THROUGHLINE_DISABLE;
+        await chatMessage(
+          ctx,
+          { sessionID } as any,
+          userMessageOutput('prompt captured before the switch') as any,
+        );
+        const before = readFileSync(bufferPath(sessionID), 'utf-8');
+        assert.ok(
+          before.includes('prompt captured before the switch'),
+          'control: capture must run while the switch is off',
+        );
+
+        process.env.THROUGHLINE_DISABLE = '1';
+        assert.strictEqual(tlDisabled(), true);
+        await chatMessage(
+          ctx,
+          { sessionID } as any,
+          userMessageOutput('prompt written after the switch') as any,
+        );
+
+        const after = readFileSync(bufferPath(sessionID), 'utf-8');
+        assert.ok(
+          !after.includes('prompt written after the switch'),
+          'a disabled plugin must capture nothing after the switch is thrown '
+            + '(chatMessage has no guard of its own but the disabled answer from tlActive)',
+        );
+        assert.strictEqual(
+          after.split('\n').filter((l) => l.includes('**prompt**')).length,
+          1,
+          'the buffer must still hold exactly the pre-switch prompt',
+        );
       } finally {
         if (prev === undefined) delete process.env.THROUGHLINE_DISABLE;
         else process.env.THROUGHLINE_DISABLE = prev;
