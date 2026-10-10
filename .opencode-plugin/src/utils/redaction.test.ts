@@ -1838,9 +1838,13 @@ describe('regex-engine parity with jq (issue #90)', () => {
    * end-of-command at its end - so every keyword the lead backs
    * off to pays the full suffix walk to the run end and fails there, which is the
    * occurrences-x-run-length product the guard exists to price. The mask is asserted on a
-   * LEADING `password=x ` for the same reason: pass 6a masks it without putting a separator
-   * at the end of the run under test, so the timing still proves the keyword rule ran and
-   * masked while the run stays unterminated.
+   * LEADING `password=x ` rather than a trailing one: pass 6a masks it, and does so without
+   * putting a separator at the end of the run under test, so the run stays unterminated while
+   * the exact-output assert still pins that `redact()` ran over this command and left the rest
+   * of it as it found it. (What that assert proves is bounded: an ASCII-keyword match like
+   * `password=x` is one pass 6b hands back unchanged, so it shows pass 6a ran and nothing was
+   * corrupted - that pass 6b ran at all comes from the non-ASCII gate in `redact()` plus the
+   * timings below, not from the mask.)
    *
    * Measured on this machine, with the widened class put back on the LEADING affix of the
    * pass 6b rule (`keywordPattern(JS_WORD_STAR, JS_WORD_STAR)`, then reverted so
@@ -1899,8 +1903,9 @@ describe('regex-engine parity with jq (issue #90)', () => {
     };
     // Each row is the repeated unit and the two sizes. Nothing inside either run is
     // maskable - no separator follows any keyword - so the whole run is expected back
-    // verbatim, exactly as it went in, which is also what makes the timing the only thing
-    // this guard can fail on.
+    // verbatim, exactly as it went in. The output asserts catch a build that corrupts the
+    // run; the widened affix this guard prices costs nothing in output, so it shows up in
+    // the timings below and nowhere else.
     const shapes: readonly [string, number, number][] = [
       ['token\u6f22', 2000, 8000],
       ['\u6f22token', 2000, 8000],
