@@ -97,9 +97,11 @@ All notable changes to throughline are documented here. Format loosely follows
   read: a request that is only about the memory dir gets one line pointing at
   `consolidate-memory` and ends the turn without touching a log, a request naming
   both stores does this pass and hands the memory half over instead of dropping it,
-  and a bare "consolidate" with no store named states which store it is reading in
-  its first line - unconditionally, whatever the request came from, rather than only
-  when it looks handoff-shaped. The old "Scope boundary" paragraph no longer
+  and a request that names no log - a bare "consolidate", or just "consolidation
+  pass" / "promote lessons", which the other skill can equally mean - states which
+  store it is reading in its first line, unconditionally, whatever the request came
+  from, rather than only when it looks handoff-shaped. The old "Scope boundary"
+  paragraph no longer
   restates the store rule, keeping only its mid-pass half (write one new memory
   entry, leave the reflective cleanup of the memory dir to the other skill), so the
   store itself is decided in exactly one place. `consolidate-memory` is left

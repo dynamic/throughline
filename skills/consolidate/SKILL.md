@@ -43,11 +43,12 @@ stores. This one reads the **handoff session logs**; the
 either job with the same two words, and the store is the part that gets lost.
 
 Decide the store from the request **before reading any file**. If it is about the
-memory dir - duplicate or stale memories, `MEMORY.md` or the index, orphans, or
-dangling `[[wikilinks]]` - stop here: say in one line that this is
-[`consolidate-memory`](../consolidate-memory/SKILL.md)'s job, and suggest the user run
-it. Read no session logs, propose no promotions, and end the turn. Do not
-"confirm scope" by mining the logs first - the store is decided here, not in
+memory dir - `$CLAUDE_MEMORY_DIR` where set, else
+`~/.claude/projects/<slug>/memory/`, and their `MEMORY.md` index - duplicate or
+stale memories, orphans, or dangling `[[wikilinks]]` - stop here: say in one line
+that this is [`consolidate-memory`](../consolidate-memory/SKILL.md)'s job, and suggest
+the user run it. Read no session logs, propose no promotions, and end the turn. Do
+not "confirm scope" by mining the logs first - the store is decided here, not in
 Phase 1.
 
 One request can name both stores ("consolidate handoffs and tidy `MEMORY.md`").
@@ -56,13 +57,15 @@ Then run this pass over the logs and name the memory half for
 redirect above is for a request that is *only* about the memory dir, and neither
 half may be dropped silently.
 
-When the request names the log store ("consolidate handoffs", "mine the handoff
-logs", "consolidation pass", "promote lessons"), continue to Phase 1. When it is
-only "consolidate" with no store named - whatever it came from, a handoff briefing
-or the user - state in your first line that you are reading the session logs, then
-continue to Phase 1. That announcement is unconditional on a store-less request:
-it is the thing that makes a wrong briefing surface before work is spent, so it
-must not hinge on the request looking handoff-shaped.
+Every request that is not redirected reaches Phase 1, but announce first unless the
+request names a log outright. "consolidate handoffs" and "mine the handoff logs" name
+the store, so they need no announcement. "consolidation pass" and "promote lessons" do not -
+`consolidate-memory` calls its own run a pass too, and records it under the same
+"Consolidation passes" heading - and neither does a bare "consolidate". For any of
+those, whatever it came from, a handoff briefing or the user, state in your first
+line that you are reading the session logs, then continue. That announcement is
+unconditional on every store-less request: it is what makes a wrong briefing surface
+before work is spent, so it must not hinge on the request looking handoff-shaped.
 
 ---
 
