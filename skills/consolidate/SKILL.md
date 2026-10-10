@@ -1,6 +1,6 @@
 ---
 name: consolidate
-description: Periodic consolidation pass that mines the timestamped handoff session logs for lessons recurring across sessions and proposes promoting them into durable homes, with a human gate on every promotion. Run when the user says "consolidate handoffs", "mine the handoff logs", "consolidation pass", or "promote lessons" - or roughly monthly, or when HANDOFF.md has grown stale or bloated and the same lessons keep being re-learned session after session.
+description: Consolidation pass over the handoff session logs - mines the timestamped `DATA/logs/handoff-*.md` records for lessons recurring across sessions and proposes promoting them into durable homes, with a human gate on every promotion. Does NOT handle memory files (`~/.claude/projects/<slug>/memory/`, `MEMORY.md`) - that store belongs to `consolidate-memory`, which this skill shares only a name with. Run when the user says "consolidate handoffs", "mine the handoff logs", "consolidation pass", or "promote lessons" - or roughly monthly, or when HANDOFF.md has grown stale or bloated and the same lessons keep being re-learned session after session.
 license: MIT
 ---
 
@@ -26,11 +26,36 @@ worktree of the repo.
   by `DATA`, mine it too - the two names differ by one letter and are easy to
   conflate, so check for both.
 
-**Scope boundary:** this skill owns the **handoff session logs**. Auto-memory files
-(`~/.claude/projects/<slug>/memory/`) are the [`consolidate-memory`](../consolidate-memory/SKILL.md) skill's job -
-merging duplicates, fixing stale facts, pruning the index. Don't duplicate that
-work: if a candidate's right home is an auto-memory file, write the one new entry
-(Phase 4) and leave the reflective cleanup of the memory dir to [`consolidate-memory`](../consolidate-memory/SKILL.md).
+**Scope boundary:** this skill owns the **handoff session logs** - see Phase 0 for
+which requests are in scope, and for the memory-file half of the boundary. What
+that boundary means mid-pass: if a candidate's right home is an auto-memory file,
+write the one new entry (Phase 4) and leave the reflective cleanup of the memory
+dir to [`consolidate-memory`](../consolidate-memory/SKILL.md) - don't duplicate that work.
+
+---
+
+## Phase 0: Confirm the store before reading anything
+
+Two shipped skills share the word "consolidate" and touch completely different
+stores. This one reads the **handoff session logs**; the
+[`consolidate-memory`](../consolidate-memory/SKILL.md) skill owns the **auto-memory files**
+(`~/.claude/projects/<slug>/memory/`, `MEMORY.md`). A handoff or a user can name
+either job with the same two words, and the store is the part that gets lost.
+
+Decide the store from the request **before reading any file**. If it is about the
+memory dir - duplicate or stale memories, `MEMORY.md` or the index, orphans, or
+dangling `[[wikilinks]]` - stop here: say in one line that this is
+[`consolidate-memory`](../consolidate-memory/SKILL.md)'s job, and suggest the user run
+it. Read no session logs, propose no promotions, and end the turn. Do not
+"confirm scope" by mining the logs first - the store is decided here, not in
+Phase 1.
+
+When the request names the log store ("consolidate handoffs", "mine the handoff
+logs", "consolidation pass", "promote lessons"), or is simply "consolidate" with a
+handoff-shaped context, continue to Phase 1. A bare "consolidate" that arrives
+from a handoff naming neither store is ambiguous: state which store you are
+reading - the session logs - in your first line, so a wrong briefing surfaces
+before any work is spent.
 
 ---
 

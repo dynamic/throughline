@@ -86,6 +86,23 @@ All notable changes to throughline are documented here. Format loosely follows
   something being committable. Added for the narrower, genuinely surprising case: when
   only one of the two artifacts is ignored the staged set is partial, so the skill now
   names the file being left out.
+- **`consolidate` states its store up front, and redirects memory-file requests at
+   Phase 0** (issue #83): `consolidate` and `consolidate-memory` share a name and touch
+   different stores, and only one of them ships in the Claude Code plugin, so a handoff
+   briefing the next session to "run `consolidate`" for a memory-file job invoked the
+   wrong skill and caught itself only at Phase 1 - after reading logs it should never
+   have opened. The `description:` now names the handoff session logs in its first
+   clause and says outright that memory files are `consolidate-memory`'s store, and a
+   new Phase 0 decides the store from the request before any file is read: a
+   memory-shaped request gets one line pointing at `consolidate-memory` and ends the
+   turn without touching a log, while a bare "consolidate" with no store named states
+   which store it is reading in its first line. The old "Scope boundary" paragraph is
+   trimmed to the mid-pass rule (write one new memory entry, leave the reflective
+   cleanup to the other skill) so the boundary is stated once instead of twice.
+   `consolidate-memory` is left unchanged - its description already leads with "Memory
+   file hygiene" - and `handoff` is left unchanged too: its `consolidate` mentions are
+   all in its own instructions about the "Consolidation passes" section, not in the
+   next-session output the issue describes.
 
 ### Fixed
 - **OpenCode plugin port of the issue #81 rules, plus a parity test** (issue #90):
