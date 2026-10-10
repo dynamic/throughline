@@ -88,7 +88,7 @@ All notable changes to throughline are documented here. Format loosely follows
   names the file being left out.
 - **`consolidate` states its store up front, and redirects memory-file requests at
    Phase 0** (issue #83): `consolidate` and `consolidate-memory` share a name and touch
-   different stores, and only one of them ships in the Claude Code plugin, so a handoff
+   different stores, and they ship side by side from the same plugin, so a handoff
    briefing the next session to "run `consolidate`" for a memory-file job invoked the
    wrong skill and caught itself only at Phase 1 - after reading logs it should never
    have opened. The `description:` now names the handoff session logs in its first
@@ -96,7 +96,8 @@ All notable changes to throughline are documented here. Format loosely follows
    new Phase 0 decides the store from the request before any file is read: a
    memory-shaped request gets one line pointing at `consolidate-memory` and ends the
    turn without touching a log, while a bare "consolidate" with no store named states
-   which store it is reading in its first line. The old "Scope boundary" paragraph is
+   which store it is reading in its first line - unconditionally, whatever the request
+   came from, rather than only when it looks handoff-shaped. The old "Scope boundary" paragraph is
    trimmed to the mid-pass rule (write one new memory entry, leave the reflective
    cleanup to the other skill) so the boundary is stated once instead of twice.
    `consolidate-memory` is left unchanged - its description already leads with "Memory

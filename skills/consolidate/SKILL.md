@@ -1,6 +1,6 @@
 ---
 name: consolidate
-description: Consolidation pass over the handoff session logs - mines the timestamped `DATA/logs/handoff-*.md` records for lessons recurring across sessions and proposes promoting them into durable homes, with a human gate on every promotion. Does NOT handle memory files (`~/.claude/projects/<slug>/memory/`, `MEMORY.md`) - that store belongs to `consolidate-memory`, which this skill shares only a name with. Run when the user says "consolidate handoffs", "mine the handoff logs", "consolidation pass", or "promote lessons" - or roughly monthly, or when HANDOFF.md has grown stale or bloated and the same lessons keep being re-learned session after session.
+description: Consolidation pass over the handoff session logs - mines the timestamped `DATA/logs/handoff-*.md` records for lessons recurring across sessions and proposes promoting them into durable homes, with a human gate on every promotion. Does NOT clean up or restructure memory files (`~/.claude/projects/<slug>/memory/`, `MEMORY.md`) - that store belongs to `consolidate-memory`, which this skill shares only a name with. Run when the user says "consolidate handoffs", "mine the handoff logs", "consolidation pass", or "promote lessons" - or roughly monthly, or when HANDOFF.md has grown stale or bloated and the same lessons keep being re-learned session after session.
 license: MIT
 ---
 
@@ -51,11 +51,12 @@ it. Read no session logs, propose no promotions, and end the turn. Do not
 Phase 1.
 
 When the request names the log store ("consolidate handoffs", "mine the handoff
-logs", "consolidation pass", "promote lessons"), or is simply "consolidate" with a
-handoff-shaped context, continue to Phase 1. A bare "consolidate" that arrives
-from a handoff naming neither store is ambiguous: state which store you are
-reading - the session logs - in your first line, so a wrong briefing surfaces
-before any work is spent.
+logs", "consolidation pass", "promote lessons"), continue to Phase 1. When it is
+only "consolidate" with no store named - whatever it came from, a handoff briefing
+or the user - state in your first line that you are reading the session logs, then
+continue to Phase 1. That announcement is unconditional on a store-less request:
+it is the thing that makes a wrong briefing surface before work is spent, so it
+must not hinge on the request looking handoff-shaped.
 
 ---
 
