@@ -1818,26 +1818,117 @@ describe('regex-engine parity with jq (issue #90)', () => {
   });
 
   /**
-   * Latency guard for the word pass. Over-approximating `\w` on BOTH sides of the keyword
-   * made this quadratic in the length of a run of non-ASCII non-whitespace text - 5.6 s
-   * for a 3 KB command on a build where `main` takes 1 ms - and `redact()` runs
-   * in-process on the full unclamped bash command, so that is a frozen plugin, not a slow
-   * one. CJK prose has no spaces, so such a run is ordinary input rather than a crafted
-   * one. The over-approximation now sits on the suffix only and this stays in the
-   * milliseconds; the bound is loose (observed single-digit ms) and exists to fail a
-   * future change that puts a star back on the leading side.
+   * Latency guard for the LEADING affix of pass 6b (dynamic/throughline#119).
+   * Over-approximating `\w` on BOTH sides of the keyword made this quadratic in the length
+   * of a run of non-ASCII non-whitespace text - 5.6 s for a 3 KB command on a build where
+   * `main` takes 1 ms - and `redact()` runs in-process on the full unclamped bash command,
+   * so that is a frozen plugin, not a slow one. CJK prose has no spaces, so such a run is
+   * ordinary input rather than a crafted one. The over-approximation now sits on the
+   * suffix only, and this stays in the milliseconds.
+   *
+   * What the previous version of this guard got wrong (issue #119): its input was
+   * `'token\u6f22'.repeat(500) + ' password=x'`, and a run that ENDS AT A SEPARATOR cannot make
+   * the widened affix walk to death. Pass 6a masks that trailing `password=x` before pass
+   * 6b ever sees it, and pass 6b's one anchored attempt then feeds its greedy lead back
+   * from the run end until a keyword completes - which one does, first time it finds one,
+   * because the suffix's walk ends at the run end and the run end is followed by the space
+   * that the separator alternatives accept. So the suffix never re-walks the run
+   * character by character, the lead's backtracking is the only cost, and that is linear. The
+   * input below has NO separator after any keyword - a run of `token\u6f22` with nothing but
+   * end-of-command at its end - so every keyword the lead backs
+   * off to pays the full suffix walk to the run end and fails there, which is the
+   * occurrences-x-run-length product the guard exists to price. The mask is asserted on a
+   * LEADING `password=x ` rather than a trailing one: pass 6a masks it, and does so without
+   * putting a separator at the end of the run under test, so the run stays unterminated while
+   * the exact-output assert still pins that `redact()` ran over this command and left the rest
+   * of it as it found it. (What that assert proves is bounded: an ASCII-keyword match like
+   * `password=x` is one pass 6b hands back unchanged, so it shows pass 6a ran and nothing was
+   * corrupted - that pass 6b ran at all comes from the non-ASCII gate in `redact()` plus the
+   * timings below, not from the mask.)
+   *
+   * Measured on this machine, with the widened class put back on the LEADING affix of the
+   * pass 6b rule (`keywordPattern(JS_WORD_STAR, JS_WORD_STAR)`, then reverted so
+   * `redaction.ts` is byte-identical to `main`): the OLD input above stayed at 1.3-3.9ms per
+   * `redact()` call for 500, 2,000 and even 8,000 repeats (3,011 to 48,011 characters) - flat,
+   * because nothing about that input depends on the affix width. The input below, same
+   * mutation, same machine: `('token\u6f22').repeat(k)` took 98.7ms at 12,011 characters and
+   * 1,564.9ms at 48,011 (a 15.9x scaling ratio for a 4x-longer command), and
+   * `('\u6f22token').repeat(k)` took 98.3ms / 1,561.9ms (15.9x) - super-quadratic, in-process,
+   * on the full unclamped bash command. With the affix ASCII-only, as shipped: 0.5ms / 2.2ms
+   * and 0.5ms / 1.9ms, and the floored denominator puts both ratios under 1. The ratio bound
+   * of 8 sits above linear (a 4x step costs ~4x) and below the measured 15.9x; the denominator
+   * is floored at 5 ms so sub-millisecond noise on the small timing cannot fail the test on its
+   * own, which also makes the ratio the TIGHTER of the two bounds on a fast machine (a 5 ms
+   * floor caps the big run around 40 ms there). The absolute bound of 250 ms is the backstop
+   * for the opposite case, a build slow enough to lift the denominator itself above the floor,
+   * where the ratio can read fine while the absolute cost cannot. On this machine both fire
+   * together under the mutation: 15.9x, and 1,564.9ms against a 250 ms bound.
+   *
+   * The second row is the same run read the other way round - `\u6f22token`, where the character
+   * in FRONT of the keyword is the non-ASCII one - and it fails on its own under the mutation
+   * above (98.3ms -> 1,561.9ms), so the guard does not depend on the first row catching it
+   * first. What neither row covers, and no timing guard on these inputs can: a rule that
+   * widens the LEAD while leaving the SUFFIX ASCII. Measured with exactly that mutation
+   * (`keywordPattern(JS_WORD_STAR, "\\w*")`), both rows cost 0.7ms -> 1.9ms (a 0.4x ratio) and
+   * masked identically to the shipped rule, because an anchored attempt whose suffix cannot
+   * cross into non-ASCII pays only linear lead backtracking. That shape would have to be
+   * caught by the jq parity tests, not here - an earlier version of this comment claimed the
+   * second row closed it, which is not true.
+   *
+   * Each size is timed best-of-3, every run must write the SAME output (a fast time may not
+   * be bought by a build that stops masking), and the SMALL size is asserted - output and an
+   * absolute bound - before the big one is timed at all. That ordering fails a build which
+   * costs time at EVERY size within the first small timing instead of after three more 48 KB
+   * ones; a regression confined to the big size is not caught by it, and is caught by the ratio
+   * and absolute bounds below instead. The test also carries
+   * `{ timeout: 120_000 }` like the issue #129 guard below it (the #118 guard further below
+   * carries none), but that is weaker than it looks: `node --test` cannot interrupt a
+   * SYNCHRONOUS test body, so a regex that truly never returned would block the event loop
+   * past its own timeout and the timeout would never fire. Against that case neither the
+   * timeout nor the small-size assert is protection; what the assert does is keep a build that
+   * is merely slow at every size from reaching the big timings at all.
    */
-  it('stays linear on a long run of non-ASCII text, which the leading word affix used to break', () => {
-    // The mask is asserted on a trailing keyword rather than inside the run: inside the
-    // run nothing is maskable (no separator follows the non-ASCII character), which is
-    // exactly why the quadratic scan cost nothing in output and everything in time.
-    const input = 'token\u6f22'.repeat(500) + ' password=x';
-    const started = Date.now();
-    const out = redact(input);
-    const elapsed = Date.now() - started;
-    assert.ok(out.includes('***'), 'nothing was masked, so the timing proves nothing');
-    assert.ok(!out.includes('password=x'), `the trailing secret survived: ${JSON.stringify(out.slice(-40))}`);
-    assert.ok(elapsed < 2000, `redact() took ${elapsed}ms on a ${input.length}-character command; the leading word affix has gone quadratic again`);
+  it('stays linear on a long non-ASCII run that ends with no separator, which the leading word affix used to break (issue #119)', { timeout: 120_000 }, () => {
+    const timed = (input: string) => {
+      const started = process.hrtime.bigint();
+      const out = redact(input);
+      const ms = Number(process.hrtime.bigint() - started) / 1e6;
+      return { ms, out };
+    };
+    // Best of 3 runs per size; every run must write the SAME output, so a fast time
+    // cannot be bought by a build that stops masking.
+    const timedBest = (input: string) => {
+      const first = timed(input);
+      let ms = first.ms;
+      for (let i = 0; i < 2; i++) {
+        const r = timed(input);
+        assert.strictEqual(r.out, first.out, `run ${i + 2} of a timed ${input.length}-character input masked differently from run 1`);
+        ms = Math.min(ms, r.ms);
+      }
+      return { ms, out: first.out };
+    };
+    // Each row is the repeated unit and the two sizes. Nothing inside either run is
+    // maskable - no separator follows any keyword - so the whole run is expected back
+    // verbatim, exactly as it went in. The output asserts catch a build that corrupts the
+    // run; the widened affix this guard prices costs nothing in output, so it shows up in
+    // the timings below and nowhere else.
+    const shapes: readonly [string, number, number][] = [
+      ['token\u6f22', 2000, 8000],
+      ['\u6f22token', 2000, 8000],
+    ];
+    for (const [unit, n, fourN] of shapes) {
+      const small = timedBest('password=x ' + unit.repeat(n));
+      assert.strictEqual(small.out, 'password=*** ' + unit.repeat(n), `the x${n} ${JSON.stringify(unit)} input was not masked to exactly the expected output`);
+      assert.ok(small.ms < 1000,
+        `redact() took ${small.ms.toFixed(1)}ms on the x${n} (${small.out.length}-character) ${JSON.stringify(unit)} input; the small size alone already exceeds what a linear pass costs (issue #119)`);
+      const big = timedBest('password=x ' + unit.repeat(fourN));
+      assert.strictEqual(big.out, 'password=*** ' + unit.repeat(fourN), `the x${fourN} ${JSON.stringify(unit)} input was not masked to exactly the expected output`);
+      const ratio = big.ms / Math.max(small.ms, 5);
+      assert.ok(ratio < 8,
+        `redact() scaled ${ratio.toFixed(1)}x for a 4x-longer ${JSON.stringify(unit)} run (${small.ms.toFixed(1)}ms -> ${big.ms.toFixed(1)}ms); pass 6b's leading affix is back to walking runs it has already stepped over (issue #119)`);
+      assert.ok(big.ms < 250,
+        `redact() took ${big.ms.toFixed(1)}ms on a ${big.out.length}-character command with no separator after its keywords; pass 6b is quadratic again (issue #119)`);
+    }
   });
 
   /**
@@ -1960,9 +2051,14 @@ describe('regex-engine parity with jq (issue #90)', () => {
   /**
    * Latency guard for the OTHER side of the word pass: pass 6b's widened SUFFIX, over text
    * that carries a keyword inside a run with no separator in it (dynamic/throughline#118).
-   * The non-ASCII guard above cannot see this either - its run is `token\u6f22` repeated, whose
-   * very first start completes at the trailing ` password=x`, so the widened suffix never
-   * has to walk a long run to death - and issue #114's guard is ASCII-only, which pass 6b's
+   * The #119 guard above now prices this SAME shape - issue #119 rewrote its run to `token\u6f22`
+   * repeated with no separator after any keyword, so a widened affix does have to walk it to
+   * death - and it was measured failing on the pre-#118 build of `main` (`4ecc99b`, pass 6b
+   * still handed to `String.replace`): 100.9ms at 2,000 repeats and 1,611.0ms at 8,000 (a
+   * 16.0x ratio for a 4x-longer command, and 6.4x over its own 250 ms ceiling). So the two
+   * non-ASCII guards overlap rather than dividing the pass; what this one adds is the issue's
+   * own two units, `token\u00e9` and `password` plus 20x`\u6f22`, which the #119 rows do not use.
+   * Issue #114's guard, by contrast, is ASCII-only, which pass 6b's
    * whole-string fast path skips outright.
    *
    * Measured on this machine BEFORE pass 6b was driven from a scan, with the widened rule
