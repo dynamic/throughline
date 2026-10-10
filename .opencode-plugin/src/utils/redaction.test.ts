@@ -1832,7 +1832,10 @@ describe('regex-engine parity with jq (issue #90)', () => {
    * 6b ever sees it, and pass 6b's one anchored attempt then feeds its greedy lead back
    * from the run end until a keyword completes - which one does, first time it finds one,
    * because the suffix's walk ends at the run end and the run end is followed by the space
-   * that the separator alternatives accept. So the suffix never re-walks the run
+   * that the separator alternatives accept. (That input's output ended in ` ***`, not
+   * ` password=***`: pass 6b takes 6a's `password=***` as the value of the last `token\u6f22`
+   * keyword and masks it a second time. Over-masking, no leak, and not what this guard is
+   * about - but it is what the masked output actually was.) So the suffix never re-walks the run
    * character by character, the lead's backtracking is the only cost, and that is linear. The
    * input below has NO separator after any keyword - a run of `token\u6f22` with nothing but
    * end-of-command at its end - so every keyword the lead backs
@@ -1872,8 +1875,7 @@ describe('regex-engine parity with jq (issue #90)', () => {
    * (`keywordPattern(JS_WORD_STAR, "\\w*")`), both rows cost 0.7ms -> 1.9ms (a 0.4x ratio) and
    * masked identically to the shipped rule, because an anchored attempt whose suffix cannot
    * cross into non-ASCII pays only linear lead backtracking. That shape would have to be
-   * caught by the jq parity tests, not here - an earlier version of this comment claimed the
-   * second row closed it, which is not true.
+   * caught by the jq parity tests, not here.
    *
    * Each size is timed best-of-3, every run must write the SAME output (a fast time may not
    * be bought by a build that stops masking), and the SMALL size is asserted - output and an
