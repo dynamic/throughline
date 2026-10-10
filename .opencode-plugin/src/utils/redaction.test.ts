@@ -2005,6 +2005,64 @@ describe('regex-engine parity with jq (issue #90)', () => {
   });
 
   /**
+   * Latency guard for the cost the #118 driver left inside pass 6b (dynamic/throughline#134,
+   * the 6b side of what #129 removed from 6a). #118 made the DRIVER linear - one attempt per
+   * word run instead of one per start - but each attempt still ran the whole rule, and the
+   * rule keeps jq's unbounded `\\w*` lead: on one long ASCII run carrying many keywords the
+   * lead backs off character by character and the widened suffix re-walks the run at every
+   * keyword hit, so a run with no separator inside it costs O(run length)^2 again. The #118
+   * guard above cannot see it: its run is `token\u00e9` repeated, which is not one word run, so
+   * the suffix has a run end to stop at every 6 characters. The #129 guard is ASCII-only,
+   * which pass 6b's whole-string fast path skips outright. So this shape - a single ASCII run
+   * plus ONE non-ASCII character at the end, which is what admits pass 6b at all - was pinned
+   * by nothing.
+   *
+   * Measured on this machine BEFORE the attempt was anchored at the keyword-group end, with
+   * the rule handed to the driver whole: `('token').repeat(k) + '\u00e9'` took 33ms at k=2,000
+   * (10,001 characters) and 461ms at k=8,000 (40,001 characters) - a 14x scaling ratio for a
+   * 4x-longer run. After it: 3.4ms / 4.2ms (1.2x). Same thresholds as #118 - best-of-3, the
+   * ratio bound of 8 above linear and below quadratic, the denominator floored at 5ms so
+   * sub-millisecond noise on the small timing cannot decide the verdict alone, and an
+   * absolute ceiling on the big timing that a machine fast enough to flatter the ratio still
+   * cannot dodge. The leading `password=x` masks without shortening the scan, so the timing
+   * proves pass 6b ran over the whole run; the run itself carries no separator and so is not
+   * maskable, which is why its output is asserted as a repetition.
+   */
+  it('stays linear on a long ASCII run once a non-ASCII character admits pass 6b (issue #134)', { timeout: 120_000 }, () => {
+    const timed = (input: string) => {
+      const started = process.hrtime.bigint();
+      const out = redact(input);
+      const ms = Number(process.hrtime.bigint() - started) / 1e6;
+      return { ms, out };
+    };
+    // Best of 3 runs per size; every run must write the SAME output, so a fast time cannot
+    // be bought by a build that stops masking.
+    const timedBest = (input: string) => {
+      const first = timed(input);
+      let ms = first.ms;
+      for (let i = 0; i < 2; i++) {
+        const r = timed(input);
+        assert.strictEqual(r.out, first.out, `run ${i + 2} of a timed ${input.length}-character input masked differently from run 1`);
+        ms = Math.min(ms, r.ms);
+      }
+      return { ms, out: first.out };
+    };
+    const k = 2000;
+    const unit = 'token';
+    const small = timedBest('password=x ' + unit.repeat(k) + '\u00e9');
+    assert.strictEqual(small.out, 'password=*** ' + unit.repeat(k) + '\u00e9', `the k=${k} input was not masked to exactly the expected output`);
+    assert.ok(small.ms < 1000,
+      `redact() took ${small.ms.toFixed(1)}ms on the x${k} (${small.out.length}-character) 'token' + accent input; the small size alone already exceeds what a linear pass costs (issue #134)`);
+    const big = timedBest('password=x ' + unit.repeat(k * 4) + '\u00e9');
+    assert.strictEqual(big.out, 'password=*** ' + unit.repeat(k * 4) + '\u00e9', `the k=${k * 4} input was not masked to exactly the expected output`);
+    const ratio = big.ms / Math.max(small.ms, 5);
+    assert.ok(ratio < 8,
+      `redact() scaled ${ratio.toFixed(1)}x for a 4x-longer 'token' run (${small.ms.toFixed(1)}ms -> ${big.ms.toFixed(1)}ms); pass 6b's attempt is re-walking the run at every keyword hit (issue #134)`);
+    assert.ok(big.ms < 250,
+      `redact() took ${big.ms.toFixed(1)}ms on a ${big.out.length}-character command with one non-ASCII character at the end; pass 6b's lead is unbounded again (issue #134)`);
+  });
+
+  /**
    * The masking side of the same rewrite (dynamic/throughline#118). Making pass 6b linear
    * rests on "one attempt per word run", and the one way that goes wrong is anchoring the
    * attempt at the run's FIRST character: the lead is ASCII `\\w*`, so a run that opens with
