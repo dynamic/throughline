@@ -1,6 +1,6 @@
 ---
 name: consolidate
-description: Periodic consolidation pass that mines the timestamped handoff session logs for lessons recurring across sessions and proposes promoting them into durable homes, with a human gate on every promotion. Run when the user says "consolidate handoffs", "mine the handoff logs", "consolidation pass", or "promote lessons" - or roughly monthly, or when HANDOFF.md has grown stale or bloated and the same lessons keep being re-learned session after session.
+description: Consolidation pass over the handoff session logs - mines the timestamped `DATA/logs/handoff-*.md` records for lessons recurring across sessions and proposes promoting them into durable homes, with a human gate on every promotion. Does NOT clean up or restructure memory files (`~/.claude/projects/<slug>/memory/`, `MEMORY.md`) - that store belongs to `consolidate-memory`, which this skill shares only a name with. Run when the user says "consolidate handoffs", "mine the handoff logs", "consolidation pass", or "promote lessons" - or roughly monthly, or when HANDOFF.md has grown stale or bloated and the same lessons keep being re-learned session after session.
 license: MIT
 ---
 
@@ -26,11 +26,46 @@ worktree of the repo.
   by `DATA`, mine it too - the two names differ by one letter and are easy to
   conflate, so check for both.
 
-**Scope boundary:** this skill owns the **handoff session logs**. Auto-memory files
-(`~/.claude/projects/<slug>/memory/`) are the [`consolidate-memory`](../consolidate-memory/SKILL.md) skill's job -
-merging duplicates, fixing stale facts, pruning the index. Don't duplicate that
-work: if a candidate's right home is an auto-memory file, write the one new entry
-(Phase 4) and leave the reflective cleanup of the memory dir to [`consolidate-memory`](../consolidate-memory/SKILL.md).
+**Scope boundary:** this skill owns the **handoff session logs** - see Phase 0 for
+which requests are in scope, and for the memory-file half of the boundary. What
+that boundary means mid-pass: if a candidate's right home is an auto-memory file,
+write the one new entry (Phase 4) and leave the reflective cleanup of the memory
+dir to [`consolidate-memory`](../consolidate-memory/SKILL.md) - don't duplicate that work.
+
+---
+
+## Phase 0: Confirm the store before reading anything
+
+Two shipped skills share the word "consolidate" and touch completely different
+stores. This one reads the **handoff session logs**; the
+[`consolidate-memory`](../consolidate-memory/SKILL.md) skill owns the **auto-memory files**
+(`~/.claude/projects/<slug>/memory/`, `MEMORY.md`). A handoff or a user can name
+either job with the same two words, and the store is the part that gets lost.
+
+Decide the store from the request **before reading any file**. If it is about the
+memory dir - `$CLAUDE_MEMORY_DIR` where set, else
+`~/.claude/projects/<slug>/memory/`, and their `MEMORY.md` index - duplicate or
+stale memories, orphans, or dangling `[[wikilinks]]` - stop here: say in one line
+that this is [`consolidate-memory`](../consolidate-memory/SKILL.md)'s job, and suggest
+the user run it. Read no session logs, propose no promotions, and end the turn. Do
+not "confirm scope" by mining the logs first - the store is decided here, not in
+Phase 1.
+
+One request can name both stores ("consolidate handoffs and tidy `MEMORY.md`").
+Then run this pass over the logs and name the memory half for
+[`consolidate-memory`](../consolidate-memory/SKILL.md) in the same report - the
+redirect above is for a request that is *only* about the memory dir, and neither
+half may be dropped silently.
+
+Every request that is not redirected reaches Phase 1, but announce first unless the
+request names a log outright. "consolidate handoffs" and "mine the handoff logs" name
+the store, so they need no announcement. "consolidation pass" and "promote lessons" do not -
+`consolidate-memory` calls its own run a pass too, and records it under the same
+"Consolidation passes" heading - and neither does a bare "consolidate". For any of
+those, whatever it came from, a handoff briefing or the user, state in your first
+line that you are reading the session logs, then continue. That announcement is
+unconditional on every store-less request: it is what makes a wrong briefing surface
+before work is spent, so it must not hinge on the request looking handoff-shaped.
 
 ---
 
