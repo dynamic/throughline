@@ -260,6 +260,20 @@ All notable changes to throughline are documented here. Format loosely follows
   issue itself: userinfo carrying an escaped `@`, and whether the password class
   should refuse a scheme-looking tail (`//user:pw@@host`).
 
+### Tests
+- **Direct test for the OpenCode plugin's `tlDisabled()` kill switch** (issue #126):
+  `.opencode-plugin/src/integration.test.ts` now calls the plugin's own TypeScript
+  copy of the switch with the variable unset, `"0"`, `""`, `"1"` and `"yes"`, so a
+  dropped `val !== "0"` or `val !== ""` clause in `lib.ts` - which would disable
+  capture for every operator who exports the variable at all - fails a test instead
+  of only showing up in the field. Pins that the previous environment is restored
+  after each case (the suite's module-load clear must survive the block), and that
+  under `"1"` `sessionCreated` returns nothing and does not even bootstrap the data
+  directory, with an enabled control in the same test so the absence assertions are
+  not vacuous. The shell hooks' copy stays covered by case 12m of `tests/run.sh`;
+  the OMP plugin is unchanged, it calls the shell hooks and has no separate copy of
+  the check.
+
 ## [0.16.0]
 
 ### Added

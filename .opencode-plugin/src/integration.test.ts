@@ -12,15 +12,16 @@ import { chatMessage } from './hooks/chat-message.js';
 import { toolExecuteAfter } from './hooks/tool-execute-after.js';
 import { sessionCompacted, sessionCompactionRecovery } from './hooks/session-compacted.js';
 import { sessionIdle } from './hooks/session-idle.js';
-import { tlDataDir, tlSafeSid } from './lib.js';
+import { tlDataDir, tlDisabled, tlSafeSid } from './lib.js';
 
 // The suite controls its own environment: an ambient THROUGHLINE_DISABLE in the
 // calling shell (exported by a harness running CI locally) makes tlDisabled()
 // true for every hook, so all capture assertions fail with nothing wrong in the
 // code — a red check whose cause is invisible gets attributed to the change under
 // test. Clear it at module load, before any hook runs. Case 12m of tests/run.sh still
-// covers the kill switch for the shell hooks; this TypeScript tlDisabled() has no test of
-// its own, before or after this change (see dynamic/throughline#120).
+// covers the kill switch for the shell hooks; the TypeScript copy in lib.ts is
+// asserted directly by the 'tlDisabled kill switch' block below (dynamic/throughline#126),
+// which saves and restores the variable around every case.
 delete process.env.THROUGHLINE_DISABLE;
 
 // --- Real-shaped fixture builders --------------------------------------
@@ -750,6 +751,88 @@ describe('Throughline Plugin Integration Tests', () => {
       );
       // No command → nothing to capture, but must not throw or write garbage.
       assert.ok(!existsSync(bufferPath(sessionID)));
+    });
+  });
+
+  describe('tlDisabled kill switch', () => {
+    // The plugin's own TypeScript copy of the kill switch is separate code from
+    // the shell version covered by case 12m of tests/run.sh, and it gates every
+    // hook here. Semantics are "anything except unset, "0" and "" disables":
+    // an operator exporting THROUGHLINE_DISABLE=0 means "leave throughline on",
+    // so "0" and "" must NOT flip the switch while "1" and any other non-empty
+    // value must. Directly asserted so a dropped clause in lib.ts - which would
+    // silently disable capture for every operator who exports the variable at
+    // all - fails here instead of in the field. See dynamic/throughline#126.
+    function withDisable(value: string | undefined, body: () => void): void {
+      const prev = process.env.THROUGHLINE_DISABLE;
+      if (value === undefined) delete process.env.THROUGHLINE_DISABLE;
+      else process.env.THROUGHLINE_DISABLE = value;
+      try {
+        body();
+      } finally {
+        // Restore exactly what the module-load clear left: "unset" must be
+        // restored with delete, not assigned the string "undefined", or every
+        // capture assertion running after this block would see a set variable.
+        if (prev === undefined) delete process.env.THROUGHLINE_DISABLE;
+        else process.env.THROUGHLINE_DISABLE = prev;
+      }
+    }
+
+    it('is off when the variable is unset', () => {
+      withDisable(undefined, () => assert.strictEqual(tlDisabled(), false));
+    });
+
+    it('is off for "0" (an explicit opt-out of the opt-out)', () => {
+      withDisable('0', () => assert.strictEqual(tlDisabled(), false));
+    });
+
+    it('is off for the empty string (exported with no value)', () => {
+      withDisable('', () => assert.strictEqual(tlDisabled(), false));
+    });
+
+    it('is on for "1"', () => {
+      withDisable('1', () => assert.strictEqual(tlDisabled(), true));
+    });
+
+    it('is on for any other non-empty value ("yes")', () => {
+      withDisable('yes', () => assert.strictEqual(tlDisabled(), true));
+    });
+
+    it('restores the variable to its previous state after each case', () => {
+      withDisable('1', () => assert.strictEqual(tlDisabled(), true));
+      assert.strictEqual(
+        process.env.THROUGHLINE_DISABLE,
+        undefined,
+        'a leaked THROUGHLINE_DISABLE would disable every later capture assertion',
+      );
+      assert.strictEqual(tlDisabled(), false);
+    });
+
+    it('suppresses sessionCreated entirely: no block, no bootstrapped data dir', async () => {
+      const sessionID = 'kill-switch-session';
+      const prev = process.env.THROUGHLINE_DISABLE;
+      try {
+        // Control first: with the switch off the same call DOES bootstrap the
+        // data dir, so the assertions below are not vacuously true (an empty
+        // data dir would stay empty whatever tlDisabled() returned).
+        delete process.env.THROUGHLINE_DISABLE;
+        const enabled = await sessionCreated(ctx, { sessionID });
+        assert.ok(enabled !== null, 'control: sessionCreated must produce a block when not disabled');
+        assert.ok(existsSync(tlDataDir(ctx)), 'control: sessionCreated must bootstrap the data dir');
+        rmSync(tlDataDir(ctx), { recursive: true, force: true });
+
+        process.env.THROUGHLINE_DISABLE = '1';
+        assert.strictEqual(tlDisabled(), true);
+        assert.strictEqual(await sessionCreated(ctx, { sessionID }), null);
+        assert.ok(
+          !existsSync(tlDataDir(ctx)),
+          'disabled plugin must not even create its data directory',
+        );
+        assert.ok(!existsSync(bufferPath(sessionID)), 'disabled plugin must write no buffer file');
+      } finally {
+        if (prev === undefined) delete process.env.THROUGHLINE_DISABLE;
+        else process.env.THROUGHLINE_DISABLE = prev;
+      }
     });
   });
 });
