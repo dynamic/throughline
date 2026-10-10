@@ -1857,9 +1857,12 @@ describe('regex-engine parity with jq (issue #90)', () => {
    * on the full unclamped bash command. With the affix ASCII-only, as shipped: 0.5ms / 2.2ms
    * and 0.5ms / 1.9ms, and the floored denominator puts both ratios under 1. The ratio bound
    * of 8 sits above linear (a 4x step costs ~4x) and below the measured 15.9x; the denominator
-   * is floored at 5 ms so sub-millisecond noise on the small timing cannot fail the test on
-   * its own, and the absolute bound of 250 ms catches the quadratic even on a machine fast
-   * enough to make the ratio look fine - the mutated build overshoots it 6.3x here.
+   * is floored at 5 ms so sub-millisecond noise on the small timing cannot fail the test on its
+   * own, which also makes the ratio the TIGHTER of the two bounds on a fast machine (a 5 ms
+   * floor caps the big run around 40 ms there). The absolute bound of 250 ms is the backstop
+   * for the opposite case, a build slow enough to lift the denominator itself above the floor,
+   * where the ratio can read fine while the absolute cost cannot. On this machine both fire
+   * together under the mutation: 15.9x, and 1,564.9ms against a 250 ms bound.
    *
    * The second row is the same run read the other way round - `\u6f22token`, where the character
    * in FRONT of the keyword is the non-ASCII one - and it fails on its own under the mutation
@@ -1874,13 +1877,16 @@ describe('regex-engine parity with jq (issue #90)', () => {
    *
    * Each size is timed best-of-3, every run must write the SAME output (a fast time may not
    * be bought by a build that stops masking), and the SMALL size is asserted - output and an
-   * absolute bound - before the big one is timed at all, which is what turns a regression
-   * limited to the big size into a failure rather than a long wait. The test also carries
+   * absolute bound - before the big one is timed at all. That ordering fails a build which
+   * costs time at EVERY size within the first small timing instead of after three more 48 KB
+   * ones; a regression confined to the big size is not caught by it, and is caught by the ratio
+   * and absolute bounds below instead. The test also carries
    * `{ timeout: 120_000 }` like the issue #129 guard below it (the #118 guard further below
    * carries none), but that is weaker than it looks: `node --test` cannot interrupt a
    * SYNCHRONOUS test body, so a regex that truly never returned would block the event loop
-   * past its own timeout and the timeout would never fire. The small-size assert above is the
-   * protection; the timeout only bounds a test that yields to the loop.
+   * past its own timeout and the timeout would never fire. Against that case neither the
+   * timeout nor the small-size assert is protection; what the assert does is keep a build that
+   * is merely slow at every size from reaching the big timings at all.
    */
   it('stays linear on a long non-ASCII run that ends with no separator, which the leading word affix used to break (issue #119)', { timeout: 120_000 }, () => {
     const timed = (input: string) => {
