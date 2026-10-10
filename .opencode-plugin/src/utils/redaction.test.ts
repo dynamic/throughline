@@ -2054,9 +2054,15 @@ describe('regex-engine parity with jq (issue #90)', () => {
    *     only reason `password=TLREDACTSENTINELtoken=x` masks both halves.
    * Each row is pinned to the output the pre-driver code gives, and every ASCII-only row
    * runs with pass 6b's whole-string gate closed, so these rows can only pass or fail on
-   * pass 6a. A 160,000-input differential run against the pre-driver implementation found
-   * no difference on any input, and the seeded jq fuzz above covers the same ground against
-   * the hooks; these rows are the pinned version of those positions.
+   * pass 6a. Two differential runs back the same claim from the other side: 160,000 inputs
+   * whose alphabet had keywords, fold spellings, sentinels and separators but never two
+   * keywords OVERLAPPING one another, and 150,000 inputs over an alphabet that does produce
+   * overlaps (single characters plus U+017F / U+212A / U+00DF and the hyphenated keywords).
+   * Both ran byte-identical against the pre-driver build. The first one is on the record as
+   * NOT having covered the overlapping-keyword rows below - a driver that consumed each
+   * keyword whole passed it while leaking `secreto` + Kelvin + `en=x`, which is why the
+   * overlap rows are pinned here rather than trusted to a fuzz whose corpus cannot reach
+   * them. The seeded jq fuzz above covers the same ground against the hooks.
    */
   it('still finds the keyword at every position pass 6a\'s driver can reach (issue #129)', () => {
     const cases: readonly [string, string][] = [
