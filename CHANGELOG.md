@@ -160,12 +160,12 @@ All notable changes to throughline are documented here. Format loosely follows
   run ends with the rule's own separator and value groups made sticky, keyword
   occurrences are enumerated by one cursor that remembers both its current hit and its
   exhaustion, and the mask is byte-identical to the global replace's - single-digit
-  milliseconds at 160 KB. Two regressions the first revisions of that driver introduced
-  were caught in review and fixed on the same PR: a case-sensitive sentinel resume (a
-  secret opening on U+017F right after a lowercase `tlredactsentinel` value survived
-  where `main` masked it), and a keyword search restarted from every run in front of the
-  next keyword (an ordinary 100 KB command whose secret sits at the end went from 1.3 ms
-  undriven to 1.7 s). The remaining #114 quadratic - measured at ~461 ms for a 40 KB
+  milliseconds at 160 KB on this machine. Two properties of the driven pass are pinned
+  rather than assumed: the resume after a sentinel-valued match is case-insensitive, so a
+  keyword opening on a case-fold character directly after a lowercase `tlredactsentinel`
+  value is still masked, and a keyword far ahead of the current position is found once and
+  reused, so a long command whose secret sits at the end costs the same as one whose secret
+  sits at the front. The remaining #114 quadratic - measured at ~461 ms for a 40 KB
   ASCII run with a single accented character, which admits the widened pass through its
   whole-string gate - now sits in the plugin's second word pass alone and is tracked as
   dynamic/throughline#134.

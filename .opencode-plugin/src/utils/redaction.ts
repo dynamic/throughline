@@ -708,7 +708,8 @@ export function redact(str: string): string {
    *      is a word character and never splits a run), or one of the case-fold spellings the
    *      keyword classes carry (U+017F, U+212A, U+00DF, U+1E9E) - and whatever it matches
    *      past the run end is word characters up to that end, so all crossing keywords of one
-   *      run share that second candidate (only the rightmost one's walk is ever performed,
+   *      run share that second candidate (a later crossing keyword only re-walks from the
+   *      end already reached, so the walk stays O(text) across the pass,
    *      see the `crossEnd` update below). Skipping it leaks in the direction that
    *      matters, twice over: `tokenaapi-key=S3cret` has no separator at the first run end,
    *      so the mask is reachable only from the `api-key` keyword's end, and
@@ -993,7 +994,7 @@ export function redact(str: string): string {
    * cost pass 6a HAD until `asciiWordPass` drove it from one scan of the word runs, which
    * removed that factor from 6a and leaves it here alone. It is why `('token').repeat(k) +
    * '\u00e9'` (the trailing character is what lets pass 6b run at all) takes ~33ms at 10,001
-   * characters and ~461ms at 40,001 here while pass 6a, on the same run, stays in single-digit
+   * characters and ~461ms at 40,001 here while pass 6a, on the same run, stays in low
    * milliseconds. This is #114's remaining territory, pre-existing this pass's driver and now
    * tracked as dynamic/throughline#134; no timing guard times this shape yet.
    */

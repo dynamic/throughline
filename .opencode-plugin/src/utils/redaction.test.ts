@@ -1911,7 +1911,6 @@ describe('regex-engine parity with jq (issue #90)', () => {
       ['my_token_value_', 600, 2400, 'my_token_value_'],
       // Every sentinel in this run ends a match, and the driver resumes at the position
       // right after it, so this is the shape that punishes a per-start scan hardest.
-      // so it is the shape that punishes a per-start scan hardest.
       ['TLREDACTSENTINELtokena', 1000, 4000, '***tokena'],
       // Many short runs with NO keyword: the pass has to stop looking for one (see the
       // latency comment), and every shape above is a single run, which cannot see it.
