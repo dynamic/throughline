@@ -2063,6 +2063,42 @@ describe('regex-engine parity with jq (issue #90)', () => {
   });
 
   /**
+   * The masking side of the same rewrite (dynamic/throughline#134). Making the attempt an
+   * anchored tail costs nothing only if it is anchored at the group end WITH THE START THE
+   * RULE'S OWN `\\w*` LEAD WOULD HAVE STOPPED AT: the keyword group is written back verbatim,
+   * but it is also what `widenedKeywordReplacement` decides on, so a start the lead could never
+   * reach - one with a non-ASCII character in front of the keyword - shows that guard a group it
+   * was never written against, and pass 6b re-masks on top of pass 6a's `***`, eating the
+   * characters a glued quote tail leaves visible. `token\u00e9api-key="a b"c` is that row: the
+   * crossing keyword `api-key` opens after a character the ASCII lead cannot step over, so its
+   * group is `api-key` (pure ASCII, already seen by pass 6a, so 6b leaves the match alone) and
+   * NOT `token\u00e9api-key`. Every row is pinned to the string BOTH engines give - measured against
+   * the jq hooks, and against a build of the pre-#134 driver - and the pinned side is asserted
+   * even where jq is absent, so the row cannot silently degrade to a self-comparison.
+   */
+  it('anchors a crossing keyword at the start its own lead reaches, where a non-ASCII character blocks pass 6a\'s mask (issue #134)', () => {
+    const cases: readonly [string, string][] = [
+      ['token\u00e9api-key="a b"c', 'token\u00e9api-key=***c'],
+      ['password\u00e9client-id="q r"z', 'password\u00e9client-id=***z'],
+      ['secret\u00e9access-key="a b"c', 'secret\u00e9access-key=***c'],
+      ['token\u6f22client-id="a b"c', 'token\u6f22client-id=***c'],
+      // The same rows with a bare value: the mask still has to land, so a fix that only moved
+      // the start without keeping the group end would leak here instead of over-masking.
+      ['token\u00e9api-key=S3cretPw', 'token\u00e9api-key=***'],
+      ['token\u00e9api-key is S3cretPw', 'token\u00e9api-key is ***'],
+    ];
+    const defs = JQ_PRESENT ? jqDefs() : null;
+    for (const [input, expected] of cases) {
+      const out = redact(input);
+      assert.strictEqual(out, expected, `pass 6b's attempt did not write the pinned output for ${JSON.stringify(input)}`);
+      if (defs !== null) {
+        const jqOut = execFileSync('jq', ['-nr', '--arg', 's', input, defs + ' $s | redact'], { encoding: 'utf8' }).replace(/\n$/, '');
+        assert.strictEqual(out, jqOut, `${JSON.stringify(input)}: the port diverged from the jq hooks (jq: ${JSON.stringify(jqOut)}, ts: ${JSON.stringify(out)})`);
+      }
+    }
+  });
+
+  /**
    * The masking side of the same rewrite (dynamic/throughline#118). Making pass 6b linear
    * rests on "one attempt per word run", and the one way that goes wrong is anchoring the
    * attempt at the run's FIRST character: the lead is ASCII `\\w*`, so a run that opens with
