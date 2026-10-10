@@ -1834,8 +1834,10 @@ describe('regex-engine parity with jq (issue #90)', () => {
    * because the suffix's walk ends at the run end and the run end is followed by the space
    * that the separator alternatives accept. (That input's output ended in ` ***`, not
    * ` password=***`: pass 6b takes 6a's `password=***` as the value of the last `token\u6f22`
-   * keyword and masks it a second time. Over-masking, no leak, and not what this guard is
-   * about - but it is what the masked output actually was.) So the suffix never re-walks the run
+   * keyword and masks it a second time. That is the jq hooks' behaviour too - jq gives
+   * `token\u6f22 ***` for `token\u6f22 password=x` - so it is over-masking with no leak and no
+   * engine divergence, and not what this guard is about; it is simply what the masked output
+   * actually was.) So the suffix never re-walks the run
    * character by character, the lead's backtracking is the only cost, and that is linear. The
    * input below has NO separator after any keyword - a run of `token\u6f22` with nothing but
    * end-of-command at its end - so every keyword the lead backs
