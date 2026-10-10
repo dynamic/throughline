@@ -1003,7 +1003,7 @@ export function redact(str: string): string {
    * carries many keywords and no separator cost (keyword hits in the run) x (run length),
    * which is what dynamic/throughline#114 left standing after its own fix and
    * dynamic/throughline#134 measured: `('token').repeat(k) + '\u00e9'` (the trailing character is
-   * what lets pass 6b run at all) took ~33ms at k=2,000 and ~461ms at k=8,000 here while pass
+   * what lets pass 6b run at all) took 29.1ms at k=2,000 and 460.0ms at k=8,000 here while pass
    * 6a, on the same run, stayed in low milliseconds. The latency guard in `redaction.test.ts`
    * now times that shape.
    */
@@ -1018,9 +1018,9 @@ export function redact(str: string): string {
     const keywords = new RegExp("(?:" + KEYWORD_ALTERNATION + ")", "gi");
     // Where the keyword group ends when the keyword ENDS at `from`: the widened suffix runs
     // to the end of the `JS_WORD_CHAR` run containing that position, so this walks forward
-    // over that class. No run of it can reach the end of `text`, because a JS_WORD_CHAR run
-    // only ends at a character outside the class - every match of this rule needs a
-    // separator, and every separator alternative starts with a character outside the class.
+    // over that class. The walk may return `text.length` - input ending in one run that carries
+    // a crossing keyword does - and the anchored tail then reports nothing there, which is the
+    // correct answer for it, so the driver needs no case for it.
     const groupEndAt = (from: number): number => {
       let end = from;
       for (;;) {
@@ -1071,9 +1071,11 @@ export function redact(str: string): string {
           lastCrosses = false;
         } else {
           lastCrosses = true;
-          // Only walk for an end that is still ahead of the one already walked: keyword ends
-          // arrive in ascending order, so this stays O(text) for the pass instead of
-          // O(crossing keywords x next run length).
+          // Only walk for an end that is still ahead of the one already walked. A run holds at
+          // most one crossing keyword (see the attempt below), so the comparison never skips a
+          // walk today; it is here so the walk stays O(text) for the pass if a future keyword
+          // ever crosses more than one run-splitting character, which is the same reason pass 6a
+          // carries the identical guard.
           if (keywordEnd > crossEnd) crossEnd = groupEndAt(keywordEnd);
         }
         const wantIn = keywordEnd <= runEnd;
