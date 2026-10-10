@@ -1882,8 +1882,8 @@ describe('regex-engine parity with jq (issue #90)', () => {
    * Each size is timed best-of-3, every run must write the SAME output (a fast time may not
    * be bought by a build that stops masking), and the SMALL size is asserted - output and an
    * absolute bound - before the big one is timed at all. That ordering fails a build which
-   * costs time at EVERY size within the first small timing instead of after three more 48 KB
-   * ones; a regression confined to the big size is not caught by it, and is caught by the ratio
+   * costs time at EVERY size inside the small best-of-3, before any 48 KB timing is taken;
+   * a regression confined to the big size is not caught by it, and is caught by the ratio
    * and absolute bounds below instead. The test also carries
    * `{ timeout: 120_000 }` like the issue #129 guard below it (the #118 guard further below
    * carries none), but that is weaker than it looks: `node --test` cannot interrupt a
