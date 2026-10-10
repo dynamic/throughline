@@ -702,13 +702,18 @@ export function redact(str: string): string {
    *      separator, and `***` - plus where the scan resumes, are the same for every start
    *      that shares that run end;
    *   3. so the only thing that distinguishes the attempts is WHICH run end they ask, and
-   *      there are at most two per run: the run's own end `re`, and the end of the run
-   *      after the hyphen that `api[_-]?key`, `access[_-]?key` and `client[_-]?id` cross
-   *      (underscore is a word character and never splits a run, so a keyword leaves its
-   *      run only through that hyphen, and it lands in the run right after it). Skipping
-   *      the second one leaks in the direction that matters - `tokenaapi-key=S3cret` has
-   *      no separator at the first run end, so the mask is reachable only from the
-   *      `api-key` keyword's end.
+   *      there are at most two per run: the run's own end `re`, and the end of the run right
+   *      after it. A keyword leaves its run only through a character that ASCII `\w` does not
+   *      match - the hyphen of `api[_-]?key`, `access[_-]?key` and `client[_-]?id` (underscore
+   *      is a word character and never splits a run), or one of the case-fold spellings the
+   *      keyword alternation carries (U+017F, U+212A, U+00DF, U+1E9E) - and whatever it
+   *      matches past the run end is a prefix of the run right after it, so all crossing
+   *      keywords of one run share that second end. Skipping it leaks in the direction that
+   *      matters, twice over: `tokenaapi-key=S3cret` has no separator at the first run end,
+   *      so the mask is reachable only from the `api-key` keyword's end, and
+   *      `secreto\u212aen=x` - `secret` and `to\u212aen` (Kelvin sign) sharing one character - only
+   *      reaches its separator through the second, crossing keyword, which is why the keyword
+   *      scan resumes one character after each hit rather than after each whole keyword.
    * The engine's own preference between those two is by keyword position - it tries the
    * longest lead first, i.e. the RIGHTMOST keyword - so the driver asks the later run end
    * first and the earlier one only if that fails. Both answers write the same bytes for a
@@ -745,21 +750,40 @@ export function redact(str: string): string {
       at === 0 ||
       !isAsciiWordChar(text.charCodeAt(at - 1)) ||
       text.startsWith(REDACT_SENTINEL, at - REDACT_SENTINEL.length);
-    // One keyword occurrence already found and not yet consumed, and the position its
-    // search restarts from. Both only move right, so the scan costs O(text) for the pass.
+    // The leftmost keyword occurrence at or after the position its search started from,
+    // plus that start itself, plus a `null` remembered as "the scan reached the end". All
+    // three only move right (every search start is a `pos` or a `runStart`, and both only
+    // advance), so the scan costs O(text) for the pass - and the remembered `null` is what
+    // keeps a text with NO keywords in it from being re-searched from every gap, which is
+    // its own quadratic (16 s for a 160 KB command with no keyword at all, against 8 ms on
+    // the undriven rule).
     let occurrence: RegExpExecArray | null = null;
+    let occurrenceFrom = -1;
     let scannedTo = 0;
+    let scanDone = false;
     const nextOccurrence = (from: number): RegExpExecArray | null => {
+      if (scanDone) return null;
       const start = from > scannedTo ? from : scannedTo;
-      if (occurrence === null || occurrence.index < start) {
+      if (occurrenceFrom < start) {
         keywords.lastIndex = start;
         occurrence = keywords.exec(text);
+        occurrenceFrom = start;
+        if (occurrence === null) scanDone = true;
       }
       return occurrence;
     };
     const consumeOccurrence = (found: RegExpExecArray): void => {
-      scannedTo = found.index + found[0].length;
+      // `+ 1`, not `+ found[0].length`. The keyword alternation is scanned non-overlapping,
+      // but the rule's own backtracking reaches a keyword that STARTS inside an earlier one,
+      // and such a keyword can be the only one whose group end carries the separator:
+      // `secreto\u212aen=x` holds `secret` and `to\u212aen` (Kelvin sign) sharing the `t`, the first
+      // ends inside the run and the second crosses the Kelvin character, and only the second
+      // one's end has the `=` after it. Advancing past the whole occurrence never enumerates
+      // it and the secret stays in cleartext. Keywords are at most one character apart in
+      // that overlap, so this stays O(text).
+      scannedTo = found.index + 1;
       occurrence = null;
+      occurrenceFrom = -1;
     };
     let out = "";
     let pos = 0;
@@ -787,19 +811,21 @@ export function redact(str: string): string {
       // Starts in the gap before this run: not run starts, not reachable by an ASCII lead,
       // and only maskable if the rule's own start test admits them.
       if (runStart > pos) {
-        keywords.lastIndex = pos;
         let resumed = -1;
         for (;;) {
-          const gap = keywords.exec(text);
+          const gap = nextOccurrence(pos);
           if (gap === null || gap.index >= runStart) break;
-          if (!isStartPosition(gap.index)) continue;
-          resumed = attempt(gap.index, groupEndAt(gap.index + gap[0].length));
-          if (resumed >= 0) break;
+          if (isStartPosition(gap.index)) {
+            resumed = attempt(gap.index, groupEndAt(gap.index + gap[0].length));
+            if (resumed >= 0) break;
+          }
+          consumeOccurrence(gap);
         }
         if (resumed >= 0) {
           pos = resumed;
-          occurrence = null;
           scannedTo = resumed;
+          occurrence = null;
+          occurrenceFrom = -1;
           continue;
         }
       }
@@ -824,7 +850,10 @@ export function redact(str: string): string {
           lastCrosses = false;
         } else {
           lastCrosses = true;
-          if (crossEnd < 0) crossEnd = groupEndAt(keywordEnd);
+          // Only walk for an end that is still ahead of the one already walked: keyword
+          // ends arrive in ascending order, so this is O(text) for the pass instead of
+          // O(crossing keywords x next run length).
+          if (keywordEnd > crossEnd) crossEnd = groupEndAt(keywordEnd);
         }
         consumeOccurrence(hit);
       }
@@ -834,8 +863,9 @@ export function redact(str: string): string {
       if (resumed < 0) resumed = attempt(runStart, second);
       if (resumed >= 0) {
         pos = resumed;
-        occurrence = null;
         scannedTo = resumed;
+        occurrence = null;
+        occurrenceFrom = -1;
         continue;
       }
       // Neither candidate end can start a separator, so no start in this run completes and

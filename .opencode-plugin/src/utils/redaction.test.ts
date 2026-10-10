@@ -1867,7 +1867,15 @@ describe('regex-engine parity with jq (issue #90)', () => {
    * completes and the catastrophic walk never happens. The leading `password=x` masks
    * without shortening the scan, so the timing still proves the keyword rule ran and masked.
    * Sizes stay ASCENDING, so a regression fails on the small shape before the big one is
-   * timed out.
+   * timed out. The last two rows are a different regime from the first three: those are one
+   * unbroken run, where the cost is the scan INSIDE a run, while `'a '.repeat(n)` is tens of
+   * thousands of runs with no keyword anywhere, which is only paid for if the driver keeps
+   * searching for a keyword it already ran out of (measured here on a first cut of the
+   * driver that re-ran the keyword search per run: 0.5 ms for a 15 KB ordinary command became
+   * 180 ms and 16 s for a 160 KB one, against 8 ms undriven). `secretoKen=x ` repeats a pair of
+   * overlapping keywords whose second member crosses a character ASCII `\\w` does not match,
+   * so it prices the resume-a-character-after-each-keyword rule that finding the crossing
+   * keyword needs.
    */
   it('stays linear on long ASCII word runs, which the undriven keyword pass used to make quadratic (issue #129)', () => {
     const timed = (input: string) => {
@@ -1884,6 +1892,12 @@ describe('regex-engine parity with jq (issue #90)', () => {
       // Every sentinel in this run is a resume position the rule's own lookbehind re-admits,
       // so it is the shape that punishes a per-start scan hardest.
       ['TLREDACTSENTINELtokena', 1000, 4000, '***tokena'],
+      // Many short runs with NO keyword: the pass has to stop looking for one (see the
+      // latency comment), and every shape above is a single run, which cannot see it.
+      ['a ', 20000, 80000, 'a '],
+      // Overlapping keywords, one of which crosses a non-ASCII character, at a size where
+      // a per-character resume would show up.
+      ['secretoKen=x ', 3000, 12000, 'secretoKen=*** '],
     ];
     for (const [unit, n, fourN, masked] of shapes) {
       const small = timed('password=x ' + unit.repeat(n));
@@ -2052,6 +2066,12 @@ describe('regex-engine parity with jq (issue #90)', () => {
       ['my_token_value_=x', 'my_token_value_=***'],
       ['tokena api-key=S3cret', 'tokena ***'],
       ['tokenaapi-key=S3cret', 'tokenaapi-key=***'],
+      // Two keywords sharing one character, the second crossing a non-ASCII fold: only the
+      // crossing one reaches the separator.
+      ['secretoKen=x', 'secretoKen=***'],
+      ['a secretoKen=S3cret', 'a secretoKen=***'],
+      ['password=TLREDACTSENTINELsecretoKen=x', 'password=***secretoKen=***'],
+      ['secretoKen', 'secretoKen'],
       ['tokenapi-key=S3cret', 'tokenapi-key=***'],
       ['api-key=S3cret', 'api-key=***'],
       ['xapi-key=S3cret', 'xapi-key=***'],
