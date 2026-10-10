@@ -1866,23 +1866,43 @@ describe('regex-engine parity with jq (issue #90)', () => {
    * re-walk the run; a trailing ` password=x` would NOT - the very first start then
    * completes and the catastrophic walk never happens. The leading `password=x` masks
    * without shortening the scan, so the timing still proves the keyword rule ran and masked.
-   * Sizes stay ASCENDING, so a regression fails on the small shape before the big one is
-   * timed out. The last two rows are a different regime from the first three: those are one
+   * Each size is timed best-of-3, and the SMALL size is asserted - output and an absolute
+   * bound - before the big one is timed at all: `node --test` has no default timeout and
+   * ci.yml sets none, so a regression that bites only at the big size would otherwise hang
+   * the suite silently where it should fail (the sentinel shape did not finish at x4000 on
+   * the pre-driver build, and a hang reads as a run nobody waits for). The test also
+   * carries a 120 s timeout for the same reason. Best-of-3 because the ratio bound sits
+   * only about 2x above the largest measured ratio, and one shared-runner pause during the
+   * big timing could otherwise flip the verdict. The last two rows are a different regime
+   * from the first three: those are one
    * unbroken run, where the cost is the scan INSIDE a run, while `'a '.repeat(n)` is tens of
    * thousands of runs with no keyword anywhere, which is only paid for if the driver keeps
-   * searching for a keyword it already ran out of (measured here on a first cut of the
-   * driver that re-ran the keyword search per run: 0.5 ms for a 15 KB ordinary command became
-   * 180 ms and 16 s for a 160 KB one, against 8 ms undriven). `secretoKen=x ` repeats a pair of
+   * searching for a keyword it already ran out of (a driver that re-ran the keyword search
+   * per run cost a 160 KB ordinary command 16 s, against 8 ms undriven). `secretoKen=x ` repeats a pair of
    * overlapping keywords whose second member crosses a character ASCII `\\w` does not match,
    * so it prices the resume-a-character-after-each-keyword rule that finding the crossing
-   * keyword needs.
+   * keyword needs. A fifth regime - many ordinary runs whose ONLY keyword sits at the very
+   * end - cannot be expressed as a repeated unit (its masked output is not a repetition), so
+   * it is timed separately below the table.
    */
-  it('stays linear on long ASCII word runs, which the undriven keyword pass used to make quadratic (issue #129)', () => {
+  it('stays linear on long ASCII word runs, which the undriven keyword pass used to make quadratic (issue #129)', { timeout: 120_000 }, () => {
     const timed = (input: string) => {
       const started = process.hrtime.bigint();
       const out = redact(input);
       const ms = Number(process.hrtime.bigint() - started) / 1e6;
       return { ms, out };
+    };
+    // Best of 3 runs per size; every run must write the SAME output, so a fast time
+    // cannot be bought by a build that stops masking.
+    const timedBest = (input: string) => {
+      const first = timed(input);
+      let ms = first.ms;
+      for (let i = 0; i < 2; i++) {
+        const r = timed(input);
+        assert.strictEqual(r.out, first.out, `run ${i + 2} of a timed ${input.length}-character input masked differently from run 1`);
+        ms = Math.min(ms, r.ms);
+      }
+      return { ms, out: first.out };
     };
     // Each row is the repeated unit, the two sizes, and what one repeat of it looks like in
     // the output - the sentinel spell itself becomes `***` when the sentinel is unmasked.
@@ -1900,9 +1920,14 @@ describe('regex-engine parity with jq (issue #90)', () => {
       ['secretoKen=x ', 3000, 12000, 'secretoKen=*** '],
     ];
     for (const [unit, n, fourN, masked] of shapes) {
-      const small = timed('password=x ' + unit.repeat(n));
-      const big = timed('password=x ' + unit.repeat(fourN));
+      // The small size is asserted - output AND an absolute bound - before the big one is
+      // timed: a regression limited to the big size (the sentinel shape took minutes at
+      // x1000/x4000 pre-driver) must fail on the small shape instead of hanging.
+      const small = timedBest('password=x ' + unit.repeat(n));
       assert.strictEqual(small.out, 'password=*** ' + masked.repeat(n), `the ${JSON.stringify(unit)} x${n} input was not masked to exactly the expected output`);
+      assert.ok(small.ms < 1000,
+        `redact() took ${small.ms.toFixed(1)}ms on the x${n} (${small.out.length}-character) ${JSON.stringify(unit)} input; the small size alone already exceeds what a linear pass costs (issue #129)`);
+      const big = timedBest('password=x ' + unit.repeat(fourN));
       assert.strictEqual(big.out, 'password=*** ' + masked.repeat(fourN), `the ${JSON.stringify(unit)} x${fourN} input was not masked to exactly the expected output`);
       const ratio = big.ms / Math.max(small.ms, 5);
       assert.ok(ratio < 8,
@@ -1910,6 +1935,26 @@ describe('regex-engine parity with jq (issue #90)', () => {
       assert.ok(big.ms < 500,
         `redact() took ${big.ms.toFixed(1)}ms on a ${big.out.length}-character ASCII command; the keyword lead is back (issue #114)`);
     }
+    // The regime the table cannot express: tens of thousands of ordinary runs whose ONLY
+    // keyword sits at the very end - a long command with the secret last, more common than
+    // the single-run shapes above. A remembered keyword hit must be reused until a search
+    // start moves past it; re-running the keyword search every time the start advances
+    // makes each run in front of the keyword re-scan the whole gap to it (a 100 KB command
+    // of this shape cost 1.7 s that way, against 1.3 ms undriven). The leading `password=x `
+    // masks first, so the trailing `token` is the one hit the scan has to remember across
+    // thousands of runs.
+    const tailKeyword = (n: number) => `password=x ${'word '.repeat(n)}token=secret123`;
+    const tkSmall = timedBest(tailKeyword(5000));
+    assert.strictEqual(tkSmall.out, `password=*** ${'word '.repeat(5000)}token=***`, 'the tail-keyword x5000 input was not masked to exactly the expected output');
+    assert.ok(tkSmall.ms < 1000,
+      `redact() took ${tkSmall.ms.toFixed(1)}ms on a ${tkSmall.out.length}-character command whose keyword is at the end (issue #129)`);
+    const tkBig = timedBest(tailKeyword(20000));
+    assert.strictEqual(tkBig.out, `password=*** ${'word '.repeat(20000)}token=***`, 'the tail-keyword x20000 input was not masked to exactly the expected output');
+    const tkRatio = tkBig.ms / Math.max(tkSmall.ms, 5);
+    assert.ok(tkRatio < 8,
+      `redact() scaled ${tkRatio.toFixed(1)}x for a 4x-longer tail-keyword command (${tkSmall.ms.toFixed(1)}ms -> ${tkBig.ms.toFixed(1)}ms); the keyword hit in front of the runs is being re-searched from each of them (issue #129)`);
+    assert.ok(tkBig.ms < 500,
+      `redact() took ${tkBig.ms.toFixed(1)}ms on a ${tkBig.out.length}-character command whose keyword is at the end (issue #129)`);
   });
 
   /**
@@ -2052,17 +2097,24 @@ describe('regex-engine parity with jq (issue #90)', () => {
    *     end, and the mask lives entirely in the second one.
    *   - the resume position after a `REDACT_SENTINEL` value, which is mid-run and is the
    *     only reason `password=TLREDACTSENTINELtoken=x` masks both halves.
+   *   - the START test after such a sentinel-valued match, which is the rule's own
+   *     case-INSENSITIVE lookbehind. A keyword opening on U+017F directly after a
+   *     lowercase-valued sentinel (`password=tlredactsentinel` + `\u017fecret=hunter2`) is
+   *     admitted there and must be admitted here - a case-sensitive compare hands
+   *     `hunter2` back in cleartext where both engines mask it. `toUpperCase()` folding is
+   *     NOT equivalent: U+017F folds to `S`, so a folded compare admits start positions
+   *     the rule's own lookbehind does not.
    * Each row is pinned to the output the pre-driver code gives, and every ASCII-only row
    * runs with pass 6b's whole-string gate closed, so these rows can only pass or fail on
    * pass 6a. Two differential runs back the same claim from the other side: 160,000 inputs
    * whose alphabet had keywords, fold spellings, sentinels and separators but never two
    * keywords OVERLAPPING one another, and 150,000 inputs over an alphabet that does produce
    * overlaps (single characters plus U+017F / U+212A / U+00DF and the hyphenated keywords).
-   * Both ran byte-identical against the pre-driver build. The first one is on the record as
-   * NOT having covered the overlapping-keyword rows below - a driver that consumed each
-   * keyword whole passed it while leaking `secreto` + Kelvin + `en=x`, which is why the
-   * overlap rows are pinned here rather than trusted to a fuzz whose corpus cannot reach
-   * them. The seeded jq fuzz above covers the same ground against the hooks.
+   * Both ran byte-identical against the pre-driver build. The first corpus could not
+   * generate two keywords OVERLAPPING one another, so the overlap rows below are pinned
+   * here rather than trusted to it - a driver that consumed each keyword whole passed that
+   * corpus while leaking `secreto` + Kelvin + `en=x`. The seeded jq fuzz above covers the
+   * same ground against the hooks.
    */
   it('still finds the keyword at every position pass 6a\'s driver can reach (issue #129)', () => {
     const cases: readonly [string, string][] = [
@@ -2094,11 +2146,22 @@ describe('regex-engine parity with jq (issue #90)', () => {
       ['ſecret=x', 'ſecret=***'],
       ['xſecret=S3cret', 'xſecret=***'],
       ['aſecret=x', 'aſecret=***'],
+      // The start test after a sentinel-valued match is the rule's own lookbehind and runs
+      // case-insensitively: ANY case spelling of the sentinel admits the keyword opening
+      // right after it, including one that opens on U+017F and so belongs to no ASCII run.
+      ['password=tlredactsentinelſecret=hunter2', 'password=***ſecret=***'],
+      ['echo password=TlRedactSentinelſecret=hunter2 done', 'echo password=***ſecret=*** done'],
+      ['paßword=TlRedactSentinelſecret=x', 'paßword=***ſecret=***'],
       ['aßecret=x', 'aßecret=x'],
       ['paſſword=S3cret', 'paſſword=***'],
       ['paßword=S3cret', 'paßword=***'],
       ['toKen=AbCdEf', 'toKen=***'],
       ['xtoKen=AbCdEf', 'xtoKen=***'],
+      // A crossing keyword's group can cross MORE than one run-splitting character and end
+      // in the third run, not the second: `acce` + U+017F + `s_` + U+212A + `ey` matches the
+      // whole `access[_-]?key` spelling across two folds, and only the far end of the three
+      // runs carries the separator.
+      ['acceſs_Key=S3cret', 'acceſs_Key=***'],
     ];
     for (const [input, expected] of cases) {
       assert.strictEqual(redact(input), expected, `redact(${JSON.stringify(input)}) changed output`);

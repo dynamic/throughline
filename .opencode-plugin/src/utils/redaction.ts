@@ -594,8 +594,9 @@ export function redact(str: string): string {
   //
   // `\\w` is re-spelled as TWO passes rather than one widened rule, and the order is
   // the whole point of the shape:
-  //   pass 6a - JS's own ASCII `\\w*` affixes, jq's text except that the LEAD is word-
-  //             anchored for latency (see `keywordLead6a` below, dynamic/throughline#114);
+  //   pass 6a - JS's own ASCII `\\w*` affixes, jq's text, DRIVEN from one left-to-right
+  //             scan of the word runs for latency (see `asciiWordPass` below,
+  //             dynamic/throughline#114 and dynamic/throughline#129);
   //   pass 6b - the same rule with Oniguruma's word set over-approximated on the
   //             SUFFIX only (`JS_WORD_STAR`), so `password\u00e9=S3cret`, where jq's `\\w*`
   //             walks over the accent but JS's stops, the separator alternatives cannot
@@ -676,18 +677,14 @@ export function redact(str: string): string {
   /**
    * Pass 6a, driven from one left-to-right scan of the word runs instead of handed to
    * `String.replace` (dynamic/throughline#129, the remaining path of #114). Handed to one
-   * global `replace` the rule was quadratic in the length of a single unbroken word run:
-   * one start per run survived the #114 anchor, but that start cost (keyword hits in the
-   * run) x (run length), because the lead `\\w*` ran to the run end and gave back one
-   * character at a time, and at each keyword hit the suffix `\\w*` ran to the run end and
-   * gave back one character at a time too. Measured here on the pre-driver code, each step
-   * 4x the input: `'password=x ' + 'tokena'.repeat(n)` 10.4ms at n=1000 (6 KB) and 147ms at
-   * n=4000 (24 KB), a 14.2x ratio; `'my_token_value_'` x600 8.2ms (9 KB) and x2400 131ms
-   * (36 KB), 15.9x; and the sentinel-resume shape `'TLREDACTSENTINELtokena'` x50 2.9ms,
-   * x400 706ms - 7.8x per step and climbing, i.e. worse than quadratic, because that input
-   * re-admits a start after every sentinel. Quadratic-or-worse, in-process, on the full
-   * unclamped bash command. The mask this produces is byte-identical to the global
-   * replace's; only the cost changes.
+   * global `replace` the rule is quadratic in the length of a single unbroken word run:
+   * one start per run costs (keyword hits in the run) x (run length), because the lead
+   * `\\w*` runs to the run end and gives back one character at a time, and at each keyword
+   * hit the suffix `\\w*` runs to the run end and gives back one character at a time too -
+   * in-process, on the full unclamped bash command, and worst where a resume position
+   * recurs (a `REDACT_SENTINEL` value re-admits a start after every sentinel). Driving the
+   * attempts removes both factors; the mask produced is byte-identical to the global
+   * replace's, only the cost changes. Pre/post measurements are in dynamic/throughline#129.
    *
    * Why one attempt per (run, keyword-group end) is enough. Inside one maximal `\\w` run
    * [rs, re), take any start the rule would attempt there (the run start, or the resume
@@ -702,13 +699,17 @@ export function redact(str: string): string {
    *      separator, and `***` - plus where the scan resumes, are the same for every start
    *      that shares that run end;
    *   3. so the only thing that distinguishes the attempts is WHICH run end they ask, and
-   *      there are at most two per run: the run's own end `re`, and the end of the run right
-   *      after it. A keyword leaves its run only through a character that ASCII `\w` does not
+   *      a run has at most two candidates: its own end `re`, and the end of the run that
+   *      the run's RIGHTMOST crossing keyword ends in - usually the run right after, but
+   *      further on when the keyword itself crosses more than one run-splitting character
+   *      (`acce\u017fs_\u212aey` crosses U+017F and U+212A and its group ends in the third run).
+   *      A keyword leaves its run only through a character that ASCII `\w` does not
    *      match - the hyphen of `api[_-]?key`, `access[_-]?key` and `client[_-]?id` (underscore
    *      is a word character and never splits a run), or one of the case-fold spellings the
-   *      keyword alternation carries (U+017F, U+212A, U+00DF, U+1E9E) - and whatever it
-   *      matches past the run end is a prefix of the run right after it, so all crossing
-   *      keywords of one run share that second end. Skipping it leaks in the direction that
+   *      keyword classes carry (U+017F, U+212A, U+00DF, U+1E9E) - and whatever it matches
+   *      past the run end is word characters up to that end, so all crossing keywords of one
+   *      run share that second candidate (only the rightmost one's walk is ever performed,
+   *      see the `crossEnd` update below). Skipping it leaks in the direction that
    *      matters, twice over: `tokenaapi-key=S3cret` has no separator at the first run end,
    *      so the mask is reachable only from the `api-key` keyword's end, and
    *      `secreto\u212aen=x` - `secret` and `to\u212aen` (Kelvin sign) sharing one character - only
@@ -745,29 +746,41 @@ export function redact(str: string): string {
       return end;
     };
     // The rule's own start test (`(?<!\\w)`, plus the `REDACT_SENTINEL` resume) as a
-    // predicate, for the positions that are not run starts.
+    // predicate, for the positions that are not run starts. The resume carries the rule's
+    // own case-insensitivity: the undriven lookbehind ran under `gi`, so a value ending in
+    // ANY case spelling of the sentinel admitted the position right after it there and must
+    // here - a case-SENSITIVE compare leaks `password=tlredactsentinel\u017fecret=hunter2`
+    // (the keyword after the sentinel opens on U+017F, so no ASCII `\\w` run reaches it and
+    // this test is the only thing admitting it) where both engines mask it. Folding with
+    // `toUpperCase()` is not equivalent either: U+017F folds to `S`, so a case-folded
+    // compare would admit positions the rule's own lookbehind does not. A sticky lookaround
+    // asks the regex engine the same question the lookbehind asked, with the same flags.
+    const afterSentinel = new RegExp("(?<=" + REDACT_SENTINEL + ")", "iy");
     const isStartPosition = (at: number): boolean =>
       at === 0 ||
       !isAsciiWordChar(text.charCodeAt(at - 1)) ||
-      text.startsWith(REDACT_SENTINEL, at - REDACT_SENTINEL.length);
-    // The leftmost keyword occurrence at or after the position its search started from,
-    // plus that start itself, plus a `null` remembered as "the scan reached the end". All
-    // three only move right (every search start is a `pos` or a `runStart`, and both only
-    // advance), so the scan costs O(text) for the pass - and the remembered `null` is what
-    // keeps a text with NO keywords in it from being re-searched from every gap, which is
-    // its own quadratic (16 s for a 160 KB command with no keyword at all, against 8 ms on
-    // the undriven rule).
+      (at >= REDACT_SENTINEL.length &&
+        ((afterSentinel.lastIndex = at), afterSentinel.test(text)));
+    // The leftmost keyword occurrence at or after the search start, plus a `null` remembered
+    // as "the scan reached the end". Both only move right (every search start is a `pos` or
+    // a `runStart`, and both only advance), so the scan costs O(text) for the pass. Two
+    // memories keep that bound, one per direction the scan can run out of work: the
+    // remembered `null` stops a text with NO keywords from being re-searched from every gap,
+    // and the remembered HIT is reused until a search start moves PAST it - the alternation
+    // has no lookarounds, so a hit at or after the new start is still the leftmost one
+    // there. Dropping a still-valid hit whenever the start advances is its own quadratic:
+    // every run in front of the next keyword re-scans the whole gap to it (a 100 KB command
+    // whose secret sits at the end - the most common shape there is - pays 1.7 s that way,
+    // against 1.3 ms undriven).
     let occurrence: RegExpExecArray | null = null;
-    let occurrenceFrom = -1;
     let scannedTo = 0;
     let scanDone = false;
     const nextOccurrence = (from: number): RegExpExecArray | null => {
       if (scanDone) return null;
       const start = from > scannedTo ? from : scannedTo;
-      if (occurrenceFrom < start) {
+      if (occurrence === null || occurrence.index < start) {
         keywords.lastIndex = start;
         occurrence = keywords.exec(text);
-        occurrenceFrom = start;
         if (occurrence === null) scanDone = true;
       }
       return occurrence;
@@ -783,7 +796,6 @@ export function redact(str: string): string {
       // that overlap, so this stays O(text).
       scannedTo = found.index + 1;
       occurrence = null;
-      occurrenceFrom = -1;
     };
     let out = "";
     let pos = 0;
@@ -825,17 +837,18 @@ export function redact(str: string): string {
           pos = resumed;
           scannedTo = resumed;
           occurrence = null;
-          occurrenceFrom = -1;
           continue;
         }
       }
       // This run's candidate keyword-group ends. A keyword that ends inside the run gives
-      // `runEnd`; the only keywords that give anything else are the three that cross a
-      // hyphen, and they all land in the run right after it, so ONE walk (and one attempt)
-      // covers them - walking per keyword is the O(keywords x run length) this pass exists
-      // to remove. `lastCrosses` records which kind the LAST keyword of the run is, because
-      // that is the one the engine reaches with the longest lead and therefore answers
-      // first.
+      // `runEnd`; a keyword gives anything else only by crossing a character ASCII `\\w`
+      // does not match - the hyphen of `api[_-]?key`, `access[_-]?key` and `client[_-]?id`,
+      // or one of the case-fold spellings the keyword classes carry (U+017F, U+212A, U+00DF,
+      // U+1E9E) - and whatever it matches past the run end is word characters, so ONE walk
+      // (and one attempt) covers all of them - walking per keyword is the O(keywords x run
+      // length) this pass exists to remove. `lastCrosses` records which kind the LAST
+      // keyword of the run is, because that is the one the engine reaches with the longest
+      // lead and therefore answers first.
       let endsInRun = false;
       let lastCrosses = false;
       let crossEnd = -1;
@@ -858,6 +871,19 @@ export function redact(str: string): string {
         consumeOccurrence(hit);
       }
       const first = lastCrosses ? crossEnd : endsInRun ? runEnd : -1;
+      // The engine's order between the two candidate ends: the longest lead first, which is
+      // the RIGHTMOST keyword, so a crossing keyword answers before one ending inside the
+      // run. `second` is the other candidate. It never wins here - a crossing keyword's own
+      // non-`\\w` character sits exactly AT `runEnd` (a run is maximal, and a keyword only
+      // crosses through such a character), so when `lastCrosses` the run's own end cannot
+      // start any separator arm and `attempt(runStart, runEnd)` is doomed; and when
+      // `lastCrosses` is false the last processed keyword ends inside the run, which - its
+      // search having resumed one character after a crossing keyword that already covered
+      // `runEnd` - no keyword in the current list can do while a crossing keyword set
+      // `crossEnd`, so `crossEnd` arrives only as `first` and the `crossEnd`-as-`second`
+      // arm is dead too. It is kept as the rule's own backtracking order rather than
+      // deleted: a future keyword that overlaps a crossing one differently pays one
+      // doomed sticky attempt, never a missed mask.
       const second = lastCrosses ? (endsInRun ? runEnd : -1) : crossEnd;
       let resumed = attempt(runStart, first);
       if (resumed < 0) resumed = attempt(runStart, second);
@@ -865,7 +891,6 @@ export function redact(str: string): string {
         pos = resumed;
         scannedTo = resumed;
         occurrence = null;
-        occurrenceFrom = -1;
         continue;
       }
       // Neither candidate end can start a separator, so no start in this run completes and
