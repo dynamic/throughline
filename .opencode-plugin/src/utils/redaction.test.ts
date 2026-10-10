@@ -1872,12 +1872,12 @@ describe('regex-engine parity with jq (issue #90)', () => {
    * caught by the jq parity tests, not here - an earlier version of this comment claimed the
    * second row closed it, which is not true.
    *
-   * Each size is timed best-of-3, every run
-   * must write the SAME output (a fast time may not be bought by a build that stops
-   * masking), and the SMALL size is asserted - output and an absolute bound - before the
-   * big one is timed at all, which is what turns a regression limited to the big size into a
-   * failure rather than a long wait. The test also carries `{ timeout: 120_000 }`, like the
-   * sibling guards, but that is weaker than it looks: `node --test` cannot interrupt a
+   * Each size is timed best-of-3, every run must write the SAME output (a fast time may not
+   * be bought by a build that stops masking), and the SMALL size is asserted - output and an
+   * absolute bound - before the big one is timed at all, which is what turns a regression
+   * limited to the big size into a failure rather than a long wait. The test also carries
+   * `{ timeout: 120_000 }` like the issue #129 guard above (the #118 guard below carries none),
+   * but that is weaker than it looks: `node --test` cannot interrupt a
    * SYNCHRONOUS test body, so a regex that truly never returned would block the event loop
    * past its own timeout and the timeout would never fire. The small-size assert above is the
    * protection; the timeout only bounds a test that yields to the loop.
@@ -2045,9 +2045,14 @@ describe('regex-engine parity with jq (issue #90)', () => {
   /**
    * Latency guard for the OTHER side of the word pass: pass 6b's widened SUFFIX, over text
    * that carries a keyword inside a run with no separator in it (dynamic/throughline#118).
-   * The non-ASCII guard above cannot see this either - its run is `token\u6f22` repeated, whose
-   * very first start completes at the trailing ` password=x`, so the widened suffix never
-   * has to walk a long run to death - and issue #114's guard is ASCII-only, which pass 6b's
+   * The #119 guard above now prices this SAME shape - issue #119 rewrote its run to `token\u6f22`
+   * repeated with no separator after any keyword, so a widened affix does have to walk it to
+   * death - and it was measured failing on the pre-#118 build of `main` (`4ecc99b`, pass 6b
+   * still handed to `String.replace`): 100.9ms at 2,000 repeats and 1,611.0ms at 8,000 (a
+   * 16.0x ratio for a 4x-longer command, and 6.4x over its own 250 ms ceiling). So the two
+   * non-ASCII guards overlap rather than dividing the pass; what this one adds is the issue's
+   * own two units, `token\u00e9` and `password` plus 20x`\u6f22`, which the #119 rows do not use.
+   * Issue #114's guard, by contrast, is ASCII-only, which pass 6b's
    * whole-string fast path skips outright.
    *
    * Measured on this machine BEFORE pass 6b was driven from a scan, with the widened rule
