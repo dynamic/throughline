@@ -838,18 +838,19 @@ describe('Throughline Plugin Integration Tests', () => {
     });
 
     it('suppresses sessionCreated on an already-active project, where only its own guard can', async () => {
-      // The case above deletes the data dir before the disabled call, which
-      // leaves it provable by tlActive()'s own "disabled" answer alone (that
-      // answer is NOT redundant in general: it is the sole kill switch for
-      // chatMessage and toolExecuteAfter, which have no guard of their own - see
-      // the chatMessage case below. It is redundant only inside sessionCreated,
-      // whose early return fires first): with no data dir,
-      // `!dataExists && !state.active` returns null even when sessionCreated's
-      // own `if (tlDisabled()) return null` guard is gone. The
-      // real kill-switch situation is a project that is already active - data
-      // dir present - where that guard is the ONLY thing between the hook and a
-      // full onboarding block printed under THROUGHLINE_DISABLE. So bootstrap
-      // first, then throw the switch, and assert null.
+      // Why this case sits next to the fresh-project one. On an empty project the
+      // disabled call returns null through `!dataExists && !state.active` alone, so
+      // the fresh-project case passes even with sessionCreated's own
+      // `if (tlDisabled()) return null` guard removed. The real kill-switch
+      // situation is a project that is already active - data dir present - where
+      // this hook's own guard is the only thing between it and a full onboarding
+      // block printed under THROUGHLINE_DISABLE. So: bootstrap, throw the switch,
+      // assert null.
+      //
+      // That is not the same as calling the disabled answer from tlActive()
+      // redundant. It is redundant only here, where this hook's early return fires
+      // first; chatMessage and toolExecuteAfter have no guard of their own, and for
+      // them it is the sole kill switch. See the chatMessage case below.
       const sessionID = 'kill-switch-active';
       const prev = process.env.THROUGHLINE_DISABLE;
       try {
