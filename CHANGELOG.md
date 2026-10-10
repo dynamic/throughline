@@ -190,8 +190,29 @@ All notable changes to throughline are documented here. Format loosely follows
   reused, so a long command whose secret sits at the end costs the same as one whose secret
   sits at the front. The remaining #114 quadratic - measured at ~461 ms for a 40 KB
   ASCII run with a single accented character, which admits the widened pass through its
-  whole-string gate - now sits in the plugin's second word pass alone and is tracked as
-  dynamic/throughline#134.
+  whole-string gate - is fixed in the entry below.
+- **OpenCode plugin: redaction pass 6b's attempt was quadratic on a long ASCII run**
+  (issue #134): the widened pass is driven from one scan of the word runs, so a run gets a
+  bounded number of attempts, but each attempt ran the WHOLE rule - jq's unbounded `\w*` lead
+  plus the widened suffix - so one long ASCII word run carrying many keywords and no separator
+  still cost (keyword hits in the run) x (run length): `('token').repeat(k) + 'é'`, which is
+  one run plus the single non-ASCII character that lets pass 6b run at all, took 29 ms at
+  k=2,000 and 461 ms at k=8,000, in-process on the full unclamped bash command. The attempt is
+  now anchored at the END of the keyword group, the way issue #129 anchored pass 6a: the driver
+  asks the rule's own separator and value groups, made sticky, at the end of the word run that
+  contains the keyword's end, and one attempt per run decides it - a keyword can leave its run
+  only through the hyphen of `api-key` / `access-key` / `client-id`, and that hyphen sits
+  exactly AT the run end, so the crossing keyword is the run's last occurrence and the other
+  group end is doomed. Output is byte-identical to the previous driver: measured over 1.26 M
+  generated inputs (random pieces, crossing-keyword shapes, and 10-20-segment long strings)
+  against a build of the pre-#134 pass, and the #114 / #118 / #129 latency guards, the seeded jq
+  differential and the `ENGINE_DIVERGENCES` pins all stay green. Byte-identical holds only
+  because the group START is still the position the rule's own ASCII lead stops at: the keyword
+  group is written back verbatim, but it is also what the widened pass's guard decides on, so a
+  start further back - one that pulls a non-ASCII character into the group - re-masks on top of
+  pass 6a (`tokenéapi-key="a b"c` came back `tokenéapi-key=***` from an intermediate version of
+  this change against `tokenéapi-key=***c` from `main` and from the jq hooks); that row and five
+  like it are pinned in `redaction.test.ts`.
 - **Capture hook dropped every event on Windows** (issue #81 review): the jq program
   is one command-line argument (`redaction defs + capture filter`) and Windows caps a
   command line at 32,767 characters; the explanatory comments inside the defs had grown

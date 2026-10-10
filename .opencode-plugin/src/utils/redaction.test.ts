@@ -2073,8 +2073,12 @@ describe('regex-engine parity with jq (issue #90)', () => {
    * crossing keyword `api-key` opens after a character the ASCII lead cannot step over, so its
    * group is `api-key` (pure ASCII, already seen by pass 6a, so 6b leaves the match alone) and
    * NOT `token\u00e9api-key`. Every row is pinned to the string BOTH engines give - measured against
-   * the jq hooks, and against a build of the pre-#134 driver - and the pinned side is asserted
-   * even where jq is absent, so the row cannot silently degrade to a self-comparison.
+   * the jq hooks. These rows pass on `main` as well: they are not the regression test for issue
+   * #134 (the latency guard above is that one), they pin the mistake this shape of rewrite makes
+   * easy - taking the group START from the earlier in-run anchor instead of from where the rule's
+   * own lead stops, which is what this PR's first commit did and what no other row in the file
+   * catches. The pinned string is asserted even where jq is absent, so a row cannot silently
+   * degrade to a self-comparison.
    */
   it('anchors a crossing keyword at the start its own lead reaches, where a non-ASCII character blocks pass 6a\'s mask (issue #134)', () => {
     const cases: readonly [string, string][] = [
