@@ -1876,8 +1876,8 @@ describe('regex-engine parity with jq (issue #90)', () => {
    * be bought by a build that stops masking), and the SMALL size is asserted - output and an
    * absolute bound - before the big one is timed at all, which is what turns a regression
    * limited to the big size into a failure rather than a long wait. The test also carries
-   * `{ timeout: 120_000 }` like the issue #129 guard above (the #118 guard below carries none),
-   * but that is weaker than it looks: `node --test` cannot interrupt a
+   * `{ timeout: 120_000 }` like the issue #129 guard below it (the #118 guard further below
+   * carries none), but that is weaker than it looks: `node --test` cannot interrupt a
    * SYNCHRONOUS test body, so a regex that truly never returned would block the event loop
    * past its own timeout and the timeout would never fire. The small-size assert above is the
    * protection; the timeout only bounds a test that yields to the loop.
