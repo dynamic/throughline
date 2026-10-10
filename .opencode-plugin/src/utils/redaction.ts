@@ -988,12 +988,13 @@ export function redact(str: string): string {
    * O(text).
    * What it does not buy is linearity of the anchored attempt itself. The rule keeps jq's
    * unbounded `\\w*` lead, and on one long ASCII word run carrying many keywords that lead still
-   * backs off character by character with the suffix re-walking the run at each hit - the cost
-   * pass 6a has too, and the reason `('token').repeat(k) + '\u00e9'` (the trailing character is what
-   * lets pass 6b run at all) takes 59ms at 10,001 characters and 917ms at 40,001 here against
-   * 29ms / 457ms for pass 6a alone. That is issue #114's remaining territory, not this
-   * issue's quadratic: the driver removes the second, non-ASCII quadratic that the
-   * undriven rule added on top of 6a; what remains is #114's own, shared with 6a.
+   * backs off character by character with the suffix re-walking the run at each hit - the
+   * cost pass 6a HAD until `asciiWordPass` drove it from one scan of the word runs, which
+   * removed that factor from 6a and leaves it here alone. It is why `('token').repeat(k) +
+   * '\u00e9'` (the trailing character is what lets pass 6b run at all) takes ~33ms at 10,001
+   * characters and ~461ms at 40,001 here while pass 6a, on the same run, stays in single-digit
+   * milliseconds. This is #114's remaining territory, pre-existing this pass's driver and now
+   * tracked as dynamic/throughline#134; no timing guard times this shape yet.
    */
   const widenedWordPass = (text: string): string => {
     // `y` on top of `g` makes `lastIndex` an ANCHOR rather than a hint: the attempt either
@@ -1090,7 +1091,11 @@ export function redact(str: string): string {
   // WIDENED rule is quadratic in the length of a long unbroken non-ASCII run on both
   // engines when handed to `String.replace` (dynamic/throughline#118, which
   // `widenedWordPass` above now bounds; the ASCII side of that measurement,
-  // dynamic/throughline#114, was fixed by anchoring pass 6a's lead above), the command
+  // dynamic/throughline#114, is linear in pass 6a now that `asciiWordPass` above drives
+  // that pass from one scan of the word runs - but the WIDENED rule itself is still
+  // quadratic on a long ASCII run whenever it runs at all, tracked as
+  // dynamic/throughline#134, which is exactly why ASCII text must not pay for it), the
+  // command
   // path runs it on the full unclamped bash command,
   // and a pasted base64 blob is ASCII, so running the widened pass at all would double the
   // cost of the common case for an output that cannot differ.
