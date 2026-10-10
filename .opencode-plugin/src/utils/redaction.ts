@@ -964,8 +964,14 @@ export function redact(str: string): string {
    *      doomed;
    *   2. so whether that start completes at all depends only on what starts at that run end,
    *      and the text a completing match writes, and where the scan resumes (end of the
-   *      value), are the same for every start that shares that run end. The earliest such
-   *      start only decides which equivalent match the engine reports;
+   *      value), are the same for every start that shares that run end - PROVIDED the start
+   *      is one the ASCII lead can actually reach. The earliest such start only decides which
+   *      equivalent match the engine reports, and a start further back than the lead can reach
+   *      is NOT equivalent: the keyword group is written back verbatim, but it is also what
+   *      `widenedKeywordReplacement` guards on, so widening it past a non-ASCII character the
+   *      lead could never step over re-masks text pass 6a already masked (`token\u00e9api-key="a b"c`
+   *      - group `api-key`, ASCII, so 6b leaves 6a's `***c` alone; group `token\u00e9api-key`, and
+   *      the same value is masked a second time over the trailing `c`).
    *   3. so a failed attempt adjudicates every start that shares its keyword-end run, and
    *      once each distinct run end in the run has been attempted, the driver emits the run
    *      verbatim and resumes at `re`.
@@ -974,7 +980,7 @@ export function redact(str: string): string {
    * and `client[_-]?id`: underscore is a word character and never splits a run, and a hyphen
    * inside one of those three is exactly the character that ends the run - so a start whose
    * keyword crosses the boundary always ends in the run after `re`, and every other start
-   * ends at `re` itself. Two anchors, constant work per run. Without the second one the pass
+   * ends at `re` itself. Two anchors, one attempt per run. Without the second one the pass
    * leaks in the direction that matters: `token\u6f22api-key\u6f22=S3cret` has no separator at the hyphen,
    * so the `token` attempt fails there, and the secret is reachable only from the `api-key`
    * start - skipping the run on the first failure leaves it in cleartext where both the jq
@@ -1047,24 +1053,21 @@ export function redact(str: string): string {
         // after this point there is nothing left to mask either.
         if (keyword === null) return out + text.slice(pos);
       }
-      // This run's anchors: the earliest start whose keyword ends inside the run, and the
-      // earliest start whose keyword ends past it. Two, because the fate of a start is the
-      // separator at the end of the run its KEYWORD END falls in, and a keyword can leave its
-      // own run only through the `[-_]` of `api[_-]?key`, `access[_-]?key`, `client[_-]?id` -
-      // underscore is a word character so it never splits a run, and a hyphen inside one of
-      // those three is exactly the character that ends the run. Both anchors therefore see
-      // the same two run ends, whatever the text, and one attempt per anchor is still
-      // constant work per run.
+      // This run's two possible anchors: the earliest start whose keyword ends inside the run,
+      // and the earliest start whose keyword ends past it. Both are computed because the walk-back
+      // is cheap and only the first occurrence of each kind is its earliest start, but the run
+      // gets ONE attempt, chosen by which kind its last keyword is (see below). A keyword can
+      // leave its own run only through the `[-_]` of `api[_-]?key`, `access[_-]?key`,
+      // `client[_-]?id` - underscore is a word character so it never splits a run, and a hyphen
+      // inside one of those three is exactly the character that ends the run.
       let inRunStart = -1;
       let acrossStart = -1;
-      let inRunSeen = false;
       let lastCrosses = false;
       let crossEnd = -1;
       let scan: RegExpExecArray | null = keyword;
       while (scan !== null && scan.index < runEnd) {
         const keywordEnd = scan.index + scan[0].length;
         if (keywordEnd <= runEnd) {
-          inRunSeen = true;
           lastCrosses = false;
         } else {
           lastCrosses = true;
@@ -1092,28 +1095,13 @@ export function redact(str: string): string {
       // that resume from walking back over text whose occurrences were already adjudicated.
       scannedTo = scan === null ? text.length : scan.index;
       keyword = scan;
-      // The two attempts, in the order the engine's own backtracking would answer them, and
-      // each with its own group end: a crossing keyword sits at the end of the run (the
-      // hyphen of `api-key` is exactly AT `runEnd`), so it is the rightmost keyword any start
-      // in this run can reach and its end is asked first - which is also the only order that
-      // can be right, because the hyphen at `runEnd` starts no separator arm and the in-run
-      // attempt is doomed whenever a crossing keyword exists. The two anchors are then
-      // attempted earliest first, which writes the same bytes as the engine's preference
-      // between them: the earlier one's match, when both complete, covers the later anchor and
-      // its keyword group is written back verbatim, so the text this pass emits is the same
-      // whichever of the two the engine reported.
-      const firstEnd = lastCrosses ? crossEnd : inRunSeen ? runEnd : -1;
-      const secondEnd = lastCrosses ? (inRunSeen ? runEnd : -1) : crossEnd;
-      const firstStart = acrossStart < 0 ? inRunStart : inRunStart < 0 ? acrossStart :
-        inRunStart < acrossStart ? inRunStart : acrossStart;
-      const secondStart = acrossStart < 0 || inRunStart < 0 ? -1 :
-        inRunStart < acrossStart ? acrossStart : inRunStart;
       // An anchored attempt whose keyword group is `text.slice(start, end)`, the way the
       // undriven rule would have written it: group verbatim, separator verbatim, value masked
-      // (or kept, when the value is the sentinel that step 7 unmasks). The guard sees the same
-      // keyword group either way - leading ASCII characters cannot change "does this carry a
-      // non-ASCII character", and `asciiKeywordSeenByPass6a` is `^\\w*(kw)\\w*$`, which a
-      // leading run of ASCII word characters neither adds to nor takes away.
+      // (or kept, when the value is the sentinel that step 7 unmasks). `start` is therefore the
+      // position the undriven rule's own `\\w*` lead would have stopped at, not merely any
+      // position that writes the same keyword group: the group is also what
+      // `widenedKeywordReplacement` decides on, and only the reachable start shows it the group
+      // that guard was written against.
       const attempt = (start: number, end: number): boolean => {
         if (start < 0 || end < 0) return false;
         tail.lastIndex = end;
@@ -1129,7 +1117,21 @@ export function redact(str: string): string {
         scannedTo = pos;
         return true;
       };
-      if (attempt(firstStart, firstEnd) || attempt(secondStart, secondEnd)) continue;
+      // One attempt per run, and exactly one pair to make it with: the crossing keyword is the
+      // run's LAST occurrence (it opens 3 characters before `runEnd`, so nothing else in the run
+      // can start after it and the non-overlapping scan stops at it), which makes the kind of the
+      // last occurrence the same question as "does this run have a crossing keyword at all".
+      //   - crossing: the attempt is (acrossStart, crossEnd). The hyphen at `runEnd` starts no
+      //     separator arm, so the in-run group end is doomed, and the keyword group must START
+      //     where the ASCII lead starts - `acrossStart`, not the earlier in-run anchor - because
+      //     the group is what `widenedKeywordReplacement` guards on, and pulling a non-ASCII
+      //     character into it re-masks what pass 6a already masked (see its comment above).
+      //   - in-run: the attempt is (inRunStart, runEnd), and no crossing group end exists.
+      // The second attempt the undriven rule would have backtracked into is never reached: it
+      // would ask the other end, and the two ends are mutually exclusive by the paragraph above.
+      // This is also what keeps the output byte-identical to the undriven rule rather than merely
+      // same-shaped.
+      if (lastCrosses ? attempt(acrossStart, crossEnd) : attempt(inRunStart, runEnd)) continue;
       out += text.slice(pos, runEnd);
       pos = runEnd;
     }
