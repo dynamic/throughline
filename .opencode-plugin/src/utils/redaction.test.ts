@@ -1858,14 +1858,25 @@ describe('regex-engine parity with jq (issue #90)', () => {
    * enough to make the ratio look fine - the mutated build overshoots it 6.3x here.
    *
    * The second row is the same run read the other way round - `\u6f22token`, where the character
-   * in FRONT of the keyword is the non-ASCII one, which is precisely where a widened lead
-   * differs from the shipped ASCII lead - so a change that narrows the suffix but re-widens
-   * the lead cannot pass on the first row alone. Each size is timed best-of-3, every run
+   * in FRONT of the keyword is the non-ASCII one - and it fails on its own under the mutation
+   * above (98.3ms -> 1,561.9ms), so the guard does not depend on the first row catching it
+   * first. What neither row covers, and no timing guard on these inputs can: a rule that
+   * widens the LEAD while leaving the SUFFIX ASCII. Measured with exactly that mutation
+   * (`keywordPattern(JS_WORD_STAR, "\\w*")`), both rows cost 0.7ms -> 1.9ms (a 0.4x ratio) and
+   * masked identically to the shipped rule, because an anchored attempt whose suffix cannot
+   * cross into non-ASCII pays only linear lead backtracking. That shape would have to be
+   * caught by the jq parity tests, not here - an earlier version of this comment claimed the
+   * second row closed it, which is not true.
+   *
+   * Each size is timed best-of-3, every run
    * must write the SAME output (a fast time may not be bought by a build that stops
    * masking), and the SMALL size is asserted - output and an absolute bound - before the
-   * big one is timed at all, because `node --test` has no default timeout and ci.yml sets
-   * none: a regression limited to the big size would otherwise hang the suite silently
-   * where it should fail. The test carries a 120 s timeout for the same reason.
+   * big one is timed at all, which is what turns a regression limited to the big size into a
+   * failure rather than a long wait. The test also carries `{ timeout: 120_000 }`, like the
+   * sibling guards, but that is weaker than it looks: `node --test` cannot interrupt a
+   * SYNCHRONOUS test body, so a regex that truly never returned would block the event loop
+   * past its own timeout and the timeout would never fire. The small-size assert above is the
+   * protection; the timeout only bounds a test that yields to the loop.
    */
   it('stays linear on a long non-ASCII run that ends with no separator, which the leading word affix used to break (issue #119)', { timeout: 120_000 }, () => {
     const timed = (input: string) => {
