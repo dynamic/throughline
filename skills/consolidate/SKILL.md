@@ -50,6 +50,12 @@ it. Read no session logs, propose no promotions, and end the turn. Do not
 "confirm scope" by mining the logs first - the store is decided here, not in
 Phase 1.
 
+One request can name both stores ("consolidate handoffs and tidy `MEMORY.md`").
+Then run this pass over the logs and name the memory half for
+[`consolidate-memory`](../consolidate-memory/SKILL.md) in the same report - the
+redirect above is for a request that is *only* about the memory dir, and neither
+half may be dropped silently.
+
 When the request names the log store ("consolidate handoffs", "mine the handoff
 logs", "consolidation pass", "promote lessons"), continue to Phase 1. When it is
 only "consolidate" with no store named - whatever it came from, a handoff briefing
