@@ -1841,50 +1841,60 @@ describe('regex-engine parity with jq (issue #90)', () => {
   });
 
   /**
-   * Latency guard for the ASCII side of that same affix (dynamic/throughline#114). The
-   * unbounded `\\w*` lead of pass 6a re-scanned the whole keyword alternation at every
-   * start position inside one long word run, and each keyword hit then re-scanned the
-   * suffix; the non-ASCII guard above cannot see this, because pass 6b's whole-string
-   * fast path skips ASCII input outright - so only a test like this pins 6a's cost.
-   * Measured on this machine BEFORE the lead was word-anchored: `'tokena'` x250 (1.5 KB)
-   * 289 ms and x1000 (6 KB) 17.7 s, `'my_token_value_'` x150 (2.25 KB) 370 ms and x600
-   * (9 KB) 24.0 s - a 4x-size scaling ratio of ~61-65, super-quadratic, and `redact()`
-   * runs in-process on the full unclamped bash command. After the anchor (a lookbehind
-   * at the match START plus the sentinel-resume re-admit, see `keywordLead6a`) both
-   * shapes stay in single-digit milliseconds at 4N. The absolute bound (500 ms) leaves
-   * post-fix runs ~50x of headroom and pre-fix runs overshoot it by more than 35x, so CI
-   * noise cannot flip the verdict; the ratio bound floors the denominator at 5 ms so sub-
-   * millisecond noise on the small timing cannot fail the test on its own either (the
-   * pre-fix 4x-size ratio is ~61-65 against a bound of 20). The inputs are the issue's
-   * own shapes ON PURPOSE: a long word run with no separator inside it (a base64-ish
-   * blob that happens to contain `token`) is what makes the unbounded lead try every
-   * start in the run; a trailing ` password=x` would NOT - the very first start then
-   * completes (lead to the last `token`, suffix to the run end, the space is the
-   * separator, the tail is the value) and the catastrophic scan never happens. The
-   * leading `password=x` masks without shortening the scan, so the timing still proves
-   * the keyword rule ran and masked.
+   * Latency guard for the ASCII side of the word pass (dynamic/throughline#114, and the
+   * remaining quadratic its fix left behind, dynamic/throughline#129). Pass 6a's keyword
+   * rule runs over the full unclamped bash command in-process, and the non-ASCII guard
+   * above cannot see it: pass 6b's whole-string fast path skips ASCII input outright, so
+   * only a test like this pins 6a's cost. Two regimes have been measured here:
+   *   - handed to one global `replace` with an UNBOUNDED lead: `'tokena'` x250 (1.5 KB)
+   *     289 ms and x1000 (6 KB) 17.7 s, `'my_token_value_'` x150 370 ms and x600 (9 KB)
+   *     24.0 s - a 4x-size ratio of ~61-65, super-quadratic (#114);
+   *   - word-anchored but still undriven, so one start per run cost (keyword hits in the
+   *     run) x (run length): `'tokena'` x1000 (6 KB) 10.4 ms and x4000 (24 KB) 147 ms
+   *     (14.2x), `'my_token_value_'` x600 8.2 ms and x2400 131 ms (15.9x), and
+   *     `'TLREDACTSENTINELtokena'`, which re-admits a start after every sentinel, 2.9 ms at
+   *     x50 rising to 706 ms at x400 with the per-step ratio still climbing (#129).
+   * Both are gone now that the pass is driven from one scan of the word runs (see
+   * `asciiWordPass`); all three shapes land in single-digit milliseconds at 4N, and the
+   * ratios below are what a change that puts the re-scanning back would exceed. The ratio
+   * bound of 8 sits above linear (a 4x step costs ~4x) and below quadratic (11-16x above);
+   * the denominator is floored at 5 ms so sub-millisecond noise on the small timing cannot
+   * fail the test on its own, and the absolute bound of 500 ms catches the #114 cubic even
+   * on a machine fast enough to make the ratio look fine.
+   * The inputs are the issues' own shapes ON PURPOSE: a long word run with no separator
+   * inside it (a base64-ish blob that happens to contain `token`) is what makes a scan
+   * re-walk the run; a trailing ` password=x` would NOT - the very first start then
+   * completes and the catastrophic walk never happens. The leading `password=x` masks
+   * without shortening the scan, so the timing still proves the keyword rule ran and masked.
+   * Sizes stay ASCENDING, so a regression fails on the small shape before the big one is
+   * timed out.
    */
-  it('stays linear on long ASCII word runs, which the unbounded keyword lead used to break', () => {
+  it('stays linear on long ASCII word runs, which the undriven keyword pass used to make quadratic (issue #129)', () => {
     const timed = (input: string) => {
       const started = process.hrtime.bigint();
       const out = redact(input);
       const ms = Number(process.hrtime.bigint() - started) / 1e6;
       return { ms, out };
     };
-    const shapes: readonly [string, number, number][] = [
-      ['tokena', 250, 1000],
-      ['my_token_value_', 150, 600],
+    // Each row is the repeated unit, the two sizes, and what one repeat of it looks like in
+    // the output - the sentinel spell itself becomes `***` when the sentinel is unmasked.
+    const shapes: readonly [string, number, number, string][] = [
+      ['tokena', 1000, 4000, 'tokena'],
+      ['my_token_value_', 600, 2400, 'my_token_value_'],
+      // Every sentinel in this run is a resume position the rule's own lookbehind re-admits,
+      // so it is the shape that punishes a per-start scan hardest.
+      ['TLREDACTSENTINELtokena', 1000, 4000, '***tokena'],
     ];
-    for (const [unit, n, fourN] of shapes) {
+    for (const [unit, n, fourN, masked] of shapes) {
       const small = timed('password=x ' + unit.repeat(n));
       const big = timed('password=x ' + unit.repeat(fourN));
-      assert.strictEqual(small.out, 'password=*** ' + unit.repeat(n), `the ${JSON.stringify(unit)} x${n} input was not masked to exactly the expected output`);
-      assert.strictEqual(big.out, 'password=*** ' + unit.repeat(fourN), `the ${JSON.stringify(unit)} x${fourN} input was not masked to exactly the expected output`);
+      assert.strictEqual(small.out, 'password=*** ' + masked.repeat(n), `the ${JSON.stringify(unit)} x${n} input was not masked to exactly the expected output`);
+      assert.strictEqual(big.out, 'password=*** ' + masked.repeat(fourN), `the ${JSON.stringify(unit)} x${fourN} input was not masked to exactly the expected output`);
       const ratio = big.ms / Math.max(small.ms, 5);
-      assert.ok(ratio < 20,
-        `redact() scaled ${ratio.toFixed(1)}x for a 4x-longer ${JSON.stringify(unit)} run (${small.ms.toFixed(1)}ms -> ${big.ms.toFixed(1)}ms); the keyword lead has gone super-linear again`);
+      assert.ok(ratio < 8,
+        `redact() scaled ${ratio.toFixed(1)}x for a 4x-longer ${JSON.stringify(unit)} run (${small.ms.toFixed(1)}ms -> ${big.ms.toFixed(1)}ms); pass 6a is re-walking word runs it has already stepped over (issue #129)`);
       assert.ok(big.ms < 500,
-        `redact() took ${big.ms.toFixed(1)}ms on a ${big.out.length}-character ASCII command; the unbounded keyword lead is back (issue #114)`);
+        `redact() took ${big.ms.toFixed(1)}ms on a ${big.out.length}-character ASCII command; the keyword lead is back (issue #114)`);
     }
   });
 
@@ -2001,6 +2011,68 @@ describe('regex-engine parity with jq (issue #90)', () => {
       ['\u6f22token:', '\u6f22token:'],
       ['\u6f22token: S3cret', '\u6f22token: ***'],
       ['YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXp8fH14\u00e9', 'YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXp8fH14\u00e9'],
+    ];
+    for (const [input, expected] of cases) {
+      assert.strictEqual(redact(input), expected, `redact(${JSON.stringify(input)}) changed output`);
+    }
+  });
+
+  /**
+   * The masking side of pass 6a's driver (dynamic/throughline#129). Its claim is "one
+   * anchored attempt per word run, per keyword-group end", and the ways that goes wrong are
+   * all positions the run's FIRST character cannot reach:
+   *   - a keyword that OPENS on a character no `\\w` run holds. JS's non-`u` `\\w` is ASCII,
+   *     so `KEYWORD_ALTERNATION`'s case-fold spellings can start a keyword outside every run
+   *     (`\\u017f` for the `s` of `secret`), and a driver needs two sub-positions to keep up:
+   *     the keyword opens on the character RIGHT AFTER a run, so that run's lead can still
+   *     cover the whole run and reach it (`x\\u017fecret=S3cret`, masked from the `x`), or it
+   *     opens with no run in front of it at all, where only a gap attempt reaches it
+   *     (`\\u017fecret=x`). Anchoring attempts at run starts alone leaks both.
+   *   - and a keyword that must NOT match, so the fix cannot be a sledgehammer over the run:
+   *     sharp s + `ecret=x` is a one-to-two fold the keyword alternation does not carry in
+   *     that position, and the row stays in cleartext on both engines.
+   *   - a keyword that ENDS past the run end, through the hyphen of `api-key`,
+   *     `access-key` or `client-id`. A separator can never match a hyphen, so the run's own
+   *     end is a doomed attempt there and the secret is only reachable from the keyword's
+   *     far end: `tokenaapi-key=S3cret` has a keyword in the first run, no separator at its
+   *     end, and the mask lives entirely in the second one.
+   *   - the resume position after a `REDACT_SENTINEL` value, which is mid-run and is the
+   *     only reason `password=TLREDACTSENTINELtoken=x` masks both halves.
+   * Each row is pinned to the output the pre-driver code gives, and every ASCII-only row
+   * runs with pass 6b's whole-string gate closed, so these rows can only pass or fail on
+   * pass 6a. A 160,000-input differential run against the pre-driver implementation found
+   * no difference on any input, and the seeded jq fuzz above covers the same ground against
+   * the hooks; these rows are the pinned version of those positions.
+   */
+  it('still finds the keyword at every position pass 6a\'s driver can reach (issue #129)', () => {
+    const cases: readonly [string, string][] = [
+      ['', ''],
+      ['tokenatokena=S3cret', 'tokenatokena=***'],
+      ['tokenatokenatokena=S3cret', 'tokenatokenatokena=***'],
+      ['my_token_value_=x', 'my_token_value_=***'],
+      ['tokena api-key=S3cret', 'tokena ***'],
+      ['tokenaapi-key=S3cret', 'tokenaapi-key=***'],
+      ['tokenapi-key=S3cret', 'tokenapi-key=***'],
+      ['api-key=S3cret', 'api-key=***'],
+      ['xapi-key=S3cret', 'xapi-key=***'],
+      ['access-key: S3cret', 'access-key: ***'],
+      ['client-id=S3cret', 'client-id=***'],
+      ['client-idtoken=y', 'client-idtoken=***'],
+      ['tokenaaccess-key=x', 'tokenaaccess-key=***'],
+      ['tokena-tokenb=S3cret', 'tokena-tokenb=***'],
+      ['tokena_tokenb=S3cret', 'tokena_tokenb=***'],
+      ['tokena\u00a0=x', 'tokena\u00a0=***'],
+      ['password="x tokena', 'password=***'],
+      ['password=TLREDACTSENTINELtoken=x', 'password=***token=***'],
+      ['password=TLREDACTSENTINELtoken=TLREDACTSENTINELtoken=y', 'password=***token=***token=***'],
+      ['ſecret=x', 'ſecret=***'],
+      ['xſecret=S3cret', 'xſecret=***'],
+      ['aſecret=x', 'aſecret=***'],
+      ['aßecret=x', 'aßecret=x'],
+      ['paſſword=S3cret', 'paſſword=***'],
+      ['paßword=S3cret', 'paßword=***'],
+      ['toKen=AbCdEf', 'toKen=***'],
+      ['xtoKen=AbCdEf', 'xtoKen=***'],
     ];
     for (const [input, expected] of cases) {
       assert.strictEqual(redact(input), expected, `redact(${JSON.stringify(input)}) changed output`);
