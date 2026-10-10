@@ -188,7 +188,7 @@ All notable changes to throughline are documented here. Format loosely follows
   keyword opening on a case-fold character directly after a lowercase `tlredactsentinel`
   value is still masked, and a keyword far ahead of the current position is found once and
   reused, so a long command whose secret sits at the end costs the same as one whose secret
-  sits at the front. The remaining #114 quadratic - measured at ~461 ms for a 40 KB
+  sits at the front. The remaining #114 quadratic - measured at ~460 ms for a 40 KB
   ASCII run with a single accented character, which admits the widened pass through its
   whole-string gate - is fixed in the entry below.
 - **OpenCode plugin: redaction pass 6b's attempt was quadratic on a long ASCII run**
@@ -196,8 +196,9 @@ All notable changes to throughline are documented here. Format loosely follows
   bounded number of attempts, but each attempt ran the WHOLE rule - jq's unbounded `\w*` lead
   plus the widened suffix - so one long ASCII word run carrying many keywords and no separator
   still cost (keyword hits in the run) x (run length): `('token').repeat(k) + 'é'`, which is
-  one run plus the single non-ASCII character that lets pass 6b run at all, took 29 ms at
-  k=2,000 and 461 ms at k=8,000, in-process on the full unclamped bash command. The attempt is
+  one run plus the single non-ASCII character that lets pass 6b run at all, took 29.1 ms at
+  k=2,000 and 460.0 ms at k=8,000 - 15.8x for a 4x-longer run - in-process on the full
+  unclamped bash command. The attempt is
   now anchored at the END of the keyword group, the way issue #129 anchored pass 6a: the driver
   asks the rule's own separator and value groups, made sticky, at the end of the word run that
   contains the keyword's end, and one attempt per run decides it - a keyword can leave its run

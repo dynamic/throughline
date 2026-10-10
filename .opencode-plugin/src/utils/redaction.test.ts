@@ -2018,9 +2018,9 @@ describe('regex-engine parity with jq (issue #90)', () => {
    * by nothing.
    *
    * Measured on this machine BEFORE the attempt was anchored at the keyword-group end, with
-   * the rule handed to the driver whole: `('token').repeat(k) + '\u00e9'` took 33ms at k=2,000
-   * (10,001 characters) and 461ms at k=8,000 (40,001 characters) - a 14x scaling ratio for a
-   * 4x-longer run. After it: 3.4ms / 4.2ms (1.2x). Same thresholds as #118 - best-of-3, the
+   * the rule handed to the driver whole: `('token').repeat(k) + '\u00e9'` took 29.1ms at k=2,000
+   * (10,001 characters) and 460.0ms at k=8,000 (40,001 characters) - a 15.8x scaling ratio for a
+   * 4x-longer run. After the rewrite both sizes are in single-digit milliseconds. Same thresholds as #118 - best-of-3, the
    * ratio bound of 8 above linear and below quadratic, the denominator floored at 5ms so
    * sub-millisecond noise on the small timing cannot decide the verdict alone, and an
    * absolute ceiling on the big timing that a machine fast enough to flatter the ratio still
