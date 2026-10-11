@@ -1756,11 +1756,13 @@ codex_expect "codex check: injected marketplace version disagreeing with the man
 codex_patch "$WORK/codex/dupe" '.plugins += [.plugins[0]]'
 codex_expect "codex check: two marketplace entries for one plugin exit non-zero" 1 "want exactly 1" "$WORK/codex/dupe" "missing path"
 
-# A zero-byte file, not just malformed bytes: `jq empty` accepts it (an empty
-# value stream is a valid stream), so this fixture is what pins that the check's
-# JSON gate is strong enough to reject a manifest that describes nothing.
+# A ZERO-BYTE file specifically, not merely malformed bytes: `jq empty` accepts an
+# empty file (a value stream with no values in it is a valid stream), so this fixture is
+# what pins that the check's JSON gate is strong enough to reject a manifest that
+# describes nothing. The label says what is staged, because "unparseable" would also fit
+# a file full of garbage and this case is about the weaker gate.
 : > "$WORK/codex/brokenjson/.agents/plugins/marketplace.json"
-codex_expect "codex check: unparseable marketplace file exits non-zero" 1 "invalid JSON" "$WORK/codex/brokenjson"
+codex_expect "codex check: zero-byte marketplace file exits non-zero" 1 "invalid JSON" "$WORK/codex/brokenjson"
 codex_expect "codex check: a root dir that does not exist exits non-zero" 1 "no such root directory" "$WORK/codex/never-created"
 # Positive control for the multi-line exclusion in the path walk: prose that
 # merely STARTS with "./" and continues on a second line is not a path, and must
