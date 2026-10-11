@@ -1576,6 +1576,87 @@ else
   bad "jq defs: emitted text is $(cat "$WORK/defs-len.txt") chars, over the 20000 budget"
 fi
 
+# --- Codex plugin manifest (issue #112) ----------------------------------------
+# tests/codex-plugin.sh checks the Codex manifest's "./"-relative path
+# references and its parity with .agents/plugins/marketplace.json. It is wired
+# in here rather than as its own .local-ci.json entry plus CI step because this
+# file is already what the "hook tests" check and every CI leg run, and a
+# fourth file would push the change past the two-file budget the loop works
+# within - see the deviation note in dynamic/throughline#112's PR body.
+#
+# Every fixture is a copy of the three things the check reads, under $WORK, so
+# the negative cases never mutate the real tree - and so a fixture whose `cp`
+# half-failed is caught by the good-copy case below rather than making a
+# negative case pass for the wrong reason.
+codex_fixture() {
+  cf_dir="$WORK/codex/$1"
+  mkdir -p "$cf_dir"
+  cp -R "$ROOT/.codex-plugin" "$ROOT/.agents" "$ROOT/skills" "$cf_dir/" 2>/dev/null \
+    || bad "codex fixture setup failed: $cf_dir (cp)"
+}
+# codex_expect <label> <want: 0|1> <stderr needle> <root> - exit status AND a
+# stderr substring, both required: asserting only the exit code would let a
+# fixture fail for an unrelated reason (a bad path, a missing jq call) and still
+# read as a pass, which is the same trap cap_line() documents above.
+codex_expect() {
+  ce_want=$2; ce_needle=$3; ce_root=$4
+  ce_err=$(sh "$ROOT/tests/codex-plugin.sh" "$ce_root" 2>&1 >/dev/null)
+  ce_rc=$?
+  if [ "$ce_rc" = "$ce_want" ]; then ok "$1"; else bad "$1 (exit $ce_rc, want $ce_want)"; fi
+  if [ -z "$ce_needle" ]; then
+    [ "$ce_want" = "0" ] || bad "$1 (no stderr needle given for a failure case)"
+  else
+    has "$1 (stderr)" "$ce_err" "$ce_needle"
+  fi
+}
+codex_patch() {
+  # codex_patch <root> <marketplace jq filter> - rewrite the fixture's
+  # marketplace entry. Truncate-on-jq-error would leave an empty file the check
+  # then rejects as invalid JSON, which fails the assertion but for a reason that
+  # has nothing to do with the drift being staged, so the mv is chained to &&.
+  if jq "$2" "$1/.agents/plugins/marketplace.json" > "$1/.agents/plugins/marketplace.json.new"; then
+    mv "$1/.agents/plugins/marketplace.json.new" "$1/.agents/plugins/marketplace.json"
+  else
+    bad "codex fixture patch failed: $1 ($2)"
+  fi
+}
+
+codex_fixture good
+codex_fixture noskills
+codex_fixture renamed
+codex_fixture wrongver
+codex_fixture dupe
+codex_fixture brokenjson
+codex_expect "codex check: intact copy exits 0" 0 "" "$WORK/codex/good"
+codex_expect "codex check: no-arg run (the local-ci / CI invocation) exits 0" 0 "" "$ROOT"
+rm -rf "$WORK/codex/noskills/skills"
+codex_expect "codex check: missing skills/ dir exits non-zero" 1 "missing path" "$WORK/codex/noskills"
+has    "codex check: missing-path message names the literal path" "$(sh "$ROOT/tests/codex-plugin.sh" "$WORK/codex/noskills" 2>&1 >/dev/null)" './skills/'
+codex_patch "$WORK/codex/renamed" '.plugins[0].name = "other-plugin"'
+codex_expect "codex check: marketplace name drift from the manifest exits non-zero" 1 "no marketplace entry" "$WORK/codex/renamed"
+codex_patch "$WORK/codex/wrongver" '.plugins[0].version = "0.0.1"'
+codex_expect "codex check: injected marketplace version disagreeing with the manifest exits non-zero" 1 "version drift" "$WORK/codex/wrongver"
+codex_patch "$WORK/codex/dupe" '.plugins += [.plugins[0]]'
+codex_expect "codex check: two marketplace entries for one plugin exit non-zero" 1 "want exactly 1" "$WORK/codex/dupe"
+# A zero-byte file, not just malformed bytes: `jq empty` accepts it (an empty
+# value stream is a valid stream), so this fixture is what pins that the check's
+# JSON gate is strong enough to reject a manifest that describes nothing.
+: > "$WORK/codex/brokenjson/.agents/plugins/marketplace.json"
+codex_expect "codex check: unparseable marketplace file exits non-zero" 1 "invalid JSON" "$WORK/codex/brokenjson"
+codex_expect "codex check: a root dir that does not exist exits non-zero" 1 "no such root directory" "$WORK/codex/never-created"
+# Positive control for the multi-line exclusion in the path walk: prose that
+# merely STARTS with "./" and continues on a second line is not a path, and must
+# not fail the check. Without it, the walk could be "fixed" into a stricter form
+# that fails every real manifest the day someone writes a multi-line description.
+codex_fixture multiline
+if jq '.interface.longDescription = "./not-a-path is prose that continues\non a second line, not a path reference."' \
+     "$WORK/codex/multiline/.codex-plugin/plugin.json" > "$WORK/codex/multiline/.codex-plugin/plugin.json.new"; then
+  mv "$WORK/codex/multiline/.codex-plugin/plugin.json.new" "$WORK/codex/multiline/.codex-plugin/plugin.json"
+else
+  bad "codex fixture setup failed: multiline (jq longDescription)"
+fi
+codex_expect "codex check: multi-line prose beginning with './' is not read as a path" 0 "" "$WORK/codex/multiline"
+
 echo "----------------------"
 printf 'passed: %s   failed: %s\n' "$PASS" "$FAIL"
 [ "$SKIPPED_WINDOWS" -eq 0 ] || printf '  (%s permission-based assertion(s) skipped on Windows/NTFS - see is_windows() above)\n' "$SKIPPED_WINDOWS"
