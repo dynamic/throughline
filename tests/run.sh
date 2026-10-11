@@ -1591,6 +1591,12 @@ fi
 codex_fixture() {
   cf_dir="$WORK/codex/$1"
   mkdir -p "$cf_dir"
+  # Only the three paths a Codex manifest can reference today get copied. That is a known
+  # fragility, written here because it is the kind that bites later: if a manifest ever
+  # advertises a ./ reference outside these three (an icon or asset path, say), every
+  # fixture fails with "missing path" while the real-tree case still passes, which reads
+  # as a broken check rather than an incomplete copy. Deliberately not a whole-tree copy -
+  # this makes one fixture per case and the suite already runs dozens.
   cp -R "$ROOT/.codex-plugin" "$ROOT/.agents" "$ROOT/skills" "$cf_dir/" 2>/dev/null \
     || bad "codex fixture setup failed: $cf_dir (cp)"
 }
@@ -1667,7 +1673,7 @@ codex_expect "codex check: the real tree exits 0 (root passed explicitly)" 0 "" 
 # otherwise go unremarked. Run from $WORK so the current directory cannot be what makes it
 # pass. A clean run is silent - the script prints only on failure - so an empty stderr is
 # asserted as a property, and only after the status matched: an empty stderr from a run
-# that never started would prove nothing, the same trap codex_expect documents below.
+# that never started would prove nothing, the same trap codex_expect documents above.
 ce_noarg_err=$(cd "$WORK" && sh "$ROOT/tests/codex-plugin.sh" 2>&1 >/dev/null)
 ce_noarg_rc=$?
 if [ "$ce_noarg_rc" = "0" ]; then
@@ -1769,12 +1775,10 @@ codex_expect "codex check: a root dir that does not exist exits non-zero" 1 "no 
 # not fail the check. Without it, the walk could be "fixed" into a stricter form
 # that fails every real manifest the day someone writes a multi-line description.
 codex_fixture multiline
-if jq '.interface.longDescription = "./not-a-path is prose that continues\non a second line, not a path reference."' \
-     "$WORK/codex/multiline/.codex-plugin/plugin.json" > "$WORK/codex/multiline/.codex-plugin/plugin.json.new"; then
-  mv "$WORK/codex/multiline/.codex-plugin/plugin.json.new" "$WORK/codex/multiline/.codex-plugin/plugin.json"
-else
-  bad "codex fixture setup failed: multiline (jq longDescription)"
-fi
+# Through the helper like every other patch, so this fixture gets the same -e guard and
+# the same "patch failed" message instead of a bespoke copy of that logic.
+codex_patch_manifest "$WORK/codex/multiline" \
+  '.interface.longDescription = "./not-a-path is prose that continues\non a second line, not a path reference."'
 codex_expect "codex check: multi-line prose beginning with './' is not read as a path" 0 "" "$WORK/codex/multiline"
 
 echo "----------------------"
