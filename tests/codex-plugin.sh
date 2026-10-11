@@ -105,8 +105,13 @@ esac
 #    `./../x` resolves outside ROOT and PASSES whenever something happens to live at
 #    that spot, so a file outside the plugin would be reported as a satisfied manifest
 #    field. Neither file may claim that, so escaping is refused on shape - which also
-#    means it can never be mistaken for a clean pass. The patterns match `..` only as a
-#    whole segment, so a name that merely contains two dots (`./a..b/`) is untouched.
+#    means it can never be mistaken for a clean pass. The patterns are SEGMENT-anchored,
+#    not a bare two-dot match, because `foo..` is a legal directory name: `./a..b/`,
+#    `./foo../` and `./a/..b` all go through to the existence test, while `./..`,
+#    `./../`, `./a/..`, `./a/../` and `./a/../b` are all refused. The interior pattern
+#    needs its trailing `*` to reach `./a/../b` - a `case` pattern is fully anchored, so
+#    one ending at `/../` would only catch a path that ENDS with a `..` segment and would
+#    let `./a/../b` out through the middle.
 check_paths() {
   file="$1"
   paths=$(jq -r '.. | strings | select(startswith("./") and (contains("\n") | not))' "$file") \
@@ -115,7 +120,7 @@ check_paths() {
     path=$(printf '%s' "$path" | tr -d '\r')
     [ -n "$path" ] || continue
     case "$path" in
-      *../*|*/..|..)
+      ./..|./../*|*/..|*/../*)
         fail "path escapes the root: '$path' referenced by $file (.. segments are not allowed)"
         ;;
     esac

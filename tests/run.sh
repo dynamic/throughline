@@ -1658,7 +1658,25 @@ codex_fixture wrongver
 codex_fixture dupe
 codex_fixture brokenjson
 codex_expect "codex check: intact copy exits 0" 0 "" "$WORK/codex/good"
-codex_expect "codex check: no-arg run (the local-ci / CI invocation) exits 0" 0 "" "$ROOT"
+codex_expect "codex check: the real tree exits 0 (root passed explicitly)" 0 "" "$ROOT"
+# A truly no-arg run, and it has to be its own call: codex_expect always hands the script
+# a root, so the default branch - resolve the root from the script's own location - is
+# exercised by nothing above. Both callers (.local-ci.json's "hook tests" and ci.yml's
+# "Run hook tests") reach the script through run.sh WITH a root, so that branch only runs
+# when a person invokes it directly, which is precisely when a broken dirname/cd would
+# otherwise go unremarked. Run from $WORK so the current directory cannot be what makes it
+# pass. A clean run is silent - the script prints only on failure - so an empty stderr is
+# asserted as a property, and only after the status matched: an empty stderr from a run
+# that never started would prove nothing, the same trap codex_expect documents below.
+ce_noarg_err=$(cd "$WORK" && sh "$ROOT/tests/codex-plugin.sh" 2>&1 >/dev/null)
+ce_noarg_rc=$?
+if [ "$ce_noarg_rc" = "0" ]; then
+  ok "codex check: no-arg run resolves the root from the script's own location"
+  hasnt "codex check: no-arg run is silent on stderr" "$ce_noarg_err" "codex-plugin:"
+else
+  bad "codex check: no-arg run resolves the root from the script's own location (exit $ce_noarg_rc, want 0)"
+  printf '       got: %s\n' "$ce_noarg_err"
+fi
 rm -rf "$WORK/codex/noskills/skills"
 codex_expect "codex check: missing skills/ dir exits non-zero" 1 "missing path" "$WORK/codex/noskills"
 has    "codex check: missing-path message names the literal path" "$(sh "$ROOT/tests/codex-plugin.sh" "$WORK/codex/noskills" 2>&1 >/dev/null)" './skills/'
@@ -1695,10 +1713,6 @@ codex_fixture srcpathunprefixed
 codex_patch "$WORK/codex/srcpathunprefixed" '.plugins[0].source.path = "no-such/"'
 codex_expect "codex check: marketplace source.path without the ./ prefix exits non-zero" 1 "source.path must be a ./-relative path" "$WORK/codex/srcpathunprefixed" "missing path"
 
-# The "./" prefix is a promise that the reference stays inside the root, and an
-# existence test cannot keep it: "./../../" resolves to the fixture root's grandparent,
-# which always exists, so resolving-and-existing would call an escape a satisfied
-# manifest field. `..` is therefore refused on shape.
 # A malformed entry LIST is a different verdict from an unlisted plugin, and they are
 # easy to conflate: `.plugins[]?` swallows the index error when `.plugins` is a string
 # or null, so the count comes back a well-formed 0 and the run says "no marketplace
@@ -1707,9 +1721,20 @@ codex_fixture pluginsnotarray
 codex_patch "$WORK/codex/pluginsnotarray" '.plugins = "nope"'
 codex_expect "codex check: marketplace plugins list that is not an array exits non-zero" 1 ".plugins is not an array" "$WORK/codex/pluginsnotarray" "missing path"
 
+# The "./" prefix is a promise that the reference stays inside the root, and an existence
+# test cannot keep it: "./../../" resolves to the fixture root's grandparent, which always
+# exists, so resolving-and-existing would call an escape a satisfied manifest field. `..`
+# is therefore refused on shape - and refused as a SEGMENT, because `foo..` is a legal
+# directory name. The case after it pins the other direction: a path whose last segment
+# merely ENDS in two dots is still an ordinary missing path, so a future "fix" that
+# matches two dots anywhere cannot pass by refusing a legitimate name.
 codex_fixture escapesroot
 codex_patch_manifest "$WORK/codex/escapesroot" '.skills = "./../../"'
 codex_expect "codex check: a .. path segment is refused instead of resolved outside the root" 1 "escapes the root" "$WORK/codex/escapesroot" "missing path"
+
+codex_fixture dotdotname
+codex_patch_manifest "$WORK/codex/dotdotname" '.skills = "./foo../"'
+codex_expect "codex check: a segment ending in two dots is a name, not an escape" 1 "missing path" "$WORK/codex/dotdotname" "escapes the root"
 codex_patch "$WORK/codex/renamed" '.plugins[0].name = "other-plugin"'
 codex_expect "codex check: marketplace name drift from the manifest exits non-zero" 1 "no marketplace entry" "$WORK/codex/renamed" "missing path"
 # Both sides of that comparison have to be varied or the assertion is hollow: every
