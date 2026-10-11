@@ -1634,10 +1634,19 @@ codex_expect "codex check: missing skills/ dir exits non-zero" 1 "missing path" 
 has    "codex check: missing-path message names the literal path" "$(sh "$ROOT/tests/codex-plugin.sh" "$WORK/codex/noskills" 2>&1 >/dev/null)" './skills/'
 codex_patch "$WORK/codex/renamed" '.plugins[0].name = "other-plugin"'
 codex_expect "codex check: marketplace name drift from the manifest exits non-zero" 1 "no marketplace entry" "$WORK/codex/renamed"
+# Reason guards (dynamic/throughline#145 Windows leg): the three parity fixtures
+# above all live in copies whose paths DO resolve, so a failure that mentions a
+# missing path failed for a completely different reason and the needle above still
+# matched. Asserting the absence of the other reason is what keeps a parity
+# assertion from being satisfied by an unrelated breakage - the same
+# "passes for the wrong reason" trap cap_line() documents at the top of this file.
+hasnt "codex check: name drift fails on the parity reason, not a path reason" "$(sh "$ROOT/tests/codex-plugin.sh" "$WORK/codex/renamed" 2>&1 >/dev/null)" 'missing path' 
 codex_patch "$WORK/codex/wrongver" '.plugins[0].version = "0.0.1"'
 codex_expect "codex check: injected marketplace version disagreeing with the manifest exits non-zero" 1 "version drift" "$WORK/codex/wrongver"
+hasnt "codex check: version drift fails on the parity reason, not a path reason" "$(sh "$ROOT/tests/codex-plugin.sh" "$WORK/codex/wrongver" 2>&1 >/dev/null)" 'missing path' 
 codex_patch "$WORK/codex/dupe" '.plugins += [.plugins[0]]'
 codex_expect "codex check: two marketplace entries for one plugin exit non-zero" 1 "want exactly 1" "$WORK/codex/dupe"
+hasnt "codex check: a duplicated entry fails on the parity reason, not a path reason" "$(sh "$ROOT/tests/codex-plugin.sh" "$WORK/codex/dupe" 2>&1 >/dev/null)" 'missing path' 
 # A zero-byte file, not just malformed bytes: `jq empty` accepts it (an empty
 # value stream is a valid stream), so this fixture is what pins that the check's
 # JSON gate is strong enough to reject a manifest that describes nothing.

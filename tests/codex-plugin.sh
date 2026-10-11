@@ -68,11 +68,25 @@ check_file "$MARKETPLACE"
 #    second line would be chopped into fragments and fail as a path no field
 #    ever claimed. A real path reference is one line, so dropping the multi-line
 #    case removes that false-positive risk without losing coverage.
+#
+#    Carriage returns are stripped from whatever `read` hands back, and this is
+#    NOT defensive padding: the Windows CI leg failed this check on a path that
+#    plainly exists (`missing path './' ... codex/dupe/.agents/plugins/
+#    marketplace.json`, dynamic/throughline#145 run 1) while the same fixture
+#    passed on Linux and macOS. The surviving evidence - a one-line jq stream
+#    resolving fine and a two-line stream not, with the runner's log showing a
+#    bare line break where `$path` is interpolated - points to a trailing CR on
+#    every line but the last. Neither source can be named from that evidence
+#    alone (the Windows jq, or the here-doc below, since MSYS opens files in text
+#    mode), so the strip sits AFTER `read` rather than on the jq stream: that one
+#    position covers a CR introduced by either of them, and by a CRLF-authored
+#    manifest on purpose. `$path` is then used only in quoted positions.
 check_paths() {
   file="$1"
   paths=$(jq -r '.. | strings | select(startswith("./") and (contains("\n") | not))' "$file") \
     || fail "could not read strings from $file"
   while IFS= read -r path; do
+    path=$(printf '%s' "$path" | tr -d '\r')
     [ -n "$path" ] || continue
     if [ ! -e "$ROOT/$path" ]; then
       fail "missing path '$path' referenced by $file (resolved to $ROOT/$path)"
@@ -89,10 +103,17 @@ check_paths "$MARKETPLACE"
 #    matches means the plugin is unlisted, more than one means two entries
 #    compete for one install, and either way nothing here fails at runtime - so
 #    both are named explicitly rather than lumped into one "mismatch" message.
-NAME=$(jq -r '.name // empty' "$MANIFEST")
+# The three scalar reads below pipe through `tr`, which replaces jq's exit status
+# with tr's. Each one is guarded by a value check instead of a status check for
+# that reason: an empty NAME fails, a non-numeric COUNT fails, and an empty
+# version is the documented "absent" case. The `tr` is the same CRLF normalisation
+# as check_paths - a CR glued to NAME would otherwise be reported as a name that
+# does not exist in the marketplace, and a CR glued to COUNT would trip the
+# numeric guard.
+NAME=$(jq -r '.name // empty' "$MANIFEST" | tr -d '\r')
 [ -n "$NAME" ] || fail "manifest has no name: $MANIFEST"
 
-COUNT=$(jq -r --arg n "$NAME" '[.plugins[]? | select(.name == $n)] | length' "$MARKETPLACE")
+COUNT=$(jq -r --arg n "$NAME" '[.plugins[]? | select(.name == $n)] | length' "$MARKETPLACE" | tr -d '\r')
 # A non-numeric COUNT means the count itself failed to evaluate (jq produced no
 # output, exit 4) rather than that it found 0 or 2 entries - a distinct failure
 # mode, and one that must not fall into the "want exactly 1" branch and read as
@@ -113,8 +134,8 @@ fi
 # invent a second copy to drift - but a present one is a promise: it must equal
 # the manifest's, or the marketplace advertises an install of a version that is
 # not the one in the tree.
-MANIFEST_VERSION=$(jq -r '.version // empty' "$MANIFEST")
-ENTRY_VERSION=$(jq -r --arg n "$NAME" '(.plugins[]? | select(.name == $n) | .version) // empty' "$MARKETPLACE")
+MANIFEST_VERSION=$(jq -r '.version // empty' "$MANIFEST" | tr -d '\r')
+ENTRY_VERSION=$(jq -r --arg n "$NAME" '(.plugins[]? | select(.name == $n) | .version) // empty' "$MARKETPLACE" | tr -d '\r')
 if [ -n "$ENTRY_VERSION" ] && [ "$ENTRY_VERSION" != "$MANIFEST_VERSION" ]; then
   fail "version drift for plugin '$NAME': manifest '$MANIFEST_VERSION' vs marketplace '$ENTRY_VERSION'"
 fi
