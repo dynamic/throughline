@@ -73,9 +73,20 @@ check_file "$MARKETPLACE"
 #    Read through `tr` like every other scalar read: `// empty` maps a missing or null
 #    field to the empty string, which is what the "no ... path" branch keys on, and a
 #    CR glued to the value would defeat the "./" prefix match below.
+# A required path must also fit on ONE line, and this is the gap between the two checks
+# that would otherwise leave a hole: the walk skips multi-line strings on purpose, so a
+# value split over two lines is a reference nothing resolves. And a `case` pattern's `*`
+# matches a newline, so a prefix test alone happily accepts `./no-such-dir/` followed by
+# a second line - measured here as a clean pass, and `./../` behind a newline passed too.
+# Checking the newline FIRST matters: the same value matches `./*` as well, and `case`
+# takes the first match, so an ordered pair below the prefix arm would never fire.
+NL='
+'
+
 MANIFEST_SKILLS=$(jq -r '.skills // empty' "$MANIFEST" | tr -d '\r')
 [ -n "$MANIFEST_SKILLS" ] || fail "manifest has no .skills path in $MANIFEST"
 case "$MANIFEST_SKILLS" in
+  *"$NL"*) fail "manifest .skills must be a single-line path: got a multi-line value in $MANIFEST" ;;
   ./*) ;;
   *) fail "manifest .skills must be a ./-relative path: got '$MANIFEST_SKILLS' in $MANIFEST" ;;
 esac
@@ -188,6 +199,7 @@ fi
 SOURCE_PATH=$(jq -r --arg n "$NAME" '(.plugins[]? | select(.name == $n) | .source.path) // empty' "$MARKETPLACE" | tr -d '\r')
 [ -n "$SOURCE_PATH" ] || fail "marketplace entry '$NAME' has no source.path in $MARKETPLACE"
 case "$SOURCE_PATH" in
+  *"$NL"*) fail "marketplace source.path must be a single-line path: got a multi-line value in $MARKETPLACE" ;;
   ./*) ;;
   *) fail "marketplace source.path must be a ./-relative path: got '$SOURCE_PATH' in $MARKETPLACE" ;;
 esac
