@@ -1727,22 +1727,16 @@ codex_fixture pluginsnotarray
 codex_patch "$WORK/codex/pluginsnotarray" '.plugins = "nope"'
 codex_expect "codex check: marketplace plugins list that is not an array exits non-zero" 1 ".plugins is not an array" "$WORK/codex/pluginsnotarray" "missing path"
 
-# The "./" prefix is a promise that the reference stays inside the root, and an existence
-# test cannot keep it: "./../../" resolves to the fixture root's grandparent, which always
-# exists, so resolving-and-existing would call an escape a satisfied manifest field. `..`
-# is therefore refused on shape - and refused as a SEGMENT, because `foo..` is a legal
-# directory name. The case after it pins the other direction: a path whose last segment
-# merely ENDS in two dots is still an ordinary missing path, so a future "fix" that
-# matches two dots anywhere cannot pass by refusing a legitimate name.
 # A required path split over two lines is the one shape that falls between the two
 # checks: it starts with "./" so a prefix test accepts it, and the walk SKIPS multi-line
 # strings on purpose (that is the prose false-positive exclusion), so nothing would ever
 # resolve it. Both fields are pinned, plus the variant that matters most - a `..` escape
 # with a newline after it, which reads as clean if the newline is not refused first.
 #
-# The TRAILING-newline fixtures further down are the sharper half of this: command
-# substitution strips trailing newlines, so a newline check written on the shell's copy
-# of the value cannot see them - the check has to look at the JSON value in jq.
+# The trailing-newline and trailing-CR fixtures further down are the sharper half of
+# this: command substitution strips trailing newlines and the per-path read strips CRs,
+# so a check written on the shell's copy of the value cannot see either - the checks
+# have to look at the JSON values in jq.
 codex_fixture skillmultiline
 codex_patch_manifest "$WORK/codex/skillmultiline" \
   '.skills = "./no-such-dir/\nleftover that is not part of any path"'
@@ -1774,6 +1768,47 @@ codex_fixture srcpathtrailnl
 codex_patch "$WORK/codex/srcpathtrailnl" '.plugins[0].source.path = "./\n"'
 codex_expect "codex check: marketplace source.path with a trailing newline exits non-zero" 1 "must be a single-line path" "$WORK/codex/srcpathtrailnl" "missing path"
 
+# The CR twins of the two above, staged as the values the real files carry plus a `\r`
+# escape. The per-path `tr -d '\r'` (a TRANSPORT normalization, for jq's CRLF stdout on
+# Windows) made `./skills/\r` get checked as `./skills/` - a path the manifest never
+# named, and one that exists, so pre-fix this was a silent pass. A CR the JSON itself
+# escaped is refused on shape by the jq gates, which see only parsed values; a
+# transport CR lands on jq's stdout line endings AFTER parsing and cannot be confused
+# with one. No fixture staged a `\r` before these.
+codex_fixture skilltrailcr
+codex_patch_manifest "$WORK/codex/skilltrailcr" '.skills = "./skills/\r"'
+codex_expect "codex check: manifest skills path with a trailing CR exits non-zero" 1 "must be a single-line path" "$WORK/codex/skilltrailcr" "missing path"
+
+codex_fixture srcpathtrailcr
+codex_patch "$WORK/codex/srcpathtrailcr" '.plugins[0].source.path = "./\r"'
+codex_expect "codex check: marketplace source.path with a trailing CR exits non-zero" 1 "must be a single-line path" "$WORK/codex/srcpathtrailcr" "missing path"
+
+# The walk's CR gate for a NON-required field, staged so the stripped spelling EXISTS:
+# pre-gate, `./skills/\r` normalized to `./skills/`, resolved, and the run exited 0 -
+# the same silent pass, one field away from anything the required-field gates reach.
+# The reason guard also catches the half-fixed variant where some other broken target
+# turns the verdict into a "missing path".
+codex_fixture iconcr
+codex_patch_manifest "$WORK/codex/iconcr" '.interface.shortDescription = "./skills/\r"'
+codex_expect "codex check: a non-required ./ path with a trailing CR is refused on shape" 1 "contains a carriage return" "$WORK/codex/iconcr" "missing path"
+
+# The generality of the walk is the promise the required-field reads cannot pin: every
+# other negative case reaches the walk through .skills or source.path, so a check
+# narrowed to exactly those two keys would pass the whole suite while breaking the
+# claim that a NEW ./... field is covered the moment it is added. Add a field the real
+# manifest does not have, point it at a directory that is not there, and only a
+# generic walk can find it.
+codex_fixture iconfield
+codex_patch_manifest "$WORK/codex/iconfield" '.interface.icon = "./no-such.png"'
+codex_expect "codex check: a ./ reference in a non-required field is resolved by the walk" 1 "./no-such.png" "$WORK/codex/iconfield"
+
+# The "./" prefix is a promise that the reference stays inside the root, and an existence
+# test cannot keep it: "./../../" resolves to the fixture root's grandparent, which always
+# exists, so resolving-and-existing would call an escape a satisfied manifest field. `..`
+# is therefore refused on shape - and refused as a SEGMENT, because `foo..` is a legal
+# directory name. The case after it pins the other direction: a path whose last segment
+# merely ENDS in two dots is still an ordinary missing path, so a future "fix" that
+# matches two dots anywhere cannot pass by refusing a legitimate name.
 codex_fixture escapesroot
 codex_patch_manifest "$WORK/codex/escapesroot" '.skills = "./../../"'
 codex_expect "codex check: a .. path segment is refused instead of resolved outside the root" 1 "escapes the root" "$WORK/codex/escapesroot" "missing path"

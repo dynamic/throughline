@@ -84,14 +84,22 @@ check_file "$MARKETPLACE"
 # test passes - while the walk skips the multi-line value, and the run exits 0 on a
 # manifest whose only path reference resolves to nothing: the directory exists under
 # the unstripped spelling, so even an existence test on the raw value would not catch
-# it. jq sees the newline at every position - leading, interior, trailing - so the
-# detection happens there. It is written positively ("is a string containing a
-# newline") rather than as a pass gate, so non-strings and missing fields fall through
-# to the two branches below, which name those cases precisely; `and` short-circuits, so
-# `contains` is never evaluated on a non-string, and a jq error (exit 2/5) simply does
-# not fire this branch, exactly like every other guarded read here.
-if jq -e '.skills | type == "string" and contains("\n")' "$MANIFEST" >/dev/null 2>&1; then
-  fail "manifest .skills must be a single-line path: got a multi-line value in $MANIFEST"
+# it. A CR reaches the same hole by a different door - the reads and the walk strip CRs
+# (a transport normalization), so `.skills = "./skills/\r"` was checked as `./skills/`,
+# a path the manifest never named. jq sees CR and LF at every position - leading,
+# interior, trailing - so the detection happens there, on the parsed value, where a
+# transport CR (added to jq's stdout line endings AFTER parsing) cannot be confused
+# with a `\r` the JSON itself escaped. Written positively ("is a string containing CR
+# or LF") rather than as a pass gate, so non-strings and missing fields fall through to
+# the two branches below, which name those cases precisely; `and` short-circuits, so
+# `test` is never evaluated on a non-string, and a jq error (exit 2/5) simply does not
+# fire this branch, exactly like every other guarded read here. The class is [\r\n],
+# not every C0 control: LF splits the read loop's lines and CR is what its transport
+# strip deletes - the two ways the pipeline could check a path other than the one the
+# file names. Every other control char reaches the existence test verbatim and fails
+# there as itself, which is what a test for a path should do.
+if jq -e '.skills | type == "string" and test("[\r\n]")' "$MANIFEST" >/dev/null 2>&1; then
+  fail "manifest .skills must be a single-line path: got an embedded CR or LF in $MANIFEST"
 fi
 
 MANIFEST_SKILLS=$(jq -r '.skills // empty' "$MANIFEST" | tr -d '\r')
@@ -115,11 +123,15 @@ esac
 #    case removes that false-positive risk without losing coverage.
 #
 #    Carriage returns are stripped from whatever `read` hands back, and this is not
-#    defensive padding. A CR can reach `$path` from two places on the Windows leg: jq
-#    writing CRLF-terminated stdout, or the here-doc below (MSYS opens files in text
-#    mode). The strip sits AFTER `read` because that is the one position covering a CR
-#    introduced by either source, plus a deliberately CRLF-authored manifest. `$path`
-#    is then used only in quoted positions.
+#    defensive padding. A CR can reach `$path` from two TRANSPORT sources on the Windows
+#    leg: jq writing CRLF-terminated stdout, or the here-doc below (MSYS opens files in
+#    text mode). The strip sits AFTER `read` because that is the one position covering a
+#    CR introduced by either source. It normalizes transport ONLY: CRLF file line
+#    endings put CRs between JSON tokens, where jq's parser drops them as whitespace,
+#    and a CR inside a string VALUE takes a `\r` escape - which the gate below refuses
+#    on shape before this loop ever runs, so the strip can never quietly substitute a
+#    different path for the one the file names. `$path` is then used only in quoted
+#    positions.
 #
 #    A ".." SEGMENT IS REJECTED, NEVER RESOLVED. The "./" prefix is a promise that the
 #    reference stays inside the root, and an existence test cannot keep that promise:
@@ -135,6 +147,19 @@ esac
 #    let `./a/../b` out through the middle.
 check_paths() {
   file="$1"
+  # A CR inside a "./" string is refused on shape, never normalized away - and this
+  # closes the NON-REQUIRED fields that the two required-field gates above cannot
+  # reach. The loop below strips CRs to undo a transport artifact; an existence test
+  # after that strip would check a path the file does not name - `./x\r` verified as
+  # `./x`, which exists for the values a real tree carries: a silent pass built on a
+  # value the pipeline edited. Transport CRs never reach this jq call, because they
+  # are added to its stdout line endings by the platform AFTER parsing, so `any` only
+  # ever reports a CR that the JSON itself escaped as \r - no false positive on the
+  # Windows leg. Prose CRs outside "./" strings are none of this check's business;
+  # only references are pinned.
+  if jq -e 'any(.. | strings; startswith("./") and contains("\r"))' "$file" >/dev/null 2>&1; then
+    fail "path reference in $file contains a carriage return: a CR here would be stripped as a transport artifact, checking a path the file does not name"
+  fi
   paths=$(jq -r '.. | strings | select(startswith("./") and (contains("\n") | not))' "$file") \
     || fail "could not read strings from $file"
   while IFS= read -r path; do
@@ -152,8 +177,6 @@ check_paths() {
 $paths
 EOF
 }
-check_paths "$MANIFEST"
-check_paths "$MARKETPLACE"
 
 # 3. Marketplace parity. The manifest's `name` is the identity Codex installs
 #    under; the marketplace entry with that name is the one that offers it. Zero
@@ -204,15 +227,15 @@ fi
 # still reports clean. Required here, where exactly one matching entry is known to
 # exist, under the same shape rules as the manifest's skills path - including the
 # single-line gate in jq, for the same command-substitution reason given there:
-# checked on the shell's copy, `"./\n"` reads as the real, valid `./` while the value
-# it stands for resolves nowhere. If `source` is not an object at all the gate errors
-# (exit 5, does not fire) and the read comes back empty and lands in the "no
-# source.path" branch: the message is then imprecise about a genuinely broken entry,
-# which is tolerable - a pass would not be.
+# checked on the shell's copy, `"./\n"` reads as the real, valid `./` (and `"./\r"`
+# reads as it after the CR strip) while the value it stands for resolves nowhere. If
+# `source` is not an object at all the gate errors (exit 5, does not fire) and the read
+# comes back empty and lands in the "no source.path" branch: the message is then
+# imprecise about a genuinely broken entry, which is tolerable - a pass would not be.
 if jq -e --arg n "$NAME" \
-  '(.plugins[]? | select(.name == $n) | .source.path) | type == "string" and contains("\n")' \
+  '(.plugins[]? | select(.name == $n) | .source.path) | type == "string" and test("[\r\n]")' \
   "$MARKETPLACE" >/dev/null 2>&1; then
-  fail "marketplace source.path must be a single-line path: got a multi-line value in $MARKETPLACE"
+  fail "marketplace source.path must be a single-line path: got an embedded CR or LF in $MARKETPLACE"
 fi
 SOURCE_PATH=$(jq -r --arg n "$NAME" '(.plugins[]? | select(.name == $n) | .source.path) // empty' "$MARKETPLACE" | tr -d '\r')
 [ -n "$SOURCE_PATH" ] || fail "marketplace entry '$NAME' has no source.path in $MARKETPLACE"
@@ -233,5 +256,16 @@ ENTRY_VERSION=$(jq -r --arg n "$NAME" '(.plugins[]? | select(.name == $n) | .ver
 if [ -n "$ENTRY_VERSION" ] && [ "$ENTRY_VERSION" != "$MANIFEST_VERSION" ]; then
   fail "version drift for plugin '$NAME': manifest '$MANIFEST_VERSION' vs marketplace '$ENTRY_VERSION'"
 fi
+
+# The walk is CALLED here, not where it is defined, and the order is a decision rather
+# than an accident: the named-field reads above (the manifest's .skills, the matched
+# entry's source.path) each own a verdict about their own field, and when one file
+# carries more than one defect the most specific check should claim it first. With the
+# walk running first, a `source.path = "./\r"` was reported by the walk's generic
+# "path reference contains a carriage return" instead of the source.path gate's own
+# message - correct verdict, lazier reason. Named checks first, generic catch-all
+# last.
+check_paths "$MANIFEST"
+check_paths "$MARKETPLACE"
 
 exit 0
