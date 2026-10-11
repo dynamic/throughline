@@ -1594,15 +1594,37 @@ codex_fixture() {
   cp -R "$ROOT/.codex-plugin" "$ROOT/.agents" "$ROOT/skills" "$cf_dir/" 2>/dev/null \
     || bad "codex fixture setup failed: $cf_dir (cp)"
 }
-# codex_expect <label> <want: 0|1> <stderr needle> <root> - exit status AND a
-# stderr substring, both required: asserting only the exit code would let a
-# fixture fail for an unrelated reason (a bad path, a missing jq call) and still
-# read as a pass, which is the same trap cap_line() documents above.
+# codex_expect <label> <want: 0|1> <stderr needle> <root> [<stderr that must NOT
+# appear>] - exit status AND a stderr substring, both required: asserting only the
+# exit code would let a fixture fail for an unrelated reason (a bad path, a missing
+# jq call) and still read as a pass, which is the same trap cap_line() documents
+# above.
+#
+# The optional fifth argument is the REASON guard, and it is deliberately evaluated
+# only inside the branch where the exit status already matched. As a standalone
+# `hasnt` it passed in the pre-fix run below while the check script did not exist
+# at all - an empty stderr trivially lacks any substring - which is the
+# absence-assertion anti-pattern: a guard that can only fail once the positive
+# assertion has already passed can never pass vacuously. That is also what makes it
+# able to do its actual job, which dynamic/throughline#145's Windows leg needed: the
+# three parity fixtures live in copies whose paths all resolve, so a failure that
+# mentioned a missing path failed for a different reason entirely, and the needle
+# above matched it anyway.
 codex_expect() {
-  ce_want=$2; ce_needle=$3; ce_root=$4
+  ce_want=$2; ce_needle=$3; ce_root=$4; ce_absent=${5:-}
   ce_err=$(sh "$ROOT/tests/codex-plugin.sh" "$ce_root" 2>&1 >/dev/null)
   ce_rc=$?
-  if [ "$ce_rc" = "$ce_want" ]; then ok "$1"; else bad "$1 (exit $ce_rc, want $ce_want)"; fi
+  if [ "$ce_rc" = "$ce_want" ]; then
+    ok "$1"
+    if [ -n "$ce_absent" ]; then
+      case "$ce_err" in
+        *"$ce_absent"*) bad "$1 (wrong reason: stderr mentions '$ce_absent')"; printf '       got: %s\n' "$ce_err" ;;
+        *) ok "$1 (not for the '$ce_absent' reason)" ;;
+      esac
+    fi
+  else
+    bad "$1 (exit $ce_rc, want $ce_want)"
+  fi
   if [ -z "$ce_needle" ]; then
     [ "$ce_want" = "0" ] || bad "$1 (no stderr needle given for a failure case)"
   else
@@ -1633,20 +1655,14 @@ rm -rf "$WORK/codex/noskills/skills"
 codex_expect "codex check: missing skills/ dir exits non-zero" 1 "missing path" "$WORK/codex/noskills"
 has    "codex check: missing-path message names the literal path" "$(sh "$ROOT/tests/codex-plugin.sh" "$WORK/codex/noskills" 2>&1 >/dev/null)" './skills/'
 codex_patch "$WORK/codex/renamed" '.plugins[0].name = "other-plugin"'
-codex_expect "codex check: marketplace name drift from the manifest exits non-zero" 1 "no marketplace entry" "$WORK/codex/renamed"
-# Reason guards (dynamic/throughline#145 Windows leg): the three parity fixtures
-# above all live in copies whose paths DO resolve, so a failure that mentions a
-# missing path failed for a completely different reason and the needle above still
-# matched. Asserting the absence of the other reason is what keeps a parity
-# assertion from being satisfied by an unrelated breakage - the same
-# "passes for the wrong reason" trap cap_line() documents at the top of this file.
-hasnt "codex check: name drift fails on the parity reason, not a path reason" "$(sh "$ROOT/tests/codex-plugin.sh" "$WORK/codex/renamed" 2>&1 >/dev/null)" 'missing path' 
+codex_expect "codex check: marketplace name drift from the manifest exits non-zero" 1 "no marketplace entry" "$WORK/codex/renamed" "missing path"
+
 codex_patch "$WORK/codex/wrongver" '.plugins[0].version = "0.0.1"'
-codex_expect "codex check: injected marketplace version disagreeing with the manifest exits non-zero" 1 "version drift" "$WORK/codex/wrongver"
-hasnt "codex check: version drift fails on the parity reason, not a path reason" "$(sh "$ROOT/tests/codex-plugin.sh" "$WORK/codex/wrongver" 2>&1 >/dev/null)" 'missing path' 
+codex_expect "codex check: injected marketplace version disagreeing with the manifest exits non-zero" 1 "version drift" "$WORK/codex/wrongver" "missing path"
+
 codex_patch "$WORK/codex/dupe" '.plugins += [.plugins[0]]'
-codex_expect "codex check: two marketplace entries for one plugin exit non-zero" 1 "want exactly 1" "$WORK/codex/dupe"
-hasnt "codex check: a duplicated entry fails on the parity reason, not a path reason" "$(sh "$ROOT/tests/codex-plugin.sh" "$WORK/codex/dupe" 2>&1 >/dev/null)" 'missing path' 
+codex_expect "codex check: two marketplace entries for one plugin exit non-zero" 1 "want exactly 1" "$WORK/codex/dupe" "missing path"
+
 # A zero-byte file, not just malformed bytes: `jq empty` accepts it (an empty
 # value stream is a valid stream), so this fixture is what pins that the check's
 # JSON gate is strong enough to reject a manifest that describes nothing.
