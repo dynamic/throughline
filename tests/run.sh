@@ -1734,6 +1734,26 @@ codex_expect "codex check: marketplace plugins list that is not an array exits n
 # directory name. The case after it pins the other direction: a path whose last segment
 # merely ENDS in two dots is still an ordinary missing path, so a future "fix" that
 # matches two dots anywhere cannot pass by refusing a legitimate name.
+# A required path split over two lines is the one shape that falls between the two
+# checks: it starts with "./" so a prefix test accepts it, and the walk SKIPS multi-line
+# strings on purpose (that is the prose false-positive exclusion), so nothing would ever
+# resolve it. Both fields are pinned, plus the variant that matters most - a `..` escape
+# with a newline after it, which reads as clean if the newline is not refused first.
+codex_fixture skillmultiline
+codex_patch_manifest "$WORK/codex/skillmultiline" \
+  '.skills = "./no-such-dir/\nleftover that is not part of any path"'
+codex_expect "codex check: manifest skills path split over two lines exits non-zero" 1 "must be a single-line path" "$WORK/codex/skillmultiline" "missing path"
+
+codex_fixture skillmultilineescape
+codex_patch_manifest "$WORK/codex/skillmultilineescape" \
+  '.skills = "./../../\nleftover that is not part of any path"'
+codex_expect "codex check: a .. escape followed by a newline is refused" 1 "must be a single-line path" "$WORK/codex/skillmultilineescape" "escapes the root"
+
+codex_fixture srcpathmultiline
+codex_patch "$WORK/codex/srcpathmultiline" \
+  '.plugins[0].source.path = "./no-such/\nleftover that is not part of any path"'
+codex_expect "codex check: marketplace source.path split over two lines exits non-zero" 1 "must be a single-line path" "$WORK/codex/srcpathmultiline" "missing path"
+
 codex_fixture escapesroot
 codex_patch_manifest "$WORK/codex/escapesroot" '.skills = "./../../"'
 codex_expect "codex check: a .. path segment is refused instead of resolved outside the root" 1 "escapes the root" "$WORK/codex/escapesroot" "missing path"
