@@ -1963,14 +1963,14 @@ describe('regex-engine parity with jq (issue #90)', () => {
    * without shortening the scan, so the timing still proves the keyword rule ran and masked.
    * Each size is timed best-of-3, and the SMALL size is asserted - output and an absolute
    * bound - before the big one is timed at all. That ordering fails a build that costs time
-   * at EVERY size inside the three small timings, before any 4N timing is taken; a regression
-   * confined to the big size is not caught by it at all, and is caught by the ratio and
-   * absolute bounds below instead. The test also carries `{ timeout: 120_000 }` like the
-   * issue #119 guard above it, but that is weaker than it
-   * looks: `node --test` cannot interrupt a SYNCHRONOUS test body, so a regex that truly
-   * never returned would block the event loop past its own timeout and the timeout would
-   * never fire - it only bounds a body that yields to the loop. Against that case neither the
-   * timeout nor the small-size assert is protection. Best-of-3 because the ratio bound sits
+   * at EVERY size inside the three small timings, before that row's 4N timing is taken; a
+   * regression confined to the big size is not caught by it at all, and is caught by the ratio
+   * and absolute bounds below instead. The test also carries `{ timeout: 120_000 }` like the
+   * issue #119 guard above it, but that is weaker than it looks: `node --test` cannot interrupt
+   * a SYNCHRONOUS test body, so a regex that truly never returned would block the event loop
+   * past its own timeout and the timeout would never fire - it only bounds a body that yields
+   * to the loop. Against that case neither the timeout nor the small-size assert is protection.
+   * Best-of-3 because the ratio bound sits
    * only about 2x above the largest measured ratio, and one shared-runner pause during the
    * big timing could otherwise flip the verdict. The last two rows are a different regime
    * from the first three: those are one
