@@ -1582,7 +1582,9 @@ fi
 # in here rather than as its own .local-ci.json entry plus CI step because this
 # file is already what the "hook tests" check and every CI leg run, and a
 # fourth file would push the change past the two-file budget the loop works
-# within - see the deviation note in dynamic/throughline#112's PR body.
+# within: the issue's literal acceptance criteria need FOUR files (this one, the
+# check script, `.local-ci.json` and `.github/workflows/ci.yml`), and the loop's
+# budget is two - see the deviation note in dynamic/throughline#112's PR body.
 #
 # Every fixture is a copy of the three things the check reads, under $WORK, so
 # the negative cases never mutate the real tree - and so a fixture whose `cp`
@@ -1600,16 +1602,18 @@ codex_fixture() {
 # jq call) and still read as a pass, which is the same trap cap_line() documents
 # above.
 #
-# The optional fifth argument is the REASON guard, and it is deliberately evaluated
-# only inside the branch where the exit status already matched. As a standalone
-# `hasnt` it passed in the pre-fix run below while the check script did not exist
-# at all - an empty stderr trivially lacks any substring - which is the
-# absence-assertion anti-pattern: a guard that can only fail once the positive
-# assertion has already passed can never pass vacuously. That is also what makes it
-# able to do its actual job, which dynamic/throughline#145's Windows leg needed: the
-# three parity fixtures live in copies whose paths all resolve, so a failure that
-# mentioned a missing path failed for a different reason entirely, and the needle
-# above matched it anyway.
+# The optional fifth argument is the REASON guard: a substring that must NOT appear
+# in stderr. It is evaluated only after the exit status matched, because as a
+# standalone `hasnt` it would pass on empty stderr - including the case where the
+# check script is missing altogether and writes nothing - which is the
+# absence-assertion anti-pattern. Sequenced behind the status check it can only
+# report a pass for a run that actually failed the way the case expects.
+#
+# That is the job it exists for, per dynamic/throughline#145's Windows leg: the three
+# parity fixtures live in copies whose paths all resolve, so a run that failed on a
+# missing path instead of on the parity condition still matched the needle above and
+# read as `ok`. Requiring the parity message AND the absence of the path message is
+# what makes "the check failed for the reason this case is about" an assertion.
 codex_expect() {
   ce_want=$2; ce_needle=$3; ce_root=$4; ce_absent=${5:-}
   ce_err=$(sh "$ROOT/tests/codex-plugin.sh" "$ce_root" 2>&1 >/dev/null)
@@ -1654,6 +1658,13 @@ codex_expect "codex check: no-arg run (the local-ci / CI invocation) exits 0" 0 
 rm -rf "$WORK/codex/noskills/skills"
 codex_expect "codex check: missing skills/ dir exits non-zero" 1 "missing path" "$WORK/codex/noskills"
 has    "codex check: missing-path message names the literal path" "$(sh "$ROOT/tests/codex-plugin.sh" "$WORK/codex/noskills" 2>&1 >/dev/null)" './skills/'
+# The manifest side above is not the only path reference in play: the marketplace
+# entry's own `source.path` is what points Codex at the plugin directory, and
+# nothing else in this section negatively pins it. Rewriting it to a directory that
+# is not there must fail, and fail naming that path.
+codex_fixture badsource
+codex_patch "$WORK/codex/badsource" '.plugins[0].source.path = "./no-such-dir/"'
+codex_expect "codex check: a marketplace source.path that does not resolve exits non-zero" 1 "missing path" "$WORK/codex/badsource"
 codex_patch "$WORK/codex/renamed" '.plugins[0].name = "other-plugin"'
 codex_expect "codex check: marketplace name drift from the manifest exits non-zero" 1 "no marketplace entry" "$WORK/codex/renamed" "missing path"
 
