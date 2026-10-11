@@ -1683,6 +1683,20 @@ else
   bad "codex check: no-arg run resolves the root from the script's own location (exit $ce_noarg_rc, want 0)"
   printf '       got: %s\n' "$ce_noarg_err"
 fi
+# The documented usage is `sh tests/codex-plugin.sh` typed from the repo root - a
+# RELATIVE path - and the call above reaches the script by an absolute one, so the
+# documented call shape is exercised here. Same root resolution behind both, but a
+# regression that mishandles a relative $0 (resolving against CWD instead of the
+# script's directory, say) would pass the absolute call and fail this one.
+ce_rel_err=$(cd "$ROOT" && sh tests/codex-plugin.sh 2>&1 >/dev/null)
+ce_rel_rc=$?
+if [ "$ce_rel_rc" = "0" ]; then
+  ok "codex check: relative no-arg run (the documented call) resolves the root"
+  hasnt "codex check: relative no-arg run is silent on stderr" "$ce_rel_err" "codex-plugin:"
+else
+  bad "codex check: relative no-arg run (the documented call) resolves the root (exit $ce_rel_rc, want 0)"
+  printf '       got: %s\n' "$ce_rel_err"
+fi
 rm -rf "$WORK/codex/noskills/skills"
 codex_expect "codex check: missing skills/ dir exits non-zero" 1 "missing path" "$WORK/codex/noskills"
 has    "codex check: missing-path message names the literal path" "$(sh "$ROOT/tests/codex-plugin.sh" "$WORK/codex/noskills" 2>&1 >/dev/null)" './skills/'
@@ -1783,14 +1797,38 @@ codex_fixture srcpathtrailcr
 codex_patch "$WORK/codex/srcpathtrailcr" '.plugins[0].source.path = "./\r"'
 codex_expect "codex check: marketplace source.path with a trailing CR exits non-zero" 1 "must be a single-line path" "$WORK/codex/srcpathtrailcr" "missing path"
 
-# The walk's CR gate for a NON-required field, staged so the stripped spelling EXISTS:
-# pre-gate, `./skills/\r` normalized to `./skills/`, resolved, and the run exited 0 -
-# the same silent pass, one field away from anything the required-field gates reach.
-# The reason guard also catches the half-fixed variant where some other broken target
-# turns the verdict into a "missing path".
+# NUL is the third erasure channel, and it hides further than CR or LF: command
+# substitution silently DROPS NUL bytes from jq's output (bash deletes them, dash
+# truncates at them), so `./skills/` + NUL read back as the real `./skills/` - the
+# gates therefore test for any C0 control on the parsed value, not just [\r\n].
+codex_fixture skillnul
+codex_patch_manifest "$WORK/codex/skillnul" '.skills = "./skills/\u0000"'
+codex_expect "codex check: manifest skills path with an embedded NUL exits non-zero" 1 "must be a single-line path" "$WORK/codex/skillnul" "missing path"
+
+codex_fixture srcpathnul
+codex_patch "$WORK/codex/srcpathnul" '.plugins[0].source.path = "./\u0000"'
+codex_expect "codex check: marketplace source.path with an embedded NUL exits non-zero" 1 "must be a single-line path" "$WORK/codex/srcpathnul" "missing path"
+
+# The walk's control-character gate for a NON-required field, staged so the stripped
+# spelling EXISTS: pre-gate, `./skills/\r` normalized to `./skills/`, resolved, and the
+# run exited 0 - the same silent pass, one field away from anything the required-field
+# gates reach. The reason guard also catches the half-fixed variant where some other
+# broken target turns the verdict into a "missing path".
 codex_fixture iconcr
-codex_patch_manifest "$WORK/codex/iconcr" '.interface.shortDescription = "./skills/\r"'
+codex_patch_manifest "$WORK/codex/iconcr" '.interface.icon = "./skills/\r"'
 codex_expect "codex check: a non-required ./ path with a trailing CR is refused on shape" 1 "contains a carriage return" "$WORK/codex/iconcr" "missing path"
+
+# The NUL and trailing-LF twins of that, at the same non-required field. The LF one is
+# the case the walk's prose exclusion used to swallow silently: a value ending in a
+# newline is dropped by the select as "multi-line", and a dropped reference is a
+# reference nothing resolved - so prose is exempt only when text FOLLOWS the newline.
+codex_fixture iconnul
+codex_patch_manifest "$WORK/codex/iconnul" '.interface.icon = "./skills/\u0000"'
+codex_expect "codex check: a non-required ./ path with an embedded NUL is refused on shape" 1 "contains a control character" "$WORK/codex/iconnul" "missing path"
+
+codex_fixture iconlf
+codex_patch_manifest "$WORK/codex/iconlf" '.interface.icon = "./skills/\n"'
+codex_expect "codex check: a non-required ./ path with a trailing newline is refused on shape" 1 "contains a control character" "$WORK/codex/iconlf" "missing path"
 
 # The generality of the walk is the promise the required-field reads cannot pin: every
 # other negative case reaches the walk through .skills or source.path, so a check

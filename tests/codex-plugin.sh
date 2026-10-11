@@ -86,20 +86,24 @@ check_file "$MARKETPLACE"
 # the unstripped spelling, so even an existence test on the raw value would not catch
 # it. A CR reaches the same hole by a different door - the reads and the walk strip CRs
 # (a transport normalization), so `.skills = "./skills/\r"` was checked as `./skills/`,
-# a path the manifest never named. jq sees CR and LF at every position - leading,
-# interior, trailing - so the detection happens there, on the parsed value, where a
-# transport CR (added to jq's stdout line endings AFTER parsing) cannot be confused
-# with a `\r` the JSON itself escaped. Written positively ("is a string containing CR
-# or LF") rather than as a pass gate, so non-strings and missing fields fall through to
-# the two branches below, which name those cases precisely; `and` short-circuits, so
-# `test` is never evaluated on a non-string, and a jq error (exit 2/5) simply does not
-# fire this branch, exactly like every other guarded read here. The class is [\r\n],
-# not every C0 control: LF splits the read loop's lines and CR is what its transport
-# strip deletes - the two ways the pipeline could check a path other than the one the
-# file names. Every other control char reaches the existence test verbatim and fails
-# there as itself, which is what a test for a path should do.
-if jq -e '.skills | type == "string" and test("[\r\n]")' "$MANIFEST" >/dev/null 2>&1; then
-  fail "manifest .skills must be a single-line path: got an embedded CR or LF in $MANIFEST"
+# a path the manifest never named. And a third door is NUL: command substitution
+# silently DROPS NUL bytes from jq's output (bash deletes them, dash truncates at
+# them - both measured), so `.skills = "./skills/\u0000"` reads back as `./skills/`
+# too. jq sees every control character at every position - leading, interior, trailing
+# - so the detection happens there, on the parsed value, where a transport CR (added
+# to jq's stdout line endings AFTER parsing) cannot be confused with a `\r` the JSON
+# itself escaped. Written positively ("is a string containing a C0 control") rather
+# than as a pass gate, so non-strings and missing fields fall through to the two
+# branches below, which name those cases precisely; `and` short-circuits, so `explode`
+# is never evaluated on a non-string, and a jq error (exit 2/5) simply does not fire
+# this branch, exactly like every other guarded read here. The class is every C0
+# control, not just [\r\n]: NUL demonstrated that "a control char reaches the
+# existence test verbatim" is false for the pipeline's own edits, and once the class
+# is earned, a bare tab in a required path is refused on shape too rather than
+# surviving as a mystery 404. The read is regex-free (explode + codepoint compare) so
+# it cannot silently no-op on a jq build without Oniguruma.
+if jq -e '.skills | type == "string" and ((explode | map(select(. < 32)) | length) > 0)' "$MANIFEST" >/dev/null 2>&1; then
+  fail "manifest .skills must be a single-line path: got an embedded control character in $MANIFEST"
 fi
 
 MANIFEST_SKILLS=$(jq -r '.skills // empty' "$MANIFEST" | tr -d '\r')
@@ -119,8 +123,11 @@ esac
 #    Multi-line strings are excluded from the walk: the loop below reads one
 #    line at a time, so prose that merely BEGINS with "./" and continues onto a
 #    second line would be chopped into fragments and fail as a path no field
-#    ever claimed. A real path reference is one line, so dropping the multi-line
-#    case removes that false-positive risk without losing coverage.
+#    ever claimed. The exclusion covers PROSE only - a newline with text after
+#    it. A "./" string whose newline has nothing after it (a path with a
+#    trailing LF) is not prose and is NOT quietly dropped: the control-character
+#    gate below refuses it on shape, because "dropped by a select()" is exactly
+#    the silent pass this whole series of fixes exists to close.
 #
 #    Carriage returns are stripped from whatever `read` hands back, and this is not
 #    defensive padding. A CR can reach `$path` from two TRANSPORT sources on the Windows
@@ -159,6 +166,23 @@ check_paths() {
   # only references are pinned.
   if jq -e 'any(.. | strings; startswith("./") and contains("\r"))' "$file" >/dev/null 2>&1; then
     fail "path reference in $file contains a carriage return: a CR here would be stripped as a transport artifact, checking a path the file does not name"
+  fi
+  # And a second gate for the rest of the C0 controls, closing what the CR gate and
+  # the two required-field gates cannot reach: NON-required "./" strings. NUL is the
+  # reason the class is not just newlines - command substitution drops NUL bytes from
+  # jq's output silently (bash deletes, dash truncates), so `./x` + NUL would reach
+  # the loop as `./x`, which a real tree carries. A trailing newline is the same
+  # species: the select() below drops it as prose and nothing resolves it. PROSE is
+  # exempt, defined as a newline with text after it (the longDescription fixture's
+  # shape) - a string whose newline(s) have nothing after them is a path plus
+  # dangling control bytes, not prose. Regex-free like the gates above, so no
+  # dependence on jq's regex build. Consequence stated plainly: a TAB inside a
+  # non-required "./" path is now refused on shape too, where it previously reached
+  # the existence test verbatim - a real filename containing a tab would have to be
+  # referenced some other way, which is the right trade for a check whose whole
+  # subject is references resolving to the wrong thing.
+  if jq -e 'any(.. | strings; startswith("./") and ((explode | map(select(. < 32)) | length) > 0) and ((contains("\n") and ((. / "\n" | last) != "")) | not))' "$file" >/dev/null 2>&1; then
+    fail "path reference in $file contains a control character: NUL and trailing-newline spellings of a path are erased or dropped by the line-based read, so they are refused on shape (prose with text after a newline is the exempt case)"
   fi
   paths=$(jq -r '.. | strings | select(startswith("./") and (contains("\n") | not))' "$file") \
     || fail "could not read strings from $file"
@@ -233,11 +257,11 @@ fi
 # comes back empty and lands in the "no source.path" branch: the message is then
 # imprecise about a genuinely broken entry, which is tolerable - a pass would not be.
 if jq -e --arg n "$NAME" \
-  '(.plugins[]? | select(.name == $n) | .source.path) | type == "string" and test("[\r\n]")' \
+  '(.plugins[]? | select(.name == $n) | .source.path) | type == "string" and ((explode | map(select(. < 32)) | length) > 0)' \
   "$MARKETPLACE" >/dev/null 2>&1; then
-  fail "marketplace source.path must be a single-line path: got an embedded CR or LF in $MARKETPLACE"
+  fail "marketplace source.path must be a single-line path: got an embedded control character in $MARKETPLACE"
 fi
-SOURCE_PATH=$(jq -r --arg n "$NAME" '(.plugins[]? | select(.name == $n) | .source.path) // empty' "$MARKETPLACE" | tr -d '\r')
+SOURCE_PATH=$(jq -r --arg n "$NAME" '(.plugins[]? | select(.name == $n) | .source.path) // empty' "$MARKETPLACE" 2>/dev/null | tr -d '\r')
 [ -n "$SOURCE_PATH" ] || fail "marketplace entry '$NAME' has no source.path in $MARKETPLACE"
 case "$SOURCE_PATH" in
   ./*) ;;
