@@ -216,6 +216,14 @@ EOF
 # numeric guard.
 NAME=$(jq -r '.name // empty' "$MANIFEST" | tr -d '\r')
 [ -n "$NAME" ] || fail "manifest has no name: $MANIFEST"
+# Same C0 class as the path gates, on the field that IS the install identity:
+# `$(...)` and `tr` erase trailing newlines, CRs and NULs, so a manifest named
+# "throughline\n" reads back as `throughline`, matches the marketplace entry, and the
+# parity verdict compares a value neither file states - while Codex installs under
+# the unstripped name. Detected in jq, on the parsed value, before any comparison.
+if jq -e '.name | type == "string" and ((explode | map(select(. < 32)) | length) > 0)' "$MANIFEST" >/dev/null 2>&1; then
+  fail "manifest .name must be free of control characters: got an embedded control character in $MANIFEST"
+fi
 
 # The entry list has to BE AN ARRAY before the count below can mean anything, and
 # that is not hypothetical: measured here with `.plugins` set to a string (or to
@@ -276,7 +284,21 @@ esac
 # the manifest's, or the marketplace advertises an install of a version that is
 # not the one in the tree.
 MANIFEST_VERSION=$(jq -r '.version // empty' "$MANIFEST" | tr -d '\r')
-ENTRY_VERSION=$(jq -r --arg n "$NAME" '(.plugins[]? | select(.name == $n) | .version) // empty' "$MARKETPLACE" | tr -d '\r')
+ENTRY_VERSION=$(jq -r --arg n "$NAME" '(.plugins[]? | select(.name == $n) | .version) // empty' "$MARKETPLACE" 2>/dev/null | tr -d '\r')
+# "A present version is a promise" only holds if the compared strings are the ones the
+# files state, and the drift comparison below reads through the same erasing pipeline
+# as every other read: an entry `.version = "0.16.0\n"` compares equal to a clean
+# manifest version and reports no drift. Gated in jq on both sides, tolerating
+# absence (null short-circuits past the type test - a missing entry version stays the
+# documented pass).
+if jq -e '.version | type == "string" and ((explode | map(select(. < 32)) | length) > 0)' "$MANIFEST" >/dev/null 2>&1; then
+  fail "manifest .version must be free of control characters: got an embedded control character in $MANIFEST"
+fi
+if jq -e --arg n "$NAME" \
+  '(.plugins[]? | select(.name == $n) | .version) | type == "string" and ((explode | map(select(. < 32)) | length) > 0)' \
+  "$MARKETPLACE" >/dev/null 2>&1; then
+  fail "marketplace entry .version must be free of control characters: got an embedded control character in $MARKETPLACE"
+fi
 if [ -n "$ENTRY_VERSION" ] && [ "$ENTRY_VERSION" != "$MANIFEST_VERSION" ]; then
   fail "version drift for plugin '$NAME': manifest '$MANIFEST_VERSION' vs marketplace '$ENTRY_VERSION'"
 fi

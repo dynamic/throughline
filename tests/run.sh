@@ -1872,6 +1872,24 @@ codex_expect "codex check: manifest with no name at all exits non-zero" 1 "manif
 codex_patch "$WORK/codex/wrongver" '.plugins[0].version = "0.0.1"'
 codex_expect "codex check: injected marketplace version disagreeing with the manifest exits non-zero" 1 "version drift" "$WORK/codex/wrongver" "missing path"
 
+# The identity and version fields feed the parity comparison through the same erasure
+# pipeline as the paths did: pre-gate, a manifest `.name = "throughline\n"` and an
+# entry `.version = "0.16.0\n"` read back stripped and compared clean - the parity
+# checks reporting agreement about values neither file states. (The \r and \u0000
+# spellings ride the same tr/substitution erasure; the newline spelling is staged as
+# the representative, the gate covers the whole C0 class.)
+codex_fixture namelf
+codex_patch_manifest "$WORK/codex/namelf" '.name = "throughline\n"'
+codex_expect "codex check: manifest name with a trailing newline exits non-zero" 1 "must be free of control characters" "$WORK/codex/namelf" "missing path"
+
+codex_fixture manifestverlf
+codex_patch_manifest "$WORK/codex/manifestverlf" '.version = "0.16.0\n"'
+codex_expect "codex check: manifest version with a trailing newline exits non-zero" 1 "must be free of control characters" "$WORK/codex/manifestverlf" "missing path"
+
+codex_fixture entryverlf
+codex_patch "$WORK/codex/entryverlf" '.plugins[0].version = "0.16.0\n"'
+codex_expect "codex check: marketplace entry version with a trailing newline exits non-zero" 1 "must be free of control characters" "$WORK/codex/entryverlf" "missing path"
+
 codex_patch "$WORK/codex/dupe" '.plugins += [.plugins[0]]'
 codex_expect "codex check: two marketplace entries for one plugin exit non-zero" 1 "want exactly 1" "$WORK/codex/dupe" "missing path"
 
