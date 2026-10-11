@@ -144,6 +144,16 @@ check_paths "$MARKETPLACE"
 NAME=$(jq -r '.name // empty' "$MANIFEST" | tr -d '\r')
 [ -n "$NAME" ] || fail "manifest has no name: $MANIFEST"
 
+# The entry list has to BE AN ARRAY before the count below can mean anything, and
+# that is not hypothetical: measured here with `.plugins` set to a string (or to
+# null), `.plugins[]?` swallows the index error, the count comes back a well-formed
+# 0, and the check reports "no marketplace entry named 'throughline'" - it calls a
+# malformed file "unlisted". It never reads as a clean pass, so this is only about the
+# verdict being TRUE, which is the whole point of naming each failure mode separately.
+if ! jq -e '.plugins | type == "array"' "$MARKETPLACE" >/dev/null 2>&1; then
+  fail "marketplace .plugins is not an array in $MARKETPLACE"
+fi
+
 COUNT=$(jq -r --arg n "$NAME" '[.plugins[]? | select(.name == $n)] | length' "$MARKETPLACE" | tr -d '\r')
 # A non-numeric COUNT means the count query itself failed, not that it found 0 or 2
 # entries. This call has no `-e`, so jq writes NOTHING and exits non-zero on error -
