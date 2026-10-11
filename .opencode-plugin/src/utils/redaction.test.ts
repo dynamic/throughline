@@ -1972,10 +1972,10 @@ describe('regex-engine parity with jq (issue #90)', () => {
    * timeout only on a body that yields to the event loop, so the timeout never fires here at
    * all: not on a regex that truly never returns, and not on a run that finishes long after
    * 120 s. What catches a slow 4N run is the ratio and absolute bounds, after all three of its
-   * best-of-3 timings complete; the exact-output asserts in `timedBest` can fail before them,
-   * but only on a build that masks differently, not on one that is merely slow. Best-of-3
-   * because the ratio bound sits
-   * only about 2x above the largest measured ratio, and one shared-runner pause during the
+   * best-of-3 timings complete; the run-to-run asserts inside `timedBest` and the exact-output
+   * assert after it can fail before them, but only on a build that masks differently, not on one
+   * that is merely slow. Best-of-3 because the ratio bound sits only about 2x above the
+   * largest measured ratio, and one shared-runner pause during the
    * big timing could otherwise flip the verdict. The last two rows are a different regime
    * from the first three: those are one
    * unbroken run, where the cost is the scan INSIDE a run, while `'a '.repeat(n)` is tens of
