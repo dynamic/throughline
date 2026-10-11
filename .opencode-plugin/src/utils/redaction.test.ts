@@ -1888,9 +1888,11 @@ describe('regex-engine parity with jq (issue #90)', () => {
    * `{ timeout: 120_000 }` like the issue #129 guard below it (the #118 guard further below
    * carries none), but that is weaker than it looks: `node --test` cannot interrupt a
    * SYNCHRONOUS test body, so a regex that truly never returned would block the event loop
-   * past its own timeout and the timeout would never fire. Against that case neither the
-   * timeout nor the small-size assert is protection; what the assert does is keep a build that
-   * is merely slow at every size from reaching the big timings at all.
+   * past its own timeout and the timeout would never fire - and this body is synchronous
+   * throughout, so neither does it fire on a run that finishes long after its own 120 s.
+   * Against a hang neither the timeout nor the small-size assert is protection; what the assert
+   * does is keep a build that is merely slow at every size from reaching the big timings at
+   * all.
    */
   it('stays linear on a long non-ASCII run that ends with no separator, which the leading word affix used to break (issue #119)', { timeout: 120_000 }, () => {
     const timed = (input: string) => {
@@ -1966,11 +1968,11 @@ describe('regex-engine parity with jq (issue #90)', () => {
    * at EVERY size inside the three small timings, before that row's 4N timing is taken; a
    * regression confined to the big size is not caught by it at all, and is caught by the ratio
    * and absolute bounds below instead. The test also carries `{ timeout: 120_000 }` like the
-   * issue #119 guard above it, but that is weaker than it looks: `node --test` cannot interrupt
-   * a SYNCHRONOUS test body, so a regex that truly never returned would block the event loop
-   * past its own timeout and the timeout would never fire - it only bounds a body that yields
-   * to the loop. Against that case neither the timeout nor the small-size assert is protection.
-   * Best-of-3 because the ratio bound sits
+   * issue #119 guard above it, but this body is fully synchronous and `node --test` enforces a
+   * timeout only on a body that yields to the event loop, so the timeout never fires here at
+   * all: not on a regex that truly never returns, and not on a run that finishes long after
+   * 120 s. A slow 4N run is caught only by the ratio and absolute bounds, after all three of
+   * its best-of-3 timings complete. Best-of-3 because the ratio bound sits
    * only about 2x above the largest measured ratio, and one shared-runner pause during the
    * big timing could otherwise flip the verdict. The last two rows are a different regime
    * from the first three: those are one
