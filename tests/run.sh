@@ -1638,7 +1638,11 @@ codex_patch_json() {
   # Truncate-on-jq-error would leave an empty file the check then rejects as
   # invalid JSON, which fails the assertion but for a reason that has nothing to do
   # with the drift being staged, so the mv is chained to &&.
-  if jq "$2" "$1" > "$1.new"; then
+  # `-e` as well as the &&: without it a filter that SUCCEEDS while emitting nothing
+  # (e.g. `empty`) exits 0 and the mv would install an empty file. Every filter here is
+  # an assignment, which always emits exactly one object, so -e costs nothing and turns
+  # "emitted nothing" into a failed patch instead of a silently emptied fixture.
+  if jq -e "$2" "$1" > "$1.new"; then
     mv "$1.new" "$1"
   else
     bad "codex fixture patch failed: $1 ($2)"
@@ -1695,6 +1699,14 @@ codex_expect "codex check: marketplace source.path without the ./ prefix exits n
 # existence test cannot keep it: "./../../" resolves to the fixture root's grandparent,
 # which always exists, so resolving-and-existing would call an escape a satisfied
 # manifest field. `..` is therefore refused on shape.
+# A malformed entry LIST is a different verdict from an unlisted plugin, and they are
+# easy to conflate: `.plugins[]?` swallows the index error when `.plugins` is a string
+# or null, so the count comes back a well-formed 0 and the run says "no marketplace
+# entry" - true only by luck. This pins the distinct message.
+codex_fixture pluginsnotarray
+codex_patch "$WORK/codex/pluginsnotarray" '.plugins = "nope"'
+codex_expect "codex check: marketplace plugins list that is not an array exits non-zero" 1 ".plugins is not an array" "$WORK/codex/pluginsnotarray" "missing path"
+
 codex_fixture escapesroot
 codex_patch_manifest "$WORK/codex/escapesroot" '.skills = "./../../"'
 codex_expect "codex check: a .. path segment is refused instead of resolved outside the root" 1 "escapes the root" "$WORK/codex/escapesroot" "missing path"
