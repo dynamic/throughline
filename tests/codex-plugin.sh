@@ -73,20 +73,30 @@ check_file "$MARKETPLACE"
 #    Read through `tr` like every other scalar read: `// empty` maps a missing or null
 #    field to the empty string, which is what the "no ... path" branch keys on, and a
 #    CR glued to the value would defeat the "./" prefix match below.
-# A required path must also fit on ONE line, and this is the gap between the two checks
-# that would otherwise leave a hole: the walk skips multi-line strings on purpose, so a
-# value split over two lines is a reference nothing resolves. And a `case` pattern's `*`
-# matches a newline, so a prefix test alone happily accepts `./no-such-dir/` followed by
-# a second line - measured here as a clean pass, and `./../` behind a newline passed too.
-# Checking the newline FIRST matters: the same value matches `./*` as well, and `case`
-# takes the first match, so an ordered pair below the prefix arm would never fire.
-NL='
-'
+# A required path must also fit on ONE line, and the check for that runs INSIDE jq, on
+# the JSON value as the file states it - not on a shell copy. Two checks leave a gap a
+# single-line value cannot fall through: the walk skips multi-line strings on purpose
+# (the prose false-positive exclusion), so a value split over lines is a reference
+# nothing resolves; and a `case` pattern's `*` matches a newline, so a prefix test alone
+# happily accepts `./no-such-dir/` followed by a second line. A shell-side newline test
+# does not close the gap either: command substitution STRIPS trailing newlines, so for
+# `.skills = "./skills/\n"` the read below hands back a pristine `./skills/` - prefix
+# test passes - while the walk skips the multi-line value, and the run exits 0 on a
+# manifest whose only path reference resolves to nothing: the directory exists under
+# the unstripped spelling, so even an existence test on the raw value would not catch
+# it. jq sees the newline at every position - leading, interior, trailing - so the
+# detection happens there. It is written positively ("is a string containing a
+# newline") rather than as a pass gate, so non-strings and missing fields fall through
+# to the two branches below, which name those cases precisely; `and` short-circuits, so
+# `contains` is never evaluated on a non-string, and a jq error (exit 2/5) simply does
+# not fire this branch, exactly like every other guarded read here.
+if jq -e '.skills | type == "string" and contains("\n")' "$MANIFEST" >/dev/null 2>&1; then
+  fail "manifest .skills must be a single-line path: got a multi-line value in $MANIFEST"
+fi
 
 MANIFEST_SKILLS=$(jq -r '.skills // empty' "$MANIFEST" | tr -d '\r')
 [ -n "$MANIFEST_SKILLS" ] || fail "manifest has no .skills path in $MANIFEST"
 case "$MANIFEST_SKILLS" in
-  *"$NL"*) fail "manifest .skills must be a single-line path: got a multi-line value in $MANIFEST" ;;
   ./*) ;;
   *) fail "manifest .skills must be a ./-relative path: got '$MANIFEST_SKILLS' in $MANIFEST" ;;
 esac
@@ -192,14 +202,21 @@ fi
 # and the walk in section 2 cannot pin it: delete the field and the walk simply has one
 # fewer string to check, so the entry silently stops pointing anywhere and the check
 # still reports clean. Required here, where exactly one matching entry is known to
-# exist, under the same shape rule as the manifest's skills path. If `source` is not an
-# object at all the read comes back empty and lands in the "no source.path" branch:
-# the message is then imprecise about a genuinely broken entry, which is tolerable - a
-# pass would not be.
+# exist, under the same shape rules as the manifest's skills path - including the
+# single-line gate in jq, for the same command-substitution reason given there:
+# checked on the shell's copy, `"./\n"` reads as the real, valid `./` while the value
+# it stands for resolves nowhere. If `source` is not an object at all the gate errors
+# (exit 5, does not fire) and the read comes back empty and lands in the "no
+# source.path" branch: the message is then imprecise about a genuinely broken entry,
+# which is tolerable - a pass would not be.
+if jq -e --arg n "$NAME" \
+  '(.plugins[]? | select(.name == $n) | .source.path) | type == "string" and contains("\n")' \
+  "$MARKETPLACE" >/dev/null 2>&1; then
+  fail "marketplace source.path must be a single-line path: got a multi-line value in $MARKETPLACE"
+fi
 SOURCE_PATH=$(jq -r --arg n "$NAME" '(.plugins[]? | select(.name == $n) | .source.path) // empty' "$MARKETPLACE" | tr -d '\r')
 [ -n "$SOURCE_PATH" ] || fail "marketplace entry '$NAME' has no source.path in $MARKETPLACE"
 case "$SOURCE_PATH" in
-  *"$NL"*) fail "marketplace source.path must be a single-line path: got a multi-line value in $MARKETPLACE" ;;
   ./*) ;;
   *) fail "marketplace source.path must be a ./-relative path: got '$SOURCE_PATH' in $MARKETPLACE" ;;
 esac

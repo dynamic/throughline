@@ -1739,6 +1739,10 @@ codex_expect "codex check: marketplace plugins list that is not an array exits n
 # strings on purpose (that is the prose false-positive exclusion), so nothing would ever
 # resolve it. Both fields are pinned, plus the variant that matters most - a `..` escape
 # with a newline after it, which reads as clean if the newline is not refused first.
+#
+# The TRAILING-newline fixtures further down are the sharper half of this: command
+# substitution strips trailing newlines, so a newline check written on the shell's copy
+# of the value cannot see them - the check has to look at the JSON value in jq.
 codex_fixture skillmultiline
 codex_patch_manifest "$WORK/codex/skillmultiline" \
   '.skills = "./no-such-dir/\nleftover that is not part of any path"'
@@ -1753,6 +1757,22 @@ codex_fixture srcpathmultiline
 codex_patch "$WORK/codex/srcpathmultiline" \
   '.plugins[0].source.path = "./no-such/\nleftover that is not part of any path"'
 codex_expect "codex check: marketplace source.path split over two lines exits non-zero" 1 "must be a single-line path" "$WORK/codex/srcpathmultiline" "missing path"
+
+# The trailing position, one fixture per field, and each stages the value the real file
+# actually carries plus a newline: `./skills/\n` and `./\n`. This is the case a
+# shell-side newline check is blind to - `$(...)` strips trailing newlines, so the
+# scalar read hands back the genuine, valid `./skills/` and `./` while the JSON value
+# refers to paths nothing resolves - and the directories under the stripped spellings
+# exist, so even an existence test on the raw value would call them satisfied. A
+# regression that moves the newline check back onto the shell's copy reddens these two
+# while every other case in this section stays green.
+codex_fixture skilltrailnl
+codex_patch_manifest "$WORK/codex/skilltrailnl" '.skills = "./skills/\n"'
+codex_expect "codex check: manifest skills path with a trailing newline exits non-zero" 1 "must be a single-line path" "$WORK/codex/skilltrailnl" "missing path"
+
+codex_fixture srcpathtrailnl
+codex_patch "$WORK/codex/srcpathtrailnl" '.plugins[0].source.path = "./\n"'
+codex_expect "codex check: marketplace source.path with a trailing newline exits non-zero" 1 "must be a single-line path" "$WORK/codex/srcpathtrailnl" "missing path"
 
 codex_fixture escapesroot
 codex_patch_manifest "$WORK/codex/escapesroot" '.skills = "./../../"'
