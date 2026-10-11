@@ -1888,9 +1888,11 @@ describe('regex-engine parity with jq (issue #90)', () => {
    * `{ timeout: 120_000 }` like the issue #129 guard below it (the #118 guard further below
    * carries none), but that is weaker than it looks: `node --test` cannot interrupt a
    * SYNCHRONOUS test body, so a regex that truly never returned would block the event loop
-   * past its own timeout and the timeout would never fire. Against that case neither the
-   * timeout nor the small-size assert is protection; what the assert does is keep a build that
-   * is merely slow at every size from reaching the big timings at all.
+   * past its own timeout and the timeout would never fire - and this body is synchronous
+   * throughout, so neither does it fire on a run that finishes long after its own 120 s.
+   * Against a hang neither the timeout nor the small-size assert is protection; what the assert
+   * does is keep a build that is merely slow at every size from reaching the big timings at
+   * all.
    */
   it('stays linear on a long non-ASCII run that ends with no separator, which the leading word affix used to break (issue #119)', { timeout: 120_000 }, () => {
     const timed = (input: string) => {
@@ -1962,12 +1964,18 @@ describe('regex-engine parity with jq (issue #90)', () => {
    * completes and the catastrophic walk never happens. The leading `password=x` masks
    * without shortening the scan, so the timing still proves the keyword rule ran and masked.
    * Each size is timed best-of-3, and the SMALL size is asserted - output and an absolute
-   * bound - before the big one is timed at all: `node --test` has no default timeout and
-   * ci.yml sets none, so a regression that bites only at the big size would otherwise hang
-   * the suite silently where it should fail (the sentinel shape did not finish at x4000 on
-   * the pre-driver build, and a hang reads as a run nobody waits for). The test also
-   * carries a 120 s timeout for the same reason. Best-of-3 because the ratio bound sits
-   * only about 2x above the largest measured ratio, and one shared-runner pause during the
+   * bound - before the big one is timed at all. That ordering fails a build that costs time
+   * at EVERY size inside the small best-of-3, before that row's 4N timing is taken; a
+   * regression confined to the big size is not caught by it at all, and is caught by the ratio
+   * and absolute bounds below instead. The test also carries `{ timeout: 120_000 }` like the
+   * issue #119 guard above it, but this body is fully synchronous and `node --test` enforces a
+   * timeout only on a body that yields to the event loop, so the timeout never fires here at
+   * all: not on a regex that truly never returns, and not on a run that finishes long after
+   * 120 s. What catches a slow 4N run is the ratio and absolute bounds, after all three of its
+   * best-of-3 timings complete; the run-to-run asserts inside `timedBest` and the exact-output
+   * assert after it can fail before them, but only on a build that masks differently, not on one
+   * that is merely slow. Best-of-3 because the ratio bound sits only about 2x above the
+   * largest measured ratio, and one shared-runner pause during the
    * big timing could otherwise flip the verdict. The last two rows are a different regime
    * from the first three: those are one
    * unbroken run, where the cost is the scan INSIDE a run, while `'a '.repeat(n)` is tens of
@@ -2016,8 +2024,9 @@ describe('regex-engine parity with jq (issue #90)', () => {
     ];
     for (const [unit, n, fourN, masked] of shapes) {
       // The small size is asserted - output AND an absolute bound - before the big one is
-      // timed: a regression limited to the big size (the sentinel shape took minutes at
-      // x1000/x4000 pre-driver) must fail on the small shape instead of hanging.
+      // timed, so a build that is slow at every size stops here instead of spending the big
+      // timing. A regression limited to the big size is not caught by this assert; the ratio
+      // and absolute bounds below are what catch it.
       const small = timedBest('password=x ' + unit.repeat(n));
       assert.strictEqual(small.out, 'password=*** ' + masked.repeat(n), `the ${JSON.stringify(unit)} x${n} input was not masked to exactly the expected output`);
       assert.ok(small.ms < 1000,
