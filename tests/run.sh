@@ -1577,19 +1577,17 @@ else
 fi
 
 # --- Codex plugin manifest (issue #112) ----------------------------------------
-# tests/codex-plugin.sh checks the Codex manifest's "./"-relative path
-# references and its parity with .agents/plugins/marketplace.json. It is wired
-# in here rather than as its own .local-ci.json entry plus CI step because this
-# file is already what the "hook tests" check and every CI leg run, and a
-# fourth file would push the change past the two-file budget the loop works
-# within: the issue's literal acceptance criteria need FOUR files (this one, the
-# check script, `.local-ci.json` and `.github/workflows/ci.yml`), and the loop's
-# budget is two - see the deviation note in dynamic/throughline#112's PR body.
+# tests/codex-plugin.sh checks the Codex manifest's "./"-relative path references
+# and its parity with .agents/plugins/marketplace.json. It is called from here
+# because "hook tests" and every CI leg already run this file, so the check is
+# enforced locally and in CI without a declaration of its own.
 #
-# Every fixture is a copy of the three things the check reads, under $WORK, so
-# the negative cases never mutate the real tree - and so a fixture whose `cp`
-# half-failed is caught by the good-copy case below rather than making a
-# negative case pass for the wrong reason.
+# Every fixture is a copy of the three things the check reads, under $WORK, so the
+# negative cases never mutate the real tree. Two things stop a fixture from making a
+# negative case pass for the wrong reason: codex_fixture reports `bad` when its `cp`
+# fails, so a half-copied fixture is a visible failure instead of a quietly shorter
+# tree; and codex_expect's reason guard pins that a failure case failed for the
+# reason that case is about.
 codex_fixture() {
   cf_dir="$WORK/codex/$1"
   mkdir -p "$cf_dir"
@@ -1609,11 +1607,11 @@ codex_fixture() {
 # absence-assertion anti-pattern. Sequenced behind the status check it can only
 # report a pass for a run that actually failed the way the case expects.
 #
-# That is the job it exists for, per dynamic/throughline#145's Windows leg: the three
-# parity fixtures live in copies whose paths all resolve, so a run that failed on a
-# missing path instead of on the parity condition still matched the needle above and
-# read as `ok`. Requiring the parity message AND the absence of the path message is
-# what makes "the check failed for the reason this case is about" an assertion.
+# That is what it is for: the parity fixtures live in copies whose paths all resolve,
+# so a run that failed on a missing path instead of on the parity condition would still
+# match the needle above and read as `ok`. Requiring the parity message AND the absence
+# of the path message is what turns "the check failed for the reason this case is
+# about" into an assertion instead of a coincidence.
 codex_expect() {
   ce_want=$2; ce_needle=$3; ce_root=$4; ce_absent=${5:-}
   ce_err=$(sh "$ROOT/tests/codex-plugin.sh" "$ce_root" 2>&1 >/dev/null)
@@ -1635,17 +1633,19 @@ codex_expect() {
     has "$1 (stderr)" "$ce_err" "$ce_needle"
   fi
 }
-codex_patch() {
-  # codex_patch <root> <marketplace jq filter> - rewrite the fixture's
-  # marketplace entry. Truncate-on-jq-error would leave an empty file the check
-  # then rejects as invalid JSON, which fails the assertion but for a reason that
-  # has nothing to do with the drift being staged, so the mv is chained to &&.
-  if jq "$2" "$1/.agents/plugins/marketplace.json" > "$1/.agents/plugins/marketplace.json.new"; then
-    mv "$1/.agents/plugins/marketplace.json.new" "$1/.agents/plugins/marketplace.json"
+codex_patch_json() {
+  # codex_patch_json <file> <jq filter> - rewrite one JSON file inside a fixture.
+  # Truncate-on-jq-error would leave an empty file the check then rejects as
+  # invalid JSON, which fails the assertion but for a reason that has nothing to do
+  # with the drift being staged, so the mv is chained to &&.
+  if jq "$2" "$1" > "$1.new"; then
+    mv "$1.new" "$1"
   else
     bad "codex fixture patch failed: $1 ($2)"
   fi
 }
+codex_patch() { codex_patch_json "$1/.agents/plugins/marketplace.json" "$2"; }
+codex_patch_manifest() { codex_patch_json "$1/.codex-plugin/plugin.json" "$2"; }
 
 codex_fixture good
 codex_fixture noskills
@@ -1664,9 +1664,54 @@ has    "codex check: missing-path message names the literal path" "$(sh "$ROOT/t
 # is not there must fail, and fail naming that path.
 codex_fixture badsource
 codex_patch "$WORK/codex/badsource" '.plugins[0].source.path = "./no-such-dir/"'
-codex_expect "codex check: a marketplace source.path that does not resolve exits non-zero" 1 "missing path" "$WORK/codex/badsource"
+codex_expect "codex check: a marketplace source.path that does not resolve exits non-zero" 1 "./no-such-dir/" "$WORK/codex/badsource"
+# The needle above is the literal path rather than the generic "missing path" so this
+# case can only pass for the reason it is about.
+#
+# The walk only checks the "./" strings a file STILL contains, so it is blind to one
+# that was deleted: with nothing left to walk there is nothing left to fail, and a
+# manifest reduced to `{"name": ...}` - or an entry that no longer says where the
+# plugin is - would read as clean. These are the negative fixtures for the
+# required-field reads: a deleted key, and a value in a form the walk could never
+# resolve. Each guards on "missing path", so a tree that merely lost a directory
+# cannot stand in for the field being gone.
+codex_fixture noskillkey
+codex_patch_manifest "$WORK/codex/noskillkey" 'del(.skills)'
+codex_expect "codex check: manifest with no skills key at all exits non-zero" 1 "manifest has no .skills path" "$WORK/codex/noskillkey" "missing path"
+
+codex_fixture skillunprefixed
+codex_patch_manifest "$WORK/codex/skillunprefixed" '.skills = "skills/no-such/"'
+codex_expect "codex check: manifest skills path without the ./ prefix exits non-zero" 1 "must be a ./-relative path" "$WORK/codex/skillunprefixed" "missing path"
+
+codex_fixture srcpathgone
+codex_patch "$WORK/codex/srcpathgone" 'del(.plugins[0].source.path)'
+codex_expect "codex check: marketplace entry with no source.path exits non-zero" 1 "has no source.path" "$WORK/codex/srcpathgone" "missing path"
+
+codex_fixture srcpathunprefixed
+codex_patch "$WORK/codex/srcpathunprefixed" '.plugins[0].source.path = "no-such/"'
+codex_expect "codex check: marketplace source.path without the ./ prefix exits non-zero" 1 "source.path must be a ./-relative path" "$WORK/codex/srcpathunprefixed" "missing path"
+
+# The "./" prefix is a promise that the reference stays inside the root, and an
+# existence test cannot keep it: "./../../" resolves to the fixture root's grandparent,
+# which always exists, so resolving-and-existing would call an escape a satisfied
+# manifest field. `..` is therefore refused on shape.
+codex_fixture escapesroot
+codex_patch_manifest "$WORK/codex/escapesroot" '.skills = "./../../"'
+codex_expect "codex check: a .. path segment is refused instead of resolved outside the root" 1 "escapes the root" "$WORK/codex/escapesroot" "missing path"
 codex_patch "$WORK/codex/renamed" '.plugins[0].name = "other-plugin"'
 codex_expect "codex check: marketplace name drift from the manifest exits non-zero" 1 "no marketplace entry" "$WORK/codex/renamed" "missing path"
+# Both sides of that comparison have to be varied or the assertion is hollow: every
+# case above leaves the manifest's name at its real value, so a check that hardcoded
+# `throughline`, or that dropped its empty-name guard, would pass the whole suite.
+# These two vary the MANIFEST side - renamed (no entry matches) and deleted (the name
+# is missing, which is a different verdict from an unmatched one).
+codex_fixture manifestname
+codex_patch_manifest "$WORK/codex/manifestname" '.name = "renamed-in-manifest"'
+codex_expect "codex check: manifest name with no matching marketplace entry exits non-zero" 1 "no marketplace entry" "$WORK/codex/manifestname" "missing path"
+
+codex_fixture noname
+codex_patch_manifest "$WORK/codex/noname" 'del(.name)'
+codex_expect "codex check: manifest with no name at all exits non-zero" 1 "manifest has no name" "$WORK/codex/noname" "missing path"
 
 codex_patch "$WORK/codex/wrongver" '.plugins[0].version = "0.0.1"'
 codex_expect "codex check: injected marketplace version disagreeing with the manifest exits non-zero" 1 "version drift" "$WORK/codex/wrongver" "missing path"
