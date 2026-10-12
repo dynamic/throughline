@@ -168,12 +168,11 @@ All notable changes to throughline are documented here. Format loosely follows
   credential in userinfo position is a credential, and the gap was closed by widening
   `_url` in the hooks rather than by narrowing this port (see the issue #115 entry
   below). The generic keyword rule is quadratic in the length of a long unbroken run
-  of text, on both engines, on the full unclamped bash command; on the plugin side that
-  cost used to live only in the second (widened) word pass, because the first, ASCII pass
-  was driven from one scan of the word runs (issue #129) while the widened pass re-walked
-  each run from every lead position the rule reached; the widened pass is driven from one
-  scan now too (issue #134), so neither plugin word pass hands the whole rule to the regex -
-  see the issue #129 and #134 entries below.
+  of text, on both engines, on the full unclamped bash command. What changed on the plugin
+  side is what it hands to that rule: pass 6a is driven from one scan of the word runs
+  (issue #129) and pass 6b now is driven from one scan too (issue #134), so neither plugin
+  word pass asks the regex for the whole rule over a run any more - see the issue #129 and
+  #134 entries below.
   (`.omp-plugin` never had this gap: its shim shells out to the same `hooks/*.sh` scripts.)
 - **OpenCode plugin redaction pass 6a driven from one scan** (issue #129): the port's
   ASCII word pass was quadratic in the length of a single unbroken word run - one scan
@@ -214,9 +213,9 @@ All notable changes to throughline are documented here. Format loosely follows
   because the group START is still the position the rule's own ASCII lead stops at: the keyword
   group is written back verbatim, but it is also what the widened pass's guard decides on, so a
   start further back - one that pulls a non-ASCII character into the group - re-masks on top of
-  pass 6a (`tokenéapi-key="a b"c` came back `tokenéapi-key=***` from an intermediate version of
-  this change against `tokenéapi-key=***c` from `main` and from the jq hooks); that row and five
-  like it are pinned in `redaction.test.ts`.
+  pass 6a. `tokenéapi-key="a b"c` must come back `tokenéapi-key=***c`, the same string `main`
+  and the jq hooks give; a start taken from the earlier in-run anchor instead eats the trailing
+  `c`, and that row and five like it are pinned in `redaction.test.ts`.
 - **Capture hook dropped every event on Windows** (issue #81 review): the jq program
   is one command-line argument (`redaction defs + capture filter`) and Windows caps a
   command line at 32,767 characters; the explanatory comments inside the defs had grown

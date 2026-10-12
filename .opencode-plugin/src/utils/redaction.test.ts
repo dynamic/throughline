@@ -1121,7 +1121,8 @@ describe('issue #81 rules, ported to the OpenCode plugin', () => {
  * `\w` is a different case and was fixed rather than pinned: in the generic keyword
  * rule an affix that stops early does not merely shift a boundary, it makes the
  * separator alternatives unmatchable so the rule never fires and the secret is stored
- * whole. There the port over-approximates Oniguruma's word set (`JS_WORD_STAR`), which
+ * whole. There the port over-approximates Oniguruma's word set (the widened word class,
+ * `JS_WORD_CHAR` quantified), which
  * fires wherever jq fires - but its residue is NOT only on the masking side, and this
  * comment used to say it was. Running the widened class as a second pass keeps it from
  * eating a keyword a later RULE needs, and that is why the seeded fuzz test can assert
@@ -1190,7 +1191,7 @@ const ENGINE_DIVERGENCES: readonly {
     note: 'LEAK, introduced by this port (masks fine on `main`): the port anchors on \u00e9 and the MySQL span eats `token`, so the token-word rule never fires and `abcS3cret` survives. Same mechanism as the row above, different rule order, same acceptance and same #116 anchor decision.',
   },
   // The `over` rows below are the residue of over-approximating Oniguruma's `\w` in the
-  // generic keyword rule (`JS_WORD_STAR`): jq's `\w` refuses a non-ASCII PUNCTUATION,
+  // generic keyword rule (its widened word class): jq's `\w` refuses a non-ASCII PUNCTUATION,
   // SYMBOL or FORMAT character, so its affix stops there, the separator alternatives
   // cannot match it, and jq leaves the secret in cleartext - the port fires and masks.
   // One row per Unicode general category the residue spans, so the shape is pinned
@@ -1377,8 +1378,8 @@ describe('regex-engine parity with jq (issue #90)', () => {
     ['password\ufeff=S3cret', 'password\ufeff=***'],
     // The `\w` affixes of the generic keyword rule: Oniguruma's `\w*` walks over a
     // non-ASCII letter, JS's stops there, the separator alternatives cannot match a
-    // letter, and the rule never fires at all - the secret is stored whole. `JS_WORD_STAR`
-    // fires wherever jq does; note the last two, one accented letter after the keyword with
+    // letter, and the rule never fires at all - the secret is stored whole. The widened word
+    // class fires wherever jq does; note the last two, one accented letter after the keyword with
     // no other rule involved, which is the cheapest shape that leaks.
     ['password\u00e9=S3cret', 'password\u00e9=***'],
     ['export DB_PASSWORD_\u00c9=S3cret', 'export DB_PASSWORD_\u00c9=***'],
@@ -1852,7 +1853,7 @@ describe('regex-engine parity with jq (issue #90)', () => {
    * timings below, not from the mask.)
    *
    * Measured on this machine, with the widened class put back on the LEADING affix of the
-   * pass 6b rule (`keywordPattern(JS_WORD_STAR, JS_WORD_STAR)`, then reverted so
+   * pass 6b rule (both the leading affix and the suffix widened, then reverted so
    * `redaction.ts` is byte-identical to `main`): the OLD input above stayed at 1.3-3.9ms per
    * `redact()` call for 500, 2,000 and even 8,000 repeats (3,011 to 48,011 characters) - flat,
    * because nothing about that input depends on the affix width. The input below, same
@@ -1873,8 +1874,8 @@ describe('regex-engine parity with jq (issue #90)', () => {
    * in FRONT of the keyword is the non-ASCII one - and it fails on its own under the mutation
    * above (98.3ms -> 1,561.9ms), so the guard does not depend on the first row catching it
    * first. What neither row covers, and no timing guard on these inputs can: a rule that
-   * widens the LEAD while leaving the SUFFIX ASCII. Measured with exactly that mutation
-   * (`keywordPattern(JS_WORD_STAR, "\\w*")`), both rows cost 0.7ms -> 1.9ms (a 0.4x ratio) and
+   * widens the LEAD while leaving the SUFFIX ASCII. Measured with exactly that mutation (the
+   * widened class on the lead, `\\w*` on the suffix), both rows cost 0.7ms -> 1.9ms (a 0.4x ratio) and
    * masked identically to the shipped rule, because an anchored attempt whose suffix cannot
    * cross into non-ASCII pays only linear lead backtracking. That shape would have to be
    * caught by the jq parity tests, not here.
@@ -2120,17 +2121,17 @@ describe('regex-engine parity with jq (issue #90)', () => {
    * rule keeps jq's unbounded `\\w*` lead: on one long ASCII run carrying many keywords the
    * lead backs off character by character and the widened suffix re-walks the run at every
    * keyword hit, so a run with no separator inside it costs O(run length)^2 again. The #118
-   * guard above cannot see it, and not for the reason this guard's first draft claimed: its
-   * input `('token\u00e9').repeat(n)` IS one word run (measured: `token\u00e9token\u00e9token\u00e9` matches the
+   * guard above cannot see it. Its input `('token\u00e9').repeat(n)` IS one word run (measured:
+   * `token\u00e9token\u00e9token\u00e9` matches the
    * widened word-run class as a single match, so there is no run end every 6 characters - the
    * accent is inside the class). It stays cheap because the ASCII lead in front of the keyword
    * cannot step over a `\u00e9`, so that shape has only ~6 lead lengths to try and costs at most
    * ~6 x (run length) - linear - even while the widened suffix re-walks the rest of the run at
-   * every lead length it reaches a keyword at. In an ASCII-only run the lead reaches every position, and that is what turns the
-   * cost into (keyword hits) x (run length). The #129 guard is ASCII-only,
-   * which pass 6b's whole-string fast path skips outright. So this shape - a single ASCII run
-   * plus ONE non-ASCII character at the end, which is what admits pass 6b at all - was pinned
-   * by nothing.
+   * every lead length it reaches a keyword at. In an ASCII-only run the lead reaches every
+   * position, and that is what turns the cost into (keyword hits) x (run length). The #129 guard
+   * is ASCII-only, which pass 6b's whole-string fast path skips outright. So this shape - a
+   * single ASCII run plus ONE non-ASCII character at the end, which is what admits pass 6b at
+   * all - was pinned by nothing.
    *
    * Measured on this machine BEFORE the attempt was anchored at the keyword-group end, with
    * the rule handed to the driver whole: `('token').repeat(k) + '\u00e9'` took 29.1ms at k=2,000
@@ -2142,9 +2143,12 @@ describe('regex-engine parity with jq (issue #90)', () => {
    * ratio still cannot dodge - plus the best-of-3 repeat the #129 guard uses: #118 times each
    * size once, while here every run of the three must write the SAME output before the minimum
    * is taken, so a fast time cannot be bought by a build that masks differently. The leading
-   * `password=x` masks without shortening the scan, so the timing
-   * proves pass 6b ran over the whole run; the run itself carries no separator and so is not
-   * maskable, which is why its output is asserted as a repetition.
+   * `password=x` masks without shortening the scan - a build that stopped the scan early would
+   * not pay for the run at all. What the timing does NOT prove is that pass 6b ran: that leading
+   * mask is pass 6a's, and pass 6b returns an ASCII keyword group unchanged, so the expected
+   * output is the same whether 6b fires or not and this guard prices only whatever ran, over the
+   * whole command. The run itself carries no separator and so is not maskable, which is why its
+   * output is asserted as a repetition.
    * It carries no `{ timeout }` option, unlike the #119 and #129 guards above: this body is
    * synchronous throughout and `node --test` enforces a timeout only on a body that yields to
    * the event loop, so an option here would never fire - not on a regex that truly never
@@ -2199,9 +2203,8 @@ describe('regex-engine parity with jq (issue #90)', () => {
    * the jq hooks. These rows pass on `main` as well: they are not the regression test for issue
    * #134 (the latency guard above is that one), they pin the mistake this shape of rewrite makes
    * easy - taking the group START from the earlier in-run anchor instead of from where the rule's
-   * own lead stops, which is what this PR's first commit did and what no other row in the file
-   * catches. The pinned string is asserted even where jq is absent, so a row cannot silently
-   * degrade to a self-comparison.
+   * own lead stops, which no other row in the file catches. The pinned string is asserted even
+   * where jq is absent, so a row cannot silently degrade to a self-comparison.
    */
   it('anchors a crossing keyword at the start its own lead reaches, where a non-ASCII character blocks pass 6a\'s mask (issue #134)', () => {
     const cases: readonly [string, string][] = [
@@ -2209,10 +2212,16 @@ describe('regex-engine parity with jq (issue #90)', () => {
       ['password\u00e9client-id="q r"z', 'password\u00e9client-id=***z'],
       ['secret\u00e9access-key="a b"c', 'secret\u00e9access-key=***c'],
       ['token\u6f22client-id="a b"c', 'token\u6f22client-id=***c'],
-      // The same rows with a bare value: the mask still has to land, so a fix that only moved
-      // the start without keeping the group end would leak here instead of over-masking.
-      ['token\u00e9api-key=S3cretPw', 'token\u00e9api-key=***'],
-      ['token\u00e9api-key is S3cretPw', 'token\u00e9api-key is ***'],
+      // The same rows with a bare value, and with the value's separator glued behind a
+      // non-ASCII character: here pass 6a CANNOT mask (its ASCII lead stops at the accent, and
+      // its ASCII suffix stops at the next one, so no separator alternative is ever reached),
+      // which makes the CROSSING group end load-bearing - ask the run's own end instead and the
+      // secret comes back whole. Measured: with the crossing attempt moved from `crossEnd` to
+      // `runEnd` these two rows return `token\u00e9api-key\u6f22=S3cret` and `token\u00e9api-key\u6f22 is S3cret`
+      // unchanged, where every row above still masks (pass 6a covers those regardless of what
+      // pass 6b does). So the rows above pin the group START and these pin the group END.
+      ['token\u00e9api-key\u6f22=S3cret', 'token\u00e9api-key\u6f22=***'],
+      ['token\u00e9api-key\u6f22 is S3cret', 'token\u00e9api-key\u6f22 is ***'],
     ];
     const defs = JQ_PRESENT ? jqDefs() : null;
     for (const [input, expected] of cases) {

@@ -45,7 +45,8 @@
  *     whitespace class in this file is spelled out as `JS_WS_CHARS` / `JS_NOT_WS`.
  *   - `\w` is not `\w`: Oniguruma's is Unicode-aware and JS's is ASCII, which does not
  *     shift a boundary, it stops the generic keyword rule firing at all. Over-
- *     approximated as `JS_WORD_STAR`, run as the LAST masking pass so its residue cannot
+ *     approximated as a widened word class - `JS_WORD_CHAR` quantified - run as the LAST
+ *     masking pass so its residue cannot
  *     starve a later rule - which bounds what it can over-mask, but does not make this
  *     class leak-free: the ASCII pass that runs before it can eat a keyword jq's single
  *     Unicode-aware pass would have matched, and two `under` rows in `ENGINE_DIVERGENCES`
@@ -121,13 +122,12 @@ function jsNotWs(extras: string): string {
  * over-match eats a later rule's keyword. The `over` residue of THIS class is pinned
  * alongside them, so a future change that turns one into a leak fails.
  *
- * `JS_WORD_CHAR` below is one character of this over-approximated set, ready to
- * quantify; `JS_WORD_STAR` is that class quantified with `*` - the widened SUFFIX of the
- * generic rule, which pass 6b now consumes through the word runs it produces rather than as
- * a pattern suffix, so the class is the thing its driver walks.
+ * `JS_WORD_CHAR` below is one character of this over-approximated set, ready to quantify; the
+ * widened SUFFIX of the generic rule is that class quantified with `*`. Pass 6b does not match
+ * it as a pattern suffix at all any more: it walks the word RUNS this class produces, so the
+ * class is the thing its driver steps over rather than a string it interpolates.
  */
 const JS_WORD_CHAR = "(?:\\w|[^\\x00-\\x7f" + JS_WS_CHARS + "])";
-const JS_WORD_STAR = JS_WORD_CHAR + "*";
 /**
  * ASCII `\w` by code point, for the scan in `redact`'s pass 6b that has to walk a keyword
  * occurrence back to the earliest start its ASCII lead could begin at. Same set as `\w`,
@@ -600,7 +600,8 @@ export function redact(str: string): string {
   //             scan of the word runs for latency (see `asciiWordPass` below,
   //             dynamic/throughline#114 and dynamic/throughline#129);
   //   pass 6b - the same rule with Oniguruma's word set over-approximated on the
-  //             SUFFIX only (`JS_WORD_STAR`), so `password\u00e9=S3cret`, where jq's `\\w*`
+  //             SUFFIX only (the widened class, `JS_WORD_CHAR` + `*`), so `password\u00e9=S3cret`,
+  //             where jq's `\\w*`
   //             walks over the accent but JS's stops, the separator alternatives cannot
   //             match a letter and the rule never fires at all, is masked here too.
   //             The LEADING affix stays ASCII, and that is a latency decision, not an
@@ -909,7 +910,7 @@ export function redact(str: string): string {
    * Pass 6b's guard: mask a match only where the keyword is one pass 6a's keyword group
    * COULD NOT have matched. Two tests, because one is not enough:
    *   1. the keyword carries a non-ASCII character at all - otherwise the two passes'
-   *      keyword groups are the same set, since `JS_WORD_STAR` only ever widens past
+   *      keyword groups are the same set, since the widened suffix only ever widens past
    *      non-ASCII, and every separator and class in the pattern is identical; and
    *   2. the keyword is not one of the CASE-FOLD SPELLINGS pass 6a already carries.
    *      `foldSpelled` puts U+017F, U+212A, U+00DF and U+1E9E INTO `KEYWORD_ALTERNATION`, so
@@ -944,7 +945,8 @@ export function redact(str: string): string {
    * The mask this produces is byte-identical to what the global replace produced, by the
    * two arguments below; only the cost changes.
    *
-   * Why the old shape was quadratic. The suffix `JS_WORD_STAR` matches any word character
+   * Why the old shape was quadratic. The widened suffix (the run class `JS_WORD_CHAR`
+   * quantified) matches any word character
    * plus any non-ASCII non-whitespace character, so from any start inside a long run of such
    * text - CJK prose, or a base64-ish blob with an accent in it - it walks to the end of that
    * run, then the separator alternatives - which all need a whitespace, `:` or `=` - fail, and
