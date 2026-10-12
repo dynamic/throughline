@@ -215,7 +215,9 @@ All notable changes to throughline are documented here. Format loosely follows
   start further back - one that pulls a non-ASCII character into the group - re-masks on top of
   pass 6a. `tokenéapi-key="a b"c` must come back `tokenéapi-key=***c`, the same string `main`
   and the jq hooks give; a start taken from the earlier in-run anchor instead eats the trailing
-  `c`, and that row and five like it are pinned in `redaction.test.ts`.
+  `c`. That row and three like it pin the group START in `redaction.test.ts`, and two more -
+  `tokenéapi-key漢=S3cret` and its ` is ` form, where pass 6a cannot reach the separator at all -
+  pin the crossing group END.
 - **Capture hook dropped every event on Windows** (issue #81 review): the jq program
   is one command-line argument (`redaction defs + capture filter`) and Windows caps a
   command line at 32,767 characters; the explanatory comments inside the defs had grown

@@ -2129,9 +2129,10 @@ describe('regex-engine parity with jq (issue #90)', () => {
    * ~6 x (run length) - linear - even while the widened suffix re-walks the rest of the run at
    * every lead length it reaches a keyword at. In an ASCII-only run the lead reaches every
    * position, and that is what turns the cost into (keyword hits) x (run length). The #129 guard
-   * is ASCII-only, which pass 6b's whole-string fast path skips outright. So this shape - a
-   * single ASCII run plus ONE non-ASCII character at the end, which is what admits pass 6b at
-   * all - was pinned by nothing.
+   * is ASCII apart from one unit, `secreto\u212aen=x `, and that unit does get past pass 6b's
+   * whole-string gate - but every word run in it is short, broken up by `=x `, so the long-run
+   * cost never builds up there. So this shape - a single ASCII run plus ONE non-ASCII character
+   * at the end, which is what admits pass 6b at all - was pinned by nothing.
    *
    * Measured on this machine BEFORE the attempt was anchored at the keyword-group end, with
    * the rule handed to the driver whole: `('token').repeat(k) + '\u00e9'` took 29.1ms at k=2,000
