@@ -2120,8 +2120,14 @@ describe('regex-engine parity with jq (issue #90)', () => {
    * rule keeps jq's unbounded `\\w*` lead: on one long ASCII run carrying many keywords the
    * lead backs off character by character and the widened suffix re-walks the run at every
    * keyword hit, so a run with no separator inside it costs O(run length)^2 again. The #118
-   * guard above cannot see it: its run is `token\u00e9` repeated, which is not one word run, so
-   * the suffix has a run end to stop at every 6 characters. The #129 guard is ASCII-only,
+   * guard above cannot see it, and not for the reason this guard's first draft claimed: its
+   * input `('token\u00e9').repeat(n)` IS one word run (measured: `token\u00e9token\u00e9token\u00e9` matches the
+   * widened word-run class as a single match, so there is no run end every 6 characters - the
+   * accent is inside the class). It stays cheap because the ASCII lead in front of the keyword
+   * cannot step over a `\u00e9`, so that shape has only ~6 lead lengths to try and costs at most
+   * ~6 x (run length) - linear - even while the widened suffix re-walks the rest of the run at
+   * every lead length it reaches a keyword at. In an ASCII-only run the lead reaches every position, and that is what turns the
+   * cost into (keyword hits) x (run length). The #129 guard is ASCII-only,
    * which pass 6b's whole-string fast path skips outright. So this shape - a single ASCII run
    * plus ONE non-ASCII character at the end, which is what admits pass 6b at all - was pinned
    * by nothing.
@@ -2129,15 +2135,23 @@ describe('regex-engine parity with jq (issue #90)', () => {
    * Measured on this machine BEFORE the attempt was anchored at the keyword-group end, with
    * the rule handed to the driver whole: `('token').repeat(k) + '\u00e9'` took 29.1ms at k=2,000
    * (10,001 characters) and 460.0ms at k=8,000 (40,001 characters) - a 15.8x scaling ratio for a
-   * 4x-longer run. After the rewrite both sizes are in single-digit milliseconds. Same thresholds as #118 - best-of-3, the
-   * ratio bound of 8 above linear and below quadratic, the denominator floored at 5ms so
-   * sub-millisecond noise on the small timing cannot decide the verdict alone, and an
-   * absolute ceiling on the big timing that a machine fast enough to flatter the ratio still
-   * cannot dodge. The leading `password=x` masks without shortening the scan, so the timing
+   * 4x-longer run. After the rewrite both sizes are in single-digit milliseconds. The bounds are
+   * the #118 guard's - the ratio bound of 8 above linear and below quadratic, the denominator
+   * floored at 5ms so sub-millisecond noise on the small timing cannot decide the verdict
+   * alone, and an absolute ceiling on the big timing that a machine fast enough to flatter the
+   * ratio still cannot dodge - plus the best-of-3 repeat the #129 guard uses: #118 times each
+   * size once, while here every run of the three must write the SAME output before the minimum
+   * is taken, so a fast time cannot be bought by a build that masks differently. The leading
+   * `password=x` masks without shortening the scan, so the timing
    * proves pass 6b ran over the whole run; the run itself carries no separator and so is not
    * maskable, which is why its output is asserted as a repetition.
+   * It carries no `{ timeout }` option, unlike the #119 and #129 guards above: this body is
+   * synchronous throughout and `node --test` enforces a timeout only on a body that yields to
+   * the event loop, so an option here would never fire - not on a regex that truly never
+   * returns, and not on a run that finishes long after its own bound. The absolute bound on the
+   * big timing, taken after the work completes, is what prices a slow run.
    */
-  it('stays linear on a long ASCII run once a non-ASCII character admits pass 6b (issue #134)', { timeout: 120_000 }, () => {
+  it('stays linear on a long ASCII run once a non-ASCII character admits pass 6b (issue #134)', () => {
     const timed = (input: string) => {
       const started = process.hrtime.bigint();
       const out = redact(input);

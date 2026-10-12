@@ -972,19 +972,29 @@ export function redact(str: string): string {
    *      lead could never step over re-masks text pass 6a already masked (`token\u00e9api-key="a b"c`
    *      - group `api-key`, ASCII, so 6b leaves 6a's `***c` alone; group `token\u00e9api-key`, and
    *      the same value is masked a second time over the trailing `c`).
-   *   3. so a failed attempt adjudicates every start that shares its keyword-end run, and
-   *      once each distinct run end in the run has been attempted, the driver emits the run
-   *      verbatim and resumes at `re`.
-   * How many distinct keyword-end runs a run can hold is what bounds the attempts, and it is
-   * two. A keyword leaves its run only through the `[-_]` of `api[_-]?key`, `access[_-]?key`
-   * and `client[_-]?id`: underscore is a word character and never splits a run, and a hyphen
-   * inside one of those three is exactly the character that ends the run - so a start whose
-   * keyword crosses the boundary always ends in the run after `re`, and every other start
-   * ends at `re` itself. Two anchors, one attempt per run. Without the second one the pass
-   * leaks in the direction that matters: `token\u6f22api-key\u6f22=S3cret` has no separator at the hyphen,
-   * so the `token` attempt fails there, and the secret is reachable only from the `api-key`
-   * start - skipping the run on the first failure leaves it in cleartext where both the jq
-   * hooks and the pre-#118 port mask it.
+   *   3. so one attempt adjudicates every start that shares its keyword-end run, and a run has
+   *      exactly one keyword-end run to try (next paragraph). The driver makes it, and on
+   *      failure emits the run verbatim and resumes at `re`.
+   * A run holds ONE keyword-end run, not two. A keyword leaves its run only through the `[-_]`
+   * of `api[_-]?key`, `access[_-]?key` and `client[_-]?id` - underscore is a word character and
+   * never splits a run, and a hyphen inside one of those three is exactly the character that
+   * ends the run - so a keyword's group end is either `re` or the end of the run after `re`, and
+   * a run cannot hold one of each: the crossing keyword is always the run's LAST occurrence. It
+   * opens 3 characters before `re` (`api-`) or 6 (`access-`, `client-`), and the shortest keyword
+   * in the alternation is 4 characters (`auth`), so an occurrence starting after a crossing one
+   * cannot end at or before `re` either; and the text between the crossing opening and `re` is
+   * `pi`, `ccess` or `ient`, none of whose prefixes is a keyword, so nothing in the run is left
+   * for the scan to stop on later. Which kind the run's last occurrence is therefore answers
+   * "does this run have a crossing keyword at all", and the run gets exactly ONE attempt:
+   * `(acrossStart, crossEnd)` when it crosses, `(inRunStart, re)` when it does not. Nothing is
+   * skipped in the direction that matters, because the arm the undriven rule would have
+   * backtracked into is unreachable rather than merely untried: a run that crosses ends at the
+   * hyphen, and no separator alternative matches a hyphen (each one needs `:`, `=` or
+   * whitespace), so its in-run group end is doomed; a run that does not cross has no crossing
+   * group end to ask. Dropping the crossing arm instead WOULD leak: `token\u6f22api-key\u6f22=S3cret` has
+   * no separator before the hyphen or at it, so the secret is reachable only from the `api-key`
+   * group end in the run after `re`, and a driver that asked in-run ends only would leave it in
+   * cleartext where both the jq hooks and the pre-#118 port mask it.
    * Neither anchor is pinned to `rs`, and that is the other place a naive linearisation
    * would leak: the
    * lead is ASCII `\\w*`, so a run like `\u4e2d\u4e2dtoken=x` has no match at its own first character
@@ -1120,9 +1130,11 @@ export function redact(str: string): string {
         return true;
       };
       // One attempt per run, and exactly one pair to make it with: the crossing keyword is the
-      // run's LAST occurrence (it opens 3 characters before `runEnd`, so nothing else in the run
-      // can start after it and the non-overlapping scan stops at it), which makes the kind of the
-      // last occurrence the same question as "does this run have a crossing keyword at all".
+      // run's LAST occurrence (it opens 3 characters before `runEnd` for `api-` and 6 for
+      // `access-` / `client-`, and the shortest keyword in the alternation is 4 characters, so
+      // no later occurrence in the run can end at or before `runEnd`, and the non-overlapping
+      // scan stops at the crossing one), which makes the kind of the last occurrence the same
+      // question as "does this run have a crossing keyword at all".
       //   - crossing: the attempt is (acrossStart, crossEnd). The hyphen at `runEnd` starts no
       //     separator arm, so the in-run group end is doomed, and the keyword group must START
       //     where the ASCII lead starts - `acrossStart`, not the earlier in-run anchor - because

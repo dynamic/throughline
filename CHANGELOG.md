@@ -169,8 +169,11 @@ All notable changes to throughline are documented here. Format loosely follows
   `_url` in the hooks rather than by narrowing this port (see the issue #115 entry
   below). The generic keyword rule is quadratic in the length of a long unbroken run
   of text, on both engines, on the full unclamped bash command; on the plugin side that
-  cost now lives only in the second (widened) word pass, because the first, ASCII pass is
-  driven from one scan of the word runs - see the issue #129 entry below.
+  cost used to live only in the second (widened) word pass, because the first, ASCII pass
+  was driven from one scan of the word runs (issue #129) while the widened pass re-walked
+  each run from every lead position the rule reached; the widened pass is driven from one
+  scan now too (issue #134), so neither plugin word pass hands the whole rule to the regex -
+  see the issue #129 and #134 entries below.
   (`.omp-plugin` never had this gap: its shim shells out to the same `hooks/*.sh` scripts.)
 - **OpenCode plugin redaction pass 6a driven from one scan** (issue #129): the port's
   ASCII word pass was quadratic in the length of a single unbroken word run - one scan
