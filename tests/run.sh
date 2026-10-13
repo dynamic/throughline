@@ -1594,7 +1594,7 @@ codex_fixture() {
   # reference (skills/, and the plugin root itself - the fixture root). Named
   # fragility: if a manifest ever advertises a ./-path somewhere else in the tree,
   # this copy has to grow with it; until it does, every fixture fails with "does
-  # not resolve" while the real-tree case above still passes. A half-copied fixture
+  # not resolve" while the real-tree case below still passes. A half-copied fixture
   # is reported through bad() so it stays a visible failure, and the chain is
   # written as if/then rather than `A && B || C`, which would also report a setup
   # failure when every cp succeeded but something after the || failed.
@@ -1660,10 +1660,9 @@ else
 fi
 codex_expect "codex check: a root dir that does not exist exits non-zero" 1 "no such root directory" "$WORK/codex/never-created"
 
-# (a) A manifest that stopped naming its skills directory. The generic "./" walk
-#     this replaced accepted it - nothing left to walk, nothing left to fail - so
-#     both the deleted key and a value in a form that could never resolve are
-#     pinned by name, each guarding on its own message.
+# A manifest that no longer names its skills directory must fail, not pass for lack
+# of anything to check - so both the deleted key and a value in a form that could
+# never resolve are pinned by name, each guarding on its own message.
 codex_fixture noskillkey
 codex_patch_manifest "$WORK/codex/noskillkey" 'del(.skills)'
 codex_expect "codex check: manifest with no .skills key exits non-zero" 1 "manifest .skills is missing from" "$WORK/codex/noskillkey"
@@ -1672,10 +1671,10 @@ codex_fixture skillunprefixed
 codex_patch_manifest "$WORK/codex/skillunprefixed" '.skills = "skills/"'
 codex_expect "codex check: manifest .skills without the ./ prefix exits non-zero" 1 "manifest .skills must be a ./-relative path" "$WORK/codex/skillunprefixed"
 
-# (d) A referenced path that does not exist, from both directions: the skills dir
-#     the manifest advertises is gone from the tree, and the marketplace entry
-#     points at a directory that was never there. Each names the literal path in
-#     the needle, so the case cannot pass on some other "does not resolve".
+# A referenced path that does not exist, from both directions: the skills dir the
+# manifest advertises is gone from the tree, and the marketplace entry points at a
+# directory that was never there. Each names the literal path in the needle, so the
+# case cannot pass on some other "does not resolve".
 codex_fixture noskillsdir
 rm -rf "$WORK/codex/noskillsdir/skills"
 codex_expect "codex check: a missing skills dir exits non-zero" 1 "'./skills/' in $WORK/codex/noskillsdir/.codex-plugin/plugin.json" "$WORK/codex/noskillsdir"
@@ -1688,11 +1687,11 @@ codex_fixture nosourcepath
 codex_patch "$WORK/codex/nosourcepath" 'del(.plugins[0].source.path)'
 codex_expect "codex check: marketplace entry with no source.path exits non-zero" 1 "source.path is missing from" "$WORK/codex/nosourcepath"
 
-# (c) The manifest's `name` is the identity Codex installs under, and every case
-#     above leaves it at its real value - so a check that hardcoded 'throughline'
-#     would pass the whole suite. These two vary the MANIFEST side: a renamed
-#     plugin (no entry matches) and a deleted name (a different verdict, and a
-#     different message, from an unmatched one).
+# The manifest's `name` is the identity Codex installs under, and every case above
+# leaves it at its real value - so a check that hardcoded 'throughline' would pass
+# the whole suite. These two vary the MANIFEST side: a renamed plugin (no entry
+# matches) and a deleted name (a different verdict, and a different message, from an
+# unmatched one).
 codex_fixture renamedmanifest
 codex_patch_manifest "$WORK/codex/renamedmanifest" '.name = "renamed-in-manifest"'
 codex_expect "codex check: manifest name with no matching marketplace entry exits non-zero" 1 "no marketplace entry named 'renamed-in-manifest'" "$WORK/codex/renamedmanifest"
