@@ -1121,7 +1121,8 @@ describe('issue #81 rules, ported to the OpenCode plugin', () => {
  * `\w` is a different case and was fixed rather than pinned: in the generic keyword
  * rule an affix that stops early does not merely shift a boundary, it makes the
  * separator alternatives unmatchable so the rule never fires and the secret is stored
- * whole. There the port over-approximates Oniguruma's word set (`JS_WORD_STAR`), which
+ * whole. There the port over-approximates Oniguruma's word set (the widened word class,
+ * `JS_WORD_CHAR` quantified), which
  * fires wherever jq fires - but its residue is NOT only on the masking side, and this
  * comment used to say it was. Running the widened class as a second pass keeps it from
  * eating a keyword a later RULE needs, and that is why the seeded fuzz test can assert
@@ -1190,7 +1191,7 @@ const ENGINE_DIVERGENCES: readonly {
     note: 'LEAK, introduced by this port (masks fine on `main`): the port anchors on \u00e9 and the MySQL span eats `token`, so the token-word rule never fires and `abcS3cret` survives. Same mechanism as the row above, different rule order, same acceptance and same #116 anchor decision.',
   },
   // The `over` rows below are the residue of over-approximating Oniguruma's `\w` in the
-  // generic keyword rule (`JS_WORD_STAR`): jq's `\w` refuses a non-ASCII PUNCTUATION,
+  // generic keyword rule (its widened word class): jq's `\w` refuses a non-ASCII PUNCTUATION,
   // SYMBOL or FORMAT character, so its affix stops there, the separator alternatives
   // cannot match it, and jq leaves the secret in cleartext - the port fires and masks.
   // One row per Unicode general category the residue spans, so the shape is pinned
@@ -1377,8 +1378,8 @@ describe('regex-engine parity with jq (issue #90)', () => {
     ['password\ufeff=S3cret', 'password\ufeff=***'],
     // The `\w` affixes of the generic keyword rule: Oniguruma's `\w*` walks over a
     // non-ASCII letter, JS's stops there, the separator alternatives cannot match a
-    // letter, and the rule never fires at all - the secret is stored whole. `JS_WORD_STAR`
-    // fires wherever jq does; note the last two, one accented letter after the keyword with
+    // letter, and the rule never fires at all - the secret is stored whole. The widened word
+    // class fires wherever jq does; note the last two, one accented letter after the keyword with
     // no other rule involved, which is the cheapest shape that leaks.
     ['password\u00e9=S3cret', 'password\u00e9=***'],
     ['export DB_PASSWORD_\u00c9=S3cret', 'export DB_PASSWORD_\u00c9=***'],
@@ -1852,7 +1853,7 @@ describe('regex-engine parity with jq (issue #90)', () => {
    * timings below, not from the mask.)
    *
    * Measured on this machine, with the widened class put back on the LEADING affix of the
-   * pass 6b rule (`keywordPattern(JS_WORD_STAR, JS_WORD_STAR)`, then reverted so
+   * pass 6b rule (both the leading affix and the suffix widened, then reverted so
    * `redaction.ts` is byte-identical to `main`): the OLD input above stayed at 1.3-3.9ms per
    * `redact()` call for 500, 2,000 and even 8,000 repeats (3,011 to 48,011 characters) - flat,
    * because nothing about that input depends on the affix width. The input below, same
@@ -1873,8 +1874,8 @@ describe('regex-engine parity with jq (issue #90)', () => {
    * in FRONT of the keyword is the non-ASCII one - and it fails on its own under the mutation
    * above (98.3ms -> 1,561.9ms), so the guard does not depend on the first row catching it
    * first. What neither row covers, and no timing guard on these inputs can: a rule that
-   * widens the LEAD while leaving the SUFFIX ASCII. Measured with exactly that mutation
-   * (`keywordPattern(JS_WORD_STAR, "\\w*")`), both rows cost 0.7ms -> 1.9ms (a 0.4x ratio) and
+   * widens the LEAD while leaving the SUFFIX ASCII. Measured with exactly that mutation (the
+   * widened class on the lead, `\\w*` on the suffix), both rows cost 0.7ms -> 1.9ms (a 0.4x ratio) and
    * masked identically to the shipped rule, because an anchored attempt whose suffix cannot
    * cross into non-ASCII pays only linear lead backtracking. That shape would have to be
    * caught by the jq parity tests, not here.
@@ -2110,6 +2111,127 @@ describe('regex-engine parity with jq (issue #90)', () => {
         `redact() scaled ${ratio.toFixed(1)}x for a 4x-longer ${JSON.stringify(unit)} run (${small.ms.toFixed(1)}ms -> ${big.ms.toFixed(1)}ms); pass 6b's widened suffix is re-scanning runs it already stepped over`);
       assert.ok(big.ms < 250,
         `redact() took ${big.ms.toFixed(1)}ms on a ${big.out.length}-character command with a keyword inside one non-ASCII run; pass 6b is quadratic again (issue #118)`);
+    }
+  });
+
+  /**
+   * Latency guard for the cost the #118 driver left inside pass 6b (dynamic/throughline#134,
+   * the 6b side of what #129 removed from 6a). #118 made the DRIVER linear - one attempt per
+   * word run instead of one per start - but each attempt still ran the whole rule, and the
+   * rule keeps jq's unbounded `\\w*` lead: on one long ASCII run carrying many keywords the
+   * lead backs off character by character and the widened suffix re-walks the run at every
+   * keyword hit, so a run with no separator inside it costs O(run length)^2 again. The #118
+   * guard above cannot see it. Its input `('token\u00e9').repeat(n)` IS one word run (measured:
+   * `token\u00e9token\u00e9token\u00e9` matches the
+   * widened word-run class as a single match, so there is no run end every 6 characters - the
+   * accent is inside the class). It stays cheap because the ASCII lead in front of the keyword
+   * cannot step over a `\u00e9`, so that shape has only ~6 lead lengths to try and costs at most
+   * ~6 x (run length) - linear - even while the widened suffix re-walks the rest of the run at
+   * every lead length it reaches a keyword at. In an ASCII-only run the lead reaches every
+   * position, and that is what turns the cost into (keyword hits) x (run length). The #129 guard
+   * is ASCII apart from one unit, `secreto\u212aen=x `, and that unit does get past pass 6b's
+   * whole-string gate - but every word run in it is short, broken up by `=x `, so the long-run
+   * cost never builds up there. So this shape - a single ASCII run plus ONE non-ASCII character
+   * at the end, which is what admits pass 6b at all - was pinned by nothing.
+   *
+   * Measured on this machine BEFORE the attempt was anchored at the keyword-group end, with
+   * the rule handed to the driver whole: `('token').repeat(k) + '\u00e9'` took 29.1ms at k=2,000
+   * (10,001 characters) and 460.0ms at k=8,000 (40,001 characters) - a 15.8x scaling ratio for a
+   * 4x-longer run. After the rewrite both sizes are in single-digit milliseconds. The bounds are
+   * the #118 guard's - the ratio bound of 8 above linear and below quadratic, the denominator
+   * floored at 5ms so sub-millisecond noise on the small timing cannot decide the verdict
+   * alone, and an absolute ceiling on the big timing that a machine fast enough to flatter the
+   * ratio still cannot dodge - plus the best-of-3 repeat the #129 guard uses: #118 times each
+   * size once, while here every run of the three must write the SAME output before the minimum
+   * is taken, so a fast time cannot be bought by a build that masks differently. The leading
+   * `password=x` masks without shortening the scan - a build that stopped the scan early would
+   * not pay for the run at all. What the timing does NOT prove is that pass 6b ran: that leading
+   * mask is pass 6a's, and pass 6b returns an ASCII keyword group unchanged, so the expected
+   * output is the same whether 6b fires or not and this guard prices only whatever ran, over the
+   * whole command. The run itself carries no separator and so is not maskable, which is why its
+   * output is asserted as a repetition.
+   * It carries no `{ timeout }` option, unlike the #119 and #129 guards above: this body is
+   * synchronous throughout and `node --test` enforces a timeout only on a body that yields to
+   * the event loop, so an option here would never fire - not on a regex that truly never
+   * returns, and not on a run that finishes long after its own bound. The absolute bound on the
+   * big timing, taken after the work completes, is what prices a slow run.
+   */
+  it('stays linear on a long ASCII run once a non-ASCII character admits pass 6b (issue #134)', () => {
+    const timed = (input: string) => {
+      const started = process.hrtime.bigint();
+      const out = redact(input);
+      const ms = Number(process.hrtime.bigint() - started) / 1e6;
+      return { ms, out };
+    };
+    // Best of 3 runs per size; every run must write the SAME output, so a fast time cannot
+    // be bought by a build that stops masking.
+    const timedBest = (input: string) => {
+      const first = timed(input);
+      let ms = first.ms;
+      for (let i = 0; i < 2; i++) {
+        const r = timed(input);
+        assert.strictEqual(r.out, first.out, `run ${i + 2} of a timed ${input.length}-character input masked differently from run 1`);
+        ms = Math.min(ms, r.ms);
+      }
+      return { ms, out: first.out };
+    };
+    const k = 2000;
+    const unit = 'token';
+    const small = timedBest('password=x ' + unit.repeat(k) + '\u00e9');
+    assert.strictEqual(small.out, 'password=*** ' + unit.repeat(k) + '\u00e9', `the k=${k} input was not masked to exactly the expected output`);
+    assert.ok(small.ms < 1000,
+      `redact() took ${small.ms.toFixed(1)}ms on the x${k} (${small.out.length}-character) 'token' + accent input; the small size alone already exceeds what a linear pass costs (issue #134)`);
+    const big = timedBest('password=x ' + unit.repeat(k * 4) + '\u00e9');
+    assert.strictEqual(big.out, 'password=*** ' + unit.repeat(k * 4) + '\u00e9', `the k=${k * 4} input was not masked to exactly the expected output`);
+    const ratio = big.ms / Math.max(small.ms, 5);
+    assert.ok(ratio < 8,
+      `redact() scaled ${ratio.toFixed(1)}x for a 4x-longer 'token' run (${small.ms.toFixed(1)}ms -> ${big.ms.toFixed(1)}ms); pass 6b's attempt is re-walking the run at every keyword hit (issue #134)`);
+    assert.ok(big.ms < 250,
+      `redact() took ${big.ms.toFixed(1)}ms on a ${big.out.length}-character command with one non-ASCII character at the end; pass 6b's lead is unbounded again (issue #134)`);
+  });
+
+  /**
+   * The masking side of the same rewrite (dynamic/throughline#134). Making the attempt an
+   * anchored tail costs nothing only if it is anchored at the group end WITH THE START THE
+   * RULE'S OWN `\\w*` LEAD WOULD HAVE STOPPED AT: the keyword group is written back verbatim,
+   * but it is also what `widenedKeywordReplacement` decides on, so a start the lead could never
+   * reach - one with a non-ASCII character in front of the keyword - shows that guard a group it
+   * was never written against, and pass 6b re-masks on top of pass 6a's `***`, eating the
+   * characters a glued quote tail leaves visible. `token\u00e9api-key="a b"c` is that row: the
+   * crossing keyword `api-key` opens after a character the ASCII lead cannot step over, so its
+   * group is `api-key` (pure ASCII, already seen by pass 6a, so 6b leaves the match alone) and
+   * NOT `token\u00e9api-key`. Every row is pinned to the string BOTH engines give - measured against
+   * the jq hooks. These rows pass on `main` as well: they are not the regression test for issue
+   * #134 (the latency guard above is that one), they pin the mistake this shape of rewrite makes
+   * easy - taking the group START from the earlier in-run anchor instead of from where the rule's
+   * own lead stops, which no other row in the file catches. The pinned string is asserted even
+   * where jq is absent, so a row cannot silently degrade to a self-comparison.
+   */
+  it('anchors a crossing keyword at the start its own lead reaches, where a non-ASCII character blocks pass 6a\'s mask (issue #134)', () => {
+    const cases: readonly [string, string][] = [
+      ['token\u00e9api-key="a b"c', 'token\u00e9api-key=***c'],
+      ['password\u00e9client-id="q r"z', 'password\u00e9client-id=***z'],
+      ['secret\u00e9access-key="a b"c', 'secret\u00e9access-key=***c'],
+      ['token\u6f22client-id="a b"c', 'token\u6f22client-id=***c'],
+      // The same rows with a bare value, and with the value's separator glued behind a
+      // non-ASCII character: here pass 6a CANNOT mask (its ASCII lead stops at the accent, and
+      // its ASCII suffix stops at the next one, so no separator alternative is ever reached),
+      // which makes the CROSSING group end load-bearing - ask the run's own end instead and the
+      // secret comes back whole. Measured: with the crossing attempt moved from `crossEnd` to
+      // `runEnd` these two rows return `token\u00e9api-key\u6f22=S3cret` and `token\u00e9api-key\u6f22 is S3cret`
+      // unchanged, where every row above still masks (pass 6a covers those regardless of what
+      // pass 6b does). So the rows above pin the group START and these pin the group END.
+      ['token\u00e9api-key\u6f22=S3cret', 'token\u00e9api-key\u6f22=***'],
+      ['token\u00e9api-key\u6f22 is S3cret', 'token\u00e9api-key\u6f22 is ***'],
+    ];
+    const defs = JQ_PRESENT ? jqDefs() : null;
+    for (const [input, expected] of cases) {
+      const out = redact(input);
+      assert.strictEqual(out, expected, `pass 6b's attempt did not write the pinned output for ${JSON.stringify(input)}`);
+      if (defs !== null) {
+        const jqOut = execFileSync('jq', ['-nr', '--arg', 's', input, defs + ' $s | redact'], { encoding: 'utf8' }).replace(/\n$/, '');
+        assert.strictEqual(out, jqOut, `${JSON.stringify(input)}: the port diverged from the jq hooks (jq: ${JSON.stringify(jqOut)}, ts: ${JSON.stringify(out)})`);
+      }
     }
   });
 

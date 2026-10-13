@@ -168,9 +168,11 @@ All notable changes to throughline are documented here. Format loosely follows
   credential in userinfo position is a credential, and the gap was closed by widening
   `_url` in the hooks rather than by narrowing this port (see the issue #115 entry
   below). The generic keyword rule is quadratic in the length of a long unbroken run
-  of text, on both engines, on the full unclamped bash command; on the plugin side that
-  cost now lives only in the second (widened) word pass, because the first, ASCII pass is
-  driven from one scan of the word runs - see the issue #129 entry below.
+  of text, on both engines, on the full unclamped bash command. What changed on the plugin
+  side is what it hands to that rule: pass 6a is driven from one scan of the word runs
+  (issue #129) and pass 6b now is driven from one scan too (issue #134), so neither plugin
+  word pass asks the regex for the whole rule over a run any more - see the issue #129 and
+  #134 entries below.
   (`.omp-plugin` never had this gap: its shim shells out to the same `hooks/*.sh` scripts.)
 - **OpenCode plugin redaction pass 6a driven from one scan** (issue #129): the port's
   ASCII word pass was quadratic in the length of a single unbroken word run - one scan
@@ -188,10 +190,34 @@ All notable changes to throughline are documented here. Format loosely follows
   keyword opening on a case-fold character directly after a lowercase `tlredactsentinel`
   value is still masked, and a keyword far ahead of the current position is found once and
   reused, so a long command whose secret sits at the end costs the same as one whose secret
-  sits at the front. The remaining #114 quadratic - measured at ~461 ms for a 40 KB
+  sits at the front. The remaining #114 quadratic - measured at ~460 ms for a 40 KB
   ASCII run with a single accented character, which admits the widened pass through its
-  whole-string gate - now sits in the plugin's second word pass alone and is tracked as
-  dynamic/throughline#134.
+  whole-string gate - is fixed in the entry below.
+- **OpenCode plugin: redaction pass 6b's attempt was quadratic on a long ASCII run**
+  (issue #134): the widened pass is driven from one scan of the word runs, so a run gets a
+  bounded number of attempts, but each attempt ran the WHOLE rule - jq's unbounded `\w*` lead
+  plus the widened suffix - so one long ASCII word run carrying many keywords and no separator
+  still cost (keyword hits in the run) x (run length): `('token').repeat(k) + 'é'`, which is
+  one run plus the single non-ASCII character that lets pass 6b run at all, took 29.1 ms at
+  k=2,000 and 460.0 ms at k=8,000 - 15.8x for a 4x-longer run - in-process on the full
+  unclamped bash command. The attempt is
+  now anchored at the END of the keyword group, the way issue #129 anchored pass 6a: the driver
+  asks the rule's own separator and value groups, made sticky, at the end of the word run that
+  contains the keyword's end, and one attempt per run decides it - a keyword can leave its run
+  only through the hyphen of `api-key` / `access-key` / `client-id`, and that hyphen sits
+  exactly AT the run end, so the crossing keyword is the run's last occurrence and the other
+  group end is doomed. Output is byte-identical to the previous driver: measured over 1.26 M
+  generated inputs (random pieces, crossing-keyword shapes, and 10-20-segment long strings)
+  against a build of the pre-#134 pass, and the #114 / #118 / #129 latency guards, the seeded jq
+  differential and the `ENGINE_DIVERGENCES` pins all stay green. Byte-identical holds only
+  because the group START is still the position the rule's own ASCII lead stops at: the keyword
+  group is written back verbatim, but it is also what the widened pass's guard decides on, so a
+  start further back - one that pulls a non-ASCII character into the group - re-masks on top of
+  pass 6a. `tokenéapi-key="a b"c` must come back `tokenéapi-key=***c`, the same string `main`
+  and the jq hooks give; a start taken from the earlier in-run anchor instead eats the trailing
+  `c`. That row and three like it pin the group START in `redaction.test.ts`, and two more -
+  `tokenéapi-key漢=S3cret` and its ` is ` form, where pass 6a cannot reach the separator at all -
+  pin the crossing group END.
 - **Capture hook dropped every event on Windows** (issue #81 review): the jq program
   is one command-line argument (`redaction defs + capture filter`) and Windows caps a
   command line at 32,767 characters; the explanatory comments inside the defs had grown
