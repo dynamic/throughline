@@ -1687,6 +1687,28 @@ codex_fixture nosourcepath
 codex_patch "$WORK/codex/nosourcepath" 'del(.plugins[0].source.path)'
 codex_expect "codex check: marketplace entry with no source.path exits non-zero" 1 "source.path is missing from" "$WORK/codex/nosourcepath"
 
+# Pointing at the plugin is more than pointing at something that exists: ./skills/ is a
+# real directory holding no manifest, so an entry aimed at it installs nothing while a
+# pure existence test reports clean.
+codex_fixture sourceisdir
+codex_patch "$WORK/codex/sourceisdir" '.plugins[0].source.path = "./skills/"'
+codex_expect "codex check: a marketplace source.path with no manifest inside exits non-zero" 1 "does not contain a plugin manifest" "$WORK/codex/sourceisdir"
+
+# A malformed entry LIST is a different verdict from an unlisted plugin, and they are
+# easy to conflate: `.plugins[]?` swallows the index error when `.plugins` is a string,
+# so the count comes back a well-formed 0 and the run calls a file with no entry list
+# "unlisted". This pins the distinct message.
+codex_fixture pluginsnotarray
+codex_patch "$WORK/codex/pluginsnotarray" '.plugins = "nope"'
+codex_expect "codex check: a marketplace plugins list that is not an array exits non-zero" 1 ".plugins is not an array" "$WORK/codex/pluginsnotarray"
+
+# The one shape that reaches the count as EMPTY output rather than a number - an array
+# whose members are not objects, where select() dies indexing a string - so the numeric
+# guard has a case of its own instead of being reachable only in principle.
+codex_fixture pluginsnotobjects
+codex_patch "$WORK/codex/pluginsnotobjects" '.plugins = ["notanobject"]'
+codex_expect "codex check: a marketplace plugins array of non-objects exits non-zero" 1 "could not count marketplace entries" "$WORK/codex/pluginsnotobjects"
+
 # The manifest's `name` is the identity Codex installs under, and every case above
 # leaves it at its real value - so a check that hardcoded 'throughline' would pass
 # the whole suite. These two vary the MANIFEST side: a renamed plugin (no entry

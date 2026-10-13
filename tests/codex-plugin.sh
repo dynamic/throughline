@@ -99,10 +99,21 @@ require_path "$MANIFEST_SKILLS" "$MANIFEST" "manifest .skills"
 NAME=$(jq -r '.name // empty' "$MANIFEST" | tr -d '\r')
 [ -n "$NAME" ] || fail "manifest has no .name in $MANIFEST"
 
-# The count is guarded on its VALUE rather than jq's exit status: `| tr` replaces
-# jq's status with tr's, and a query that could not run (a .plugins list that is
-# not an array, so indexing a member fails mid-iteration) writes nothing at all -
-# which would otherwise fall into the "want exactly 1" branch below and be
+# The entry list has to BE AN ARRAY before the count below can mean anything. Without
+# the gate a non-array is reported as something it is not: when `.plugins` is a string
+# `.plugins[]?` swallows the index error, the count comes back a well-formed 0, and the
+# run says "no marketplace entry named 'x'" about a file that has no entry list at all.
+# An object is worse - `[]?` iterates its values, so an object whose one value happens
+# to carry the name would be counted as a listing of exactly that one entry.
+if ! jq -e '.plugins | type == "array"' "$MARKETPLACE" >/dev/null 2>&1; then
+  fail "marketplace .plugins is not an array in $MARKETPLACE"
+fi
+
+# The count is guarded on its VALUE rather than on jq's exit status, because `| tr`
+# replaces jq's status with tr's. With the array gate above, the shape that reaches the
+# count as EMPTY output is an array whose members are not objects: `select(.name == $n)`
+# dies indexing a member of a string, jq writes nothing, and tr still reports success.
+# A query that could not run must not fall into the "want exactly 1" branch below and be
 # reported as a listing problem it is not.
 COUNT=$(jq -r --arg n "$NAME" '[.plugins[]? | select(.name == $n)] | length' "$MARKETPLACE" | tr -d '\r')
 case "$COUNT" in
@@ -119,6 +130,16 @@ fi
 SOURCE_PATH=$(jq -r --arg n "$NAME" \
   '(.plugins[]? | select(.name == $n) | .source.path) // empty' "$MARKETPLACE" | tr -d '\r')
 require_path "$SOURCE_PATH" "$MARKETPLACE" "marketplace entry '$NAME' source.path"
+
+# Pointing at the plugin is more than pointing at something that exists: `./hooks/` is a
+# real directory that holds no manifest, and an entry aimed at it installs nothing. This
+# repo's layout puts the plugin at the repo root and its entry says `./`, so the file
+# below IS the one already read at the top - asserted rather than assumed, because the
+# pairing between an entry and a manifest is exactly what this check exists to pin.
+# (The manifest itself is still read from $ROOT: the entry can only be identified by the
+# manifest's own name, so the two reads cannot be ordered the other way round.)
+[ -f "$ROOT/$SOURCE_PATH/.codex-plugin/plugin.json" ] \
+  || fail "marketplace entry '$NAME' source.path does not contain a plugin manifest: '$SOURCE_PATH' in $MARKETPLACE (looked for $ROOT/$SOURCE_PATH/.codex-plugin/plugin.json)"
 
 # 4. `version` is optional in the marketplace schema and this repo's entry does
 #    not carry one today - the manifest is the single source of truth, and
