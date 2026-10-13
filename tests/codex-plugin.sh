@@ -7,11 +7,10 @@
 #   .codex-plugin/plugin.json          the manifest Codex loads
 #   .agents/plugins/marketplace.json   the marketplace entry that offers it
 #
-# Two files the Codex plugin installs from have to agree with each other and with
-# the repo layout, and a disagreement fails silently at install time: a moved
-# skills/ directory means Codex installs the plugin with no skills, and a renamed
-# plugin, or an entry pointing at a directory that holds no manifest, means the
-# marketplace entry resolves to nothing. This script is what pins that.
+# A disagreement between them fails silently at install time: a moved skills/
+# directory means Codex installs the plugin with no skills, and a renamed plugin, or
+# an entry pointing at a directory that holds no manifest, means the marketplace entry
+# resolves to nothing. This script is what pins that.
 #
 # The fields are read BY NAME, not collected by a generic "./" walk over every
 # string in the file: a walk can only prove that the "./" strings still PRESENT in
