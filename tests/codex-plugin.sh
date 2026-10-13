@@ -7,11 +7,11 @@
 #   .codex-plugin/plugin.json          the manifest Codex loads
 #   .agents/plugins/marketplace.json   the marketplace entry that offers it
 #
-# Before this script, nothing checked that a path either file names actually
-# exists, or that the marketplace entry still points at the plugin the manifest
-# describes. Both fail silently at install time: a moved skills/ directory means
-# Codex installs the plugin with no skills, and a renamed plugin means the
-# marketplace entry resolves to nothing.
+# Two files the Codex plugin installs from have to agree with each other and with
+# the repo layout, and a disagreement fails silently at install time: a moved
+# skills/ directory means Codex installs the plugin with no skills, and a renamed
+# plugin, or an entry pointing at a directory that holds no manifest, means the
+# marketplace entry resolves to nothing. This script is what pins that.
 #
 # The fields are read BY NAME, not collected by a generic "./" walk over every
 # string in the file: a walk can only prove that the "./" strings still PRESENT in
@@ -132,14 +132,23 @@ SOURCE_PATH=$(jq -r --arg n "$NAME" \
 require_path "$SOURCE_PATH" "$MARKETPLACE" "marketplace entry '$NAME' source.path"
 
 # Pointing at the plugin is more than pointing at something that exists: `./hooks/` is a
-# real directory that holds no manifest, and an entry aimed at it installs nothing. This
-# repo's layout puts the plugin at the repo root and its entry says `./`, so the file
-# below IS the one already read at the top - asserted rather than assumed, because the
-# pairing between an entry and a manifest is exactly what this check exists to pin.
-# (The manifest itself is still read from $ROOT: the entry can only be identified by the
-# manifest's own name, so the two reads cannot be ordered the other way round.)
-[ -f "$ROOT/$SOURCE_PATH/.codex-plugin/plugin.json" ] \
-  || fail "marketplace entry '$NAME' source.path does not contain a plugin manifest: '$SOURCE_PATH' in $MARKETPLACE (looked for $ROOT/$SOURCE_PATH/.codex-plugin/plugin.json)"
+# real directory that holds no manifest, and an entry aimed at it installs nothing. And
+# finding A manifest there is not yet finding THE plugin - an entry named `throughline`
+# can point at a directory holding some other plugin's manifest, which is why the name in
+# that file is compared rather than taken on faith. This repo's layout puts the plugin at
+# the repo root and its entry says `./`, so the manifest below is the one already read at
+# the top; asserting it is the point, since the entry-to-manifest pairing is exactly what
+# this check exists to pin. (The manifest read at the top still comes from $ROOT: the
+# entry can only be identified by that manifest's name, so the two reads cannot be
+# ordered the other way round.)
+TARGET_MANIFEST="$ROOT/$SOURCE_PATH/.codex-plugin/plugin.json"
+[ -f "$TARGET_MANIFEST" ] \
+  || fail "marketplace entry '$NAME' source.path does not contain a plugin manifest: '$SOURCE_PATH' in $MARKETPLACE (looked for $TARGET_MANIFEST)"
+# An unreadable or nameless manifest at that path is a mismatch, not a pass: the empty
+# value lands in the comparison below and fails there.
+TARGET_NAME=$(jq -r '.name // empty' "$TARGET_MANIFEST" | tr -d '\r')
+[ "$TARGET_NAME" = "$NAME" ] \
+  || fail "marketplace entry '$NAME' source.path points at a different plugin: '$SOURCE_PATH' in $MARKETPLACE (that manifest's name is '${TARGET_NAME:-<none>}')"
 
 # 4. `version` is optional in the marketplace schema and this repo's entry does
 #    not carry one today - the manifest is the single source of truth, and

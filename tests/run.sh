@@ -1694,6 +1694,17 @@ codex_fixture sourceisdir
 codex_patch "$WORK/codex/sourceisdir" '.plugins[0].source.path = "./skills/"'
 codex_expect "codex check: a marketplace source.path with no manifest inside exits non-zero" 1 "does not contain a plugin manifest" "$WORK/codex/sourceisdir"
 
+# A manifest at the other end of source.path is not yet THE plugin: an entry named
+# throughline can point at a directory holding some other plugin's manifest, and every
+# name match above is against the root manifest. The nested manifest here is written by
+# the fixture itself (the copy in codex_fixture holds only the two files the check reads,
+# plus skills/), so the case stages a real second plugin rather than a path string.
+codex_fixture sourceothersub
+codex_patch "$WORK/codex/sourceothersub" '.plugins[0].source.path = "./sub/"' \
+  && { mkdir -p "$WORK/codex/sourceothersub/sub/.codex-plugin"
+       printf '{"name":"other-plugin"}\n' > "$WORK/codex/sourceothersub/sub/.codex-plugin/plugin.json"; }
+codex_expect "codex check: a marketplace source.path at another plugin's manifest exits non-zero" 1 "points at a different plugin" "$WORK/codex/sourceothersub"
+
 # A malformed entry LIST is a different verdict from an unlisted plugin, and they are
 # easy to conflate: `.plugins[]?` swallows the index error when `.plugins` is a string,
 # so the count comes back a well-formed 0 and the run calls a file with no entry list
