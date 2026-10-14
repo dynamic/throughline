@@ -1576,6 +1576,188 @@ else
   bad "jq defs: emitted text is $(cat "$WORK/defs-len.txt") chars, over the 20000 budget"
 fi
 
+# --- Codex plugin manifest (issue #112) ----------------------------------------
+# tests/codex-plugin.sh checks .codex-plugin/plugin.json against
+# .agents/plugins/marketplace.json - the two files Codex installs the plugin
+# from. Routing it through this file is what enforces it: .local-ci.json's "hook
+# tests" and every CI leg already run run.sh, so the check needs no declaration of
+# its own to be enforced locally and in CI.
+#
+# A negative case has to fail for the reason it STAGES, so codex_expect requires
+# both the exit status and a substring of stderr. Exit status alone would let a
+# fixture that died for an unrelated reason (a mis-copied file, a missing jq call)
+# read as a pass - the same trap cap_line() documents above.
+codex_fixture() {
+  cf_root="$WORK/codex/$1"
+  mkdir -p "$cf_root/.codex-plugin" "$cf_root/.agents/plugins"
+  # The copy holds only what the check reads, plus the directories those files
+  # reference (skills/, and the plugin root itself - the fixture root). Named
+  # fragility: if a manifest ever advertises a ./-path somewhere else in the tree,
+  # this copy has to grow with it; until it does, every fixture fails with "does
+  # not resolve" while the real-tree case below still passes. A half-copied fixture
+  # is reported through bad() so it stays a visible failure, and the chain is
+  # written as if/then rather than `A && B || C`, which would also report a setup
+  # failure when every cp succeeded but something after the || failed.
+  if cp "$ROOT/.codex-plugin/plugin.json" "$cf_root/.codex-plugin/" \
+    && cp "$ROOT/.agents/plugins/marketplace.json" "$cf_root/.agents/plugins/" \
+    && cp -R "$ROOT/skills" "$cf_root/"; then
+    :
+  else
+    bad "codex fixture setup failed: $cf_root"
+  fi
+}
+# codex_expect <label> <want-exit> <stderr needle or ''> <root>
+codex_expect() {
+  ce_want=$2; ce_needle=$3; ce_root=$4
+  # `$?` here is the check script's status: a plain assignment's exit status IS the
+  # command substitution's, and ce_* are plain assignments, not `local` (which
+  # would reset it to its own 0).
+  ce_err=$(sh "$ROOT/tests/codex-plugin.sh" "$ce_root" 2>&1 >/dev/null)
+  ce_rc=$?
+  if [ "$ce_rc" != "$ce_want" ]; then
+    bad "$1 (exit $ce_rc, want $ce_want)"
+    printf '       got: %s\n' "$ce_err"
+  elif [ -z "$ce_needle" ]; then
+    ok "$1"
+  else
+    has "$1" "$ce_err" "$ce_needle"
+  fi
+}
+# codex_patch <root> <jq filter> - rewrite one manifest inside a fixture. The mv is
+# chained to && and jq runs with -e so a filter that fails, or that succeeds while
+# emitting nothing, cannot leave an empty file behind: the check would then reject
+# it as invalid JSON and the assertion would pass for a reason that has nothing to
+# do with the drift being staged.
+codex_patch() {
+  if jq -e "$2" "$1/.agents/plugins/marketplace.json" > "$1/.agents/plugins/marketplace.json.new" 2>/dev/null; then
+    mv "$1/.agents/plugins/marketplace.json.new" "$1/.agents/plugins/marketplace.json"
+  else
+    bad "codex fixture patch failed: $1 ($2)"
+  fi
+}
+codex_patch_manifest() {
+  if jq -e "$2" "$1/.codex-plugin/plugin.json" > "$1/.codex-plugin/plugin.json.new" 2>/dev/null; then
+    mv "$1/.codex-plugin/plugin.json.new" "$1/.codex-plugin/plugin.json"
+  else
+    bad "codex fixture patch failed: $1 ($2)"
+  fi
+}
+
+codex_fixture good
+codex_expect "codex check: intact copy exits 0" 0 "" "$WORK/codex/good"
+codex_expect "codex check: the real tree exits 0 (root passed explicitly)" 0 "" "$ROOT"
+# A no-arg run has to be its own call: every case above hands the script a root, so
+# the default - resolve the root from the script's own location - would otherwise be
+# exercised only when a person runs the script directly. Run from $WORK so the
+# current directory cannot be what makes it pass.
+ce_noarg_rc=0
+ce_noarg_err=$(cd "$WORK" && sh "$ROOT/tests/codex-plugin.sh" 2>&1 >/dev/null) || ce_noarg_rc=$?
+if [ "$ce_noarg_rc" = "0" ]; then
+  ok "codex check: no-arg run resolves the root from its own location"
+else
+  bad "codex check: no-arg run resolves the root from its own location (exit $ce_noarg_rc, want 0)"
+  printf '       got: %s\n' "$ce_noarg_err"
+fi
+codex_expect "codex check: a root dir that does not exist exits non-zero" 1 "no such root directory" "$WORK/codex/never-created"
+
+# A manifest that no longer names its skills directory must fail, not pass for lack
+# of anything to check - so both the deleted key and a value in a form that could
+# never resolve are pinned by name, each guarding on its own message.
+codex_fixture noskillkey
+codex_patch_manifest "$WORK/codex/noskillkey" 'del(.skills)'
+codex_expect "codex check: manifest with no .skills key exits non-zero" 1 "manifest .skills is missing from" "$WORK/codex/noskillkey"
+
+codex_fixture skillunprefixed
+codex_patch_manifest "$WORK/codex/skillunprefixed" '.skills = "skills/"'
+codex_expect "codex check: manifest .skills without the ./ prefix exits non-zero" 1 "manifest .skills must be a ./-relative path" "$WORK/codex/skillunprefixed"
+
+# A referenced path that does not exist, from both directions: the skills dir the
+# manifest advertises is gone from the tree, and the marketplace entry points at a
+# directory that was never there. Each names the literal path in the needle, so the
+# case cannot pass on some other "does not resolve".
+codex_fixture noskillsdir
+rm -rf "$WORK/codex/noskillsdir/skills"
+codex_expect "codex check: a missing skills dir exits non-zero" 1 "'./skills/' in $WORK/codex/noskillsdir/.codex-plugin/plugin.json" "$WORK/codex/noskillsdir"
+
+codex_fixture badsourcepath
+codex_patch "$WORK/codex/badsourcepath" '.plugins[0].source.path = "./no-such-dir/"'
+codex_expect "codex check: a marketplace source.path that does not resolve exits non-zero" 1 "'./no-such-dir/' in $WORK/codex/badsourcepath/.agents/plugins/marketplace.json" "$WORK/codex/badsourcepath"
+
+codex_fixture nosourcepath
+codex_patch "$WORK/codex/nosourcepath" 'del(.plugins[0].source.path)'
+codex_expect "codex check: marketplace entry with no source.path exits non-zero" 1 "source.path is missing from" "$WORK/codex/nosourcepath"
+
+# Pointing at the plugin is more than pointing at something that exists: ./skills/ is a
+# real directory holding no manifest, so an entry aimed at it installs nothing while a
+# pure existence test reports clean.
+codex_fixture sourceisdir
+codex_patch "$WORK/codex/sourceisdir" '.plugins[0].source.path = "./skills/"'
+codex_expect "codex check: a marketplace source.path with no manifest inside exits non-zero" 1 "does not contain a plugin manifest" "$WORK/codex/sourceisdir"
+
+# A manifest at the other end of source.path is not yet THE plugin: an entry named
+# throughline can point at a directory holding some other plugin's manifest, and every
+# name match above is against the root manifest. The nested manifest here is written by
+# the fixture itself (the copy in codex_fixture holds only the two files the check reads,
+# plus skills/), so the case stages a real second plugin rather than a path string.
+codex_fixture sourceothersub
+codex_patch "$WORK/codex/sourceothersub" '.plugins[0].source.path = "./sub/"' \
+  && { mkdir -p "$WORK/codex/sourceothersub/sub/.codex-plugin"
+       printf '{"name":"other-plugin"}\n' > "$WORK/codex/sourceothersub/sub/.codex-plugin/plugin.json"; }
+codex_expect "codex check: a marketplace source.path at another plugin's manifest exits non-zero" 1 "points at a different plugin" "$WORK/codex/sourceothersub"
+
+# A malformed entry LIST is a different verdict from an unlisted plugin, and they are
+# easy to conflate: `.plugins[]?` swallows the index error when `.plugins` is a string,
+# so the count comes back a well-formed 0 and the run calls a file with no entry list
+# "unlisted". This pins the distinct message.
+codex_fixture pluginsnotarray
+codex_patch "$WORK/codex/pluginsnotarray" '.plugins = "nope"'
+codex_expect "codex check: a marketplace plugins list that is not an array exits non-zero" 1 ".plugins is not an array" "$WORK/codex/pluginsnotarray"
+
+# The one shape that reaches the count as EMPTY output rather than a number - an array
+# whose members are not objects, where select() dies indexing a string - so the numeric
+# guard has a case of its own instead of being reachable only in principle.
+codex_fixture pluginsnotobjects
+codex_patch "$WORK/codex/pluginsnotobjects" '.plugins = ["notanobject"]'
+codex_expect "codex check: a marketplace plugins array of non-objects exits non-zero" 1 "could not count marketplace entries" "$WORK/codex/pluginsnotobjects"
+
+# The manifest's `name` is the identity Codex installs under, and every case above
+# leaves it at its real value - so a check that hardcoded 'throughline' would pass
+# the whole suite. These two vary the MANIFEST side: a renamed plugin (no entry
+# matches) and a deleted name (a different verdict, and a different message, from an
+# unmatched one).
+codex_fixture renamedmanifest
+codex_patch_manifest "$WORK/codex/renamedmanifest" '.name = "renamed-in-manifest"'
+codex_expect "codex check: manifest name with no matching marketplace entry exits non-zero" 1 "no marketplace entry named 'renamed-in-manifest'" "$WORK/codex/renamedmanifest"
+
+codex_fixture noname
+codex_patch_manifest "$WORK/codex/noname" 'del(.name)'
+codex_expect "codex check: manifest with no name at all exits non-zero" 1 "manifest has no .name" "$WORK/codex/noname"
+
+# The marketplace side of the same pairing: the entry is renamed away from the
+# manifest, and a second entry is added so two compete for one install.
+codex_fixture renamedentry
+codex_patch "$WORK/codex/renamedentry" '.plugins[0].name = "other-plugin"'
+codex_expect "codex check: marketplace name drift from the manifest exits non-zero" 1 "no marketplace entry named 'throughline'" "$WORK/codex/renamedentry"
+
+codex_fixture dupe
+codex_patch "$WORK/codex/dupe" '.plugins += [.plugins[0]]'
+codex_expect "codex check: two marketplace entries for one plugin exit non-zero" 1 "want exactly 1" "$WORK/codex/dupe"
+
+# Version parity: this repo's entry carries no version today (the manifest is the
+# source of truth), so a missing one is a pass - pinned by the intact-copy case
+# above - and a present one has to be the version in the tree.
+codex_fixture wrongversion
+codex_patch "$WORK/codex/wrongversion" '.plugins[0].version = "0.0.1"'
+codex_expect "codex check: marketplace version disagreeing with the manifest exits non-zero" 1 "version drift" "$WORK/codex/wrongversion"
+
+# A zero-byte file specifically, not merely malformed bytes: `jq empty` accepts an
+# empty file (a value stream with no values is a valid stream), so this is the case
+# that pins the JSON gate being strong enough to reject a manifest that describes
+# nothing at all.
+codex_fixture emptymarketplace
+: > "$WORK/codex/emptymarketplace/.agents/plugins/marketplace.json"
+codex_expect "codex check: zero-byte marketplace file exits non-zero" 1 "invalid JSON" "$WORK/codex/emptymarketplace"
+
 echo "----------------------"
 printf 'passed: %s   failed: %s\n' "$PASS" "$FAIL"
 [ "$SKIPPED_WINDOWS" -eq 0 ] || printf '  (%s permission-based assertion(s) skipped on Windows/NTFS - see is_windows() above)\n' "$SKIPPED_WINDOWS"
