@@ -1,6 +1,6 @@
 ---
 name: consolidate-memory
-description: Memory file hygiene for ~/.claude/projects/<project-slug>/memory/ - detects duplicates, stale entries, unindexed orphans, index orphans, and dangling [[wikilinks]]. Use when the user asks to clean up, dedupe, or audit memory files or MEMORY.md.
+description: Memory file hygiene for ~/.claude/projects/<project-slug>/memory/ - detects duplicates, stale entries, unindexed orphans, index orphans, and dangling [[wikilinks]]. Use when the user says "consolidate memory", "clean up memory", or asks to dedupe or audit memory files or MEMORY.md.
 license: MIT
 ---
 
@@ -48,7 +48,7 @@ Present candidates in a markdown table format:
 | File | Problem | Evidence | Proposed Action | Confidence |
 |------|---------|----------|-----------------|------------|
 | project_x.md | Duplicate | 92% similar to project_y.md | Merge into project_y.md | High |
-| project_old.md | Stale | Created 180 days ago | Review and update or delete (a delete lists its inbound `[[project_old]]` links and needs an unlink-or-block choice) | Medium |
+| project_old.md | Stale | Not modified in 180 days | Review and update or delete (a delete lists its inbound `[[project_old]]` links and needs an unlink-or-block choice) | Medium |
 | orphan.md | Unindexed | Not in MEMORY.md | Add to index | High |
 | sibling.md | Dangling wikilink | `[[original-name]]` has no matching `name:`; the content now lives in split-half-b.md | Repoint to `[[split-half-b]]` (the `name:` of split-half-b.md) | Medium |
 | notes.md | Dangling wikilink (missing `name:`) | `[[notes]]` matches notes.md, which has no frontmatter block at all | Write notes.md a full frontmatter block in the handoff shape (`name`, `description`, `metadata:` map) with `name: notes`; the link already reads `[[notes]]`, leave it | High |
