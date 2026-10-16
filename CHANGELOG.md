@@ -111,7 +111,7 @@ All notable changes to throughline are documented here. Format loosely follows
   size-discipline step - not next-session output.
 
 ### Fixed
-- **Skill docs: dead README pointers, description length, staleness test**: `handoff`, `consolidate` and `onboard` cited README sections ("Git worktrees", "Local by default", "Housekeeping", the `THROUGHLINE_DATA_DIR` convention) that live in `docs/REFERENCE.md`; pointers fixed. `handoff`'s "Phase 1 step 4 below" now reads "above". `consolidate-memory` states one duplicate threshold (>90% flag, 80-90% manual review) and tests staleness by file modification time, not `originSessionId` (a session id). The four skill descriptions are trimmed to 300 characters or fewer, triggers kept.
+- **Skill docs: dead README pointers, description length, staleness test**: `handoff`, `consolidate` and `onboard` cited README sections ("Git worktrees", "Local by default", "Housekeeping", the `THROUGHLINE_DATA_DIR` convention) that live in `docs/REFERENCE.md`; pointers fixed. `handoff`'s "Phase 1 step 4 below" now reads "above". `consolidate-memory` states one duplicate threshold (>90% flag, 80-90% manual review) and tests staleness by file modification time, not `originSessionId` (a session id). The four skill descriptions are trimmed to 300 characters or fewer, triggers kept except the "consolidation pass" phrase on `consolidate` (it collided with `consolidate-memory`).
 - **OpenCode plugin port of the issue #81 rules, plus a parity test** (issue #90):
   the OpenCode plugin carries its own TypeScript port of the jq redaction defs, and the
   rules added for issue #81 were not ported at the same time - an OpenCode session running
