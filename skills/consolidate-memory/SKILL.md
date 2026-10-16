@@ -1,6 +1,6 @@
 ---
 name: consolidate-memory
-description: Memory file hygiene and consolidation for project memories - detects duplicates, stale entries, unindexed orphans, index orphans, and dangling wikilinks ([[target]] links that resolve to no memory file) in ~/.claude/projects/<project-slug>/memory/
+description: Memory file hygiene for ~/.claude/projects/<project-slug>/memory/ - detects duplicates, stale entries, unindexed orphans, index orphans, and dangling [[wikilinks]]. Use when the user asks to clean up, dedupe, or audit memory files or MEMORY.md.
 license: MIT
 ---
 
@@ -10,12 +10,10 @@ license: MIT
 
 **Data directory** (resolve once): `$THROUGHLINE_DATA_DIR` if set, else `<project-root>/.claude/throughline/`. Below, `DATA` refers to that path.
 
-Handles memory file hygiene for project memories, scanning for duplicates, stale entries, unindexed orphans, index orphans, and dangling wikilinks in `~/.claude/projects/<project-slug>/memory/`.
-
 ## Problem Types Scanned
 
-1. **Duplicates**: Similar descriptions (>80% text similarity) across multiple files → Merge into canonical entry
-2. **Stale entries**: Files with `originSessionId` older than 90 days without updates → Flag for review/update
+1. **Duplicates**: Similar descriptions (>90% text similarity; 80-90% is manual review) across multiple files → Merge into canonical entry
+2. **Stale entries**: Files not modified in over 90 days (file modification time) → Flag for review/update
 3. **Unindexed orphans**: `.md` files present but not linked in MEMORY.md → Add to index or mark obsolete
 4. **Index orphans**: MEMORY.md links to non-existent files → Remove from index
 5. **Dangling wikilinks**: a `[[target]]` in any memory file whose `target` matches the frontmatter `name:` of no file in the memory directory → Repoint to the file that now holds that content, or list it for the operator. This skill's own phases delete a file when a merge removes a duplicate, and another skill or an earlier session may have split or renamed a topic file - so a pass that fixes the index can silently kill every inbound link to a file that no longer exists, and none of the four other scans notices.
@@ -25,14 +23,14 @@ Handles memory file hygiene for project memories, scanning for duplicates, stale
 1. Find the current project's memory directory: `$CLAUDE_MEMORY_DIR` if set, else `~/.claude/projects/<project-slug>/memory/`. Record that path exactly as found in `dir` and never overwrite it with a resolved path: when an edit needs a physical path, resolve a copy (see Safety Guidelines)
 2. Inventory `MEMORY.md` + all `*.md` topic files in the memory directory
 3. Parse MEMORY.md index to build a map of indexed files vs actual files
-4. Load topic files and extract frontmatter for analysis of `originSessionId`, type, and metadata
+4. Load topic files and extract frontmatter (type, description, metadata) for analysis
 5. Collect each file's **top-level** frontmatter `name:` into a set of known names - this is the set `[[wikilinks]]` resolve against in Phase 2. Resolving by `name:` is this skill's own convention: `skills/handoff/SKILL.md` specifies the field (`name: short-kebab-case-slug`) but does not document how the harness resolves `[[...]]`, so if a harness turns out to resolve by filename, the repoint targets below must follow that instead. Read only the top-level key - a `name:` nested under `metadata:` is not the file's name - drop a trailing YAML comment, and unquote the scalar (`name: "split-half-b"` is the name `split-half-b`, and a doubled `''` inside single quotes is one literal quote): comparing the quoted form would report every link to it as dead. Keep the filenames inventoried in step 2 alongside this set as a separate **filename inventory** - the filename checks in Phase 2 compare against those listed basenames and never touch the filesystem. If the same `name:` appears on two files, record a `Duplicate name:` finding: it bites when a proposed repoint target is that name, because such a target cannot be resolved to one file - propose a distinct name for one of the two files and list the inbound links that have to follow it
 
 ## Phase 2: Extract Candidates
 
 Scan for the five problem types listed above:
 - Calculate text similarity between descriptions (frontmatter `description` field or first heading paragraph) using any sequence comparison method - similarity > 90% flags as duplicate candidate, 80-90% as manual review
-- Extract `originSessionId` from frontmatter and compare against staleness threshold (90 days default) - older files with no recent `updatedAt` are stale
+- Compare each file's modification time against the staleness threshold (90 days default); older files are stale. `originSessionId` in frontmatter is a session id, not a date, so do not use it for age
 - Cross-reference actual files against indexed entries in MEMORY.md
 - Identify any dead links in the index
 - Extract every `[[...]]` wikilink across all `*.md` in the memory directory, `MEMORY.md` included, and flag any target absent from the Phase 1 name set. These parsing details decide whether the scan is right or merely confident:
@@ -97,7 +95,7 @@ After human approval:
 
 ## Configuration
 
-- Similarity threshold: 80% by default (configurable)
+- Duplicate threshold: >90% similarity flags a duplicate, 80-90% goes to manual review (configurable)
 - Staleness threshold: 90 days by default (configurable)
 
 ## Relationship to Other Skills

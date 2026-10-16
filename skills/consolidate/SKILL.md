@@ -1,6 +1,6 @@
 ---
 name: consolidate
-description: Consolidation pass over the handoff session logs - mines the timestamped `DATA/logs/handoff-*.md` records for lessons recurring across sessions and proposes promoting them into durable homes, with a human gate on every promotion. Does NOT clean up or restructure memory files (`~/.claude/projects/<slug>/memory/`, `MEMORY.md`) - that store belongs to `consolidate-memory`, which this skill shares only a name with. Run when the user says "consolidate handoffs", "mine the handoff logs", "consolidation pass", or "promote lessons" - or roughly monthly, or when HANDOFF.md has grown stale or bloated and the same lessons keep being re-learned session after session.
+description: Mine handoff session logs for lessons recurring across sessions and propose promoting them to durable homes, with a human gate. Use when the user says "consolidate handoffs", "mine the handoff logs", "promote lessons", or when HANDOFF.md is bloated. Not for memory files (use consolidate-memory).
 license: MIT
 ---
 
@@ -15,12 +15,12 @@ needing to be re-learned.
 **Data directory** (resolve once): `$THROUGHLINE_DATA_DIR` if set, else
 `<project-root>/.claude/throughline/`. Below, `DATA` refers to that path. In a
 linked git worktree, `<project-root>` here is the **main** working tree, not the
-worktree itself (see README "Git worktrees") - so `DATA` is shared across every
+worktree itself (see `docs/REFERENCE.md` "Git worktrees") - so `DATA` is shared across every
 worktree of the repo.
 
 - Session logs: `DATA/logs/handoff-YYYY-MM-DD-HHMM.md`
 - Some repos also keep session logs at `.agent/handoff/logs/` (the singular
-  `THROUGHLINE_DATA_DIR` convention documented in the README - skip it if that
+  `THROUGHLINE_DATA_DIR` convention documented in `docs/REFERENCE.md` - skip it if that
   path already *is* `DATA/logs/`) or `.agent/handoffs/` (a plural variant used
   by other harnesses). When either directory exists and isn't already covered
   by `DATA`, mine it too - the two names differ by one letter and are easy to
