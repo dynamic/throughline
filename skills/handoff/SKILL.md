@@ -1,6 +1,6 @@
 ---
 name: handoff
-description: Distill the current session into the durable HANDOFF.md plus a timestamped session log, using the throughline capture buffer as source. Run when the user asks to "handoff", "wrap up", "save the session", "checkpoint", or when the session is clearly winding down (work complete, user signals done/thanks/that's all). Proactively offer or run this at detected wrap-up — do not wait to be asked.
+description: Distill the session into HANDOFF.md plus a session log from the capture buffer. Use when the user says "handoff", "wrap up", "save the session", "checkpoint", or signals done (thanks, that's all). Offer it proactively at wrap-up.
 license: MIT
 ---
 
@@ -13,7 +13,7 @@ judgment layer that decides signal vs. noise.
 **Data directory** (resolve once): `$THROUGHLINE_DATA_DIR` if set, else
 `<project-root>/.claude/throughline/`. Below, `DATA` refers to that path. In a
 linked git worktree, `<project-root>` here is the **main** working tree, not the
-worktree itself (see README "Git worktrees") - so `DATA` is shared across every
+worktree itself (see `docs/REFERENCE.md` "Git worktrees") - so `DATA` is shared across every
 worktree of the repo.
 
 - Durable handoff: `DATA/HANDOFF.md`
@@ -53,7 +53,7 @@ refined by the next. Never run it more than once per unchanged state.
 4. **Check for legacy durable-fact sections, unconditionally — not just when the
    file is over budget.** If `DATA/HANDOFF.md` still has an "Architecture &
    Services", "Environment & Infrastructure", "Tools & Integrations",
-   "Authentication & Secrets", or "Key Files & Resources" section (the pre-this-PR
+   "Authentication & Secrets", or "Key Files & Resources" section (the older
    template), migrate it this run per Phase 5's migration note, regardless of the
    file's current size. A file can carry all five sections and still read as
    "under budget" today; leaving them until the size gate trips just delays the
@@ -153,8 +153,7 @@ having to carry it. Omit the line entirely for a session that starts something n
 2. Add a link to the new session log under "Recent Session Logs" — keep only the
    **last 5**.
 3. **Now that the file is final, measure it — a stop condition, not guidance.** This
-   is the part that previously failed once already (see throughline#26: closed,
-   then regrown past budget in production). `HANDOFF.md` is read in full every
+   is the part that previously failed once already (it has regrown past budget before). `HANDOFF.md` is read in full every
    session — it is resident context, paid for on every turn, not a one-time write.
    Count it: `wc -l DATA/HANDOFF.md` and `wc -c DATA/HANDOFF.md`. Target **150
    lines / ~8KB (~2,000 tokens)**. The byte count is the binding number — this file
@@ -201,7 +200,7 @@ having to carry it. Omit the line entirely for a session that starts something n
 5. **Consume the buffers:** move distilled `DATA/buffer/session-*.md` into
    `DATA/buffer/archive/` so they aren't re-processed next session. Archive only,
    never delete: an archived buffer is the recovery path if a distillation later
-   turns out to have missed something. See "Housekeeping" in the README for when an
+   turns out to have missed something. See "Housekeeping" in `docs/REFERENCE.md` for when an
    archived buffer is old enough to actually delete.
 6. **Clear resolved breadcrumbs:** if `DATA/.capture-errors` exists and its contents
    were surfaced above (as a Phase 2 "Resolved Issues" entry or in the session log),
@@ -225,7 +224,7 @@ having to carry it. Omit the line entirely for a session that starts something n
 
 8. **Offer to commit + push the handoff artifacts** (offer only, never auto-run -
    the write already happened; this is the review-gated action). throughline's
-   data is local-only *by default* (see README "Local by default") - this offer
+   data is local-only *by default* (see `docs/REFERENCE.md` "Local by default") - this offer
    only ever produces a commit when the project has deliberately opted in by
    un-ignoring `HANDOFF.md`/`logs/`, so on an unmodified default layout it will
    correctly find nothing to stage and skip silently. Do not treat "nothing
@@ -238,7 +237,7 @@ having to carry it. Omit the line entirely for a session that starts something n
      `session-onboard.sh`'s gitignore nudge already applies - see its comment there).
    - **In a linked git worktree with worktree-sharing active, `DATA` lives under
      the MAIN working tree, not the worktree the session is actually running in**
-     (see README "Git worktrees"). Run `git check-ignore` with `-C` pointed at
+     (see `docs/REFERENCE.md` "Git worktrees"). Run `git check-ignore` with `-C` pointed at
      (or `cd` into) the directory that actually contains `DATA` before checking
      it, not the session's own cwd - `git check-ignore` on a path outside the
      repo it's invoked from fails with the same kind of fatal error as the
@@ -257,7 +256,7 @@ having to carry it. Omit the line entirely for a session that starts something n
      and/or the specific `DATA/logs/handoff-YYYY-MM-DD-HHMM.md` just written this
      session. Never a glob like `logs/handoff-*.md` (it would sweep in older,
      previously-declined session logs too), never `git add -A`, never `buffer/`
-     or `.capture-errors` (see README "Local by default" - those two paths stay
+     or `.capture-errors` (see `docs/REFERENCE.md` "Local by default" - those two paths stay
      gitignored even when a project opts in to tracking `HANDOFF.md`/`logs/`).
    - Propose a conventional message, e.g. `docs: session handoff - <brief summary>`,
      matching whatever commit-message convention the repo already follows.
@@ -298,7 +297,7 @@ Architecture/Environment/Tools/Auth/Key-Files content into memory topic files (P
 step 4), then delete those sections. Don't do this migration silently — report the
 diff same as any other handoff. **This check is unconditional, not just for an
 over-budget file** — run it whenever any of those five sections still exist, even if
-the file is currently under the 150/200-line target (see Phase 1 step 4 below).
+the file is currently under the 150/200-line target (see Phase 1 step 4 above).
 
 ---
 

@@ -1,6 +1,6 @@
 ---
 name: onboard
-description: Full project orientation at the start of a sustained session — reads the durable HANDOFF.md, checks live git/PR/issue state, and surfaces any unconsumed capture buffers. Use when starting work on a project, resuming after a break, or when the user says "onboard", "catch me up", "where were we", or "what's the state".
+description: Project orientation at session start - reads HANDOFF.md, checks live git/PR/issue state, surfaces unconsumed capture buffers. Use when starting or resuming work, or when the user says "onboard", "catch me up", "where were we", "what's the state".
 license: MIT
 ---
 
@@ -10,7 +10,7 @@ license: MIT
 The SessionStart hook already injects a lightweight pointer + git state; this skill
 is the **full** pass when you want depth.
 
-**Data directory:** `$THROUGHLINE_DATA_DIR` if set, else `<project-root>/.claude/throughline/`. Below, `DATA` refers to that path. In a linked git worktree, `<project-root>` here is the **main** working tree, not the worktree itself (see README "Git worktrees") - so `DATA` is shared across every worktree of the repo.
+**Data directory:** `$THROUGHLINE_DATA_DIR` if set, else `<project-root>/.claude/throughline/`. Below, `DATA` refers to that path. In a linked git worktree, `<project-root>` here is the **main** working tree, not the worktree itself (see `docs/REFERENCE.md` "Git worktrees") - so `DATA` is shared across every worktree of the repo.
 
 ---
 
@@ -18,7 +18,7 @@ is the **full** pass when you want depth.
 1. Read `DATA/HANDOFF.md` in full. If absent, note the project has no handoff yet.
 2. If the user referenced a recent task, open the relevant log under `DATA/logs/`.
 3. Check `DATA/buffer/session-*.md` for **unconsumed** buffers (a prior session that
-   ended without a handoff) — distill or summarize them before proceeding.
+   ended without a handoff) — distill or summarize them (the `handoff` skill consumes buffers) before proceeding.
 
 ## Phase 2: Check live state
 1. Version control: `git status -s`, current branch, ahead/behind remote.
