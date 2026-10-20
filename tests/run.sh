@@ -382,9 +382,9 @@ done
 # 2h4. value shapes. A password can legitimately be a command substitution, an
 #      escaped-space run, or have a quote glued onto its end; each must be
 #      consumed whole, with no fragment and no orphaned tail left behind.
-cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqlsubst","command":"mysql -u root -p$(cat pwfile) dbname"}}'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqlsubst","command":"mysql -u root -p$(echo xxxx) dbname"}}'
 SUB_LINE=$(cap_line mysqlsubst)
-hasnt "command-substitution -p value is consumed whole" "$SUB_LINE" 'pwfile)'
+hasnt "command-substitution -p value is consumed whole" "$SUB_LINE" 'xxxx)'
 has   "command-substitution -p value: mask sentinel is present" "$SUB_LINE" '-p*** dbname'
 cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqlescapedspace","command":"mysql -u root -pS3cret\\ with\\ space dbname"}}'
 ESC_LINE=$(cap_line mysqlescapedspace)
@@ -633,7 +633,7 @@ has   "bare tail after a quoted -p value: mask sentinel is present" "$(cap_line 
 cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqltaildouble","command":"mysql -u root -p\"pa ss\"word dbname"}}'
 hasnt "bare tail glued after a double-quoted -p value is not stored" "$(cap_line mysqltaildouble)" 'word dbname'
 has   "bare tail after a double-quoted -p value: mask sentinel is present" "$(cap_line mysqltaildouble)" '-p*** dbname'
-cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqltailsubst","command":"mysql -u root -p$(cat f)tail dbname"}}'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqltailsubst","command":"mysql -u root -p$(echo f)tail dbname"}}'
 hasnt "bare tail glued after a command substitution is not stored" "$(cap_line mysqltailsubst)" 'tail dbname'
 has   "bare tail after a command substitution: mask sentinel is present" "$(cap_line mysqltailsubst)" '-p*** dbname'
 
