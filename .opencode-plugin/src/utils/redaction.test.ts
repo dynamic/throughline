@@ -43,7 +43,7 @@ describe('Redaction Utilities', () => {
     it('should redact PEM private keys', () => {
       const pemKey = `-----BEGIN ${'PRIVATE'} KEY-----
 EXAMPLEKEYBODY
------END PRIVATE KEY-----`;
+-----END ${'PRIVATE'} KEY-----`;
       
       const result = redact(pemKey);
       assert.strictEqual(result, '***private-key-redacted***');
@@ -197,7 +197,7 @@ EXAMPLEKEYBODY`;
     it('should redact PEM private keys', () => {
       const pemKey = `-----BEGIN ${'PRIVATE'} KEY-----
 EXAMPLEKEYBODY
------END PRIVATE KEY-----`;
+-----END ${'PRIVATE'} KEY-----`;
       
       const result = redactPrompt(pemKey);
       assert.strictEqual(result, '***private-key-redacted***');

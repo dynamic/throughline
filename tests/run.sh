@@ -192,8 +192,8 @@ cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"gkey","co
 hasnt "google api key not stored" "$(grep gkey "$BUF/session-T.md")" 'AIzaxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'
 cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"pem","command":"echo -----BEGIN RSA PRIVATE'' KEY-----\nEXAMPLEKEYBODY\nEXAMPLEKEYBODY2\n-----END RSA PRIVATE'' KEY-----"}}'
 hasnt "pem key body (with END marker) not stored" "$(grep pem "$BUF/session-T.md")" 'EXAMPLEKEYBODY'
-cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"basicauth","command":"curl -H Authorization:Basic dXNlcjpwYXNzd29yZA=="}}'
-hasnt "basic-auth payload not stored" "$(grep basicauth "$BUF/session-T.md")" 'dXNlcjpwYXNzd29yZA'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"basicauth","command":"curl -H Authorization:Basic xxxxxxxxxxxxxxxxxx=="}}'
+hasnt "basic-auth payload not stored" "$(grep basicauth "$BUF/session-T.md")" 'xxxxxxxxxxxxxxxxxx'
 
 # 2c. PEM body with NO end marker (truncated/streamed key) is still redacted
 cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"pemnoeND","command":"echo -----BEGIN RSA PRIVATE'' KEY-----\nEXAMPLEKEYBODY\nEXAMPLETRAILER"}}'
@@ -228,9 +228,9 @@ has   "URL host/path after the credential is preserved, not deleted" "$CLONE_LIN
 # 2e4. a secret VALUE containing slashes (e.g. a realistic AWS-shaped key) is
 #      fully redacted, not truncated at the first '/' - regression check for
 #      the over-correction the @-exclusion-only fix above must not reintroduce.
-cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"awskey","command":"export AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"}}'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"awskey","command":"export AWS_SECRET_ACCESS_KEY=xxxxxxxxxxxxxxx/xxxxxxxxxxxxx/xxxxxxxxxx"}}'
 AWS_LINE=$(grep awskey "$BUF/session-T.md")
-hasnt "AWS secret value (with slashes) is not stored" "$AWS_LINE" 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY'
+hasnt "AWS secret value (with slashes) is not stored" "$AWS_LINE" 'xxxxxxxxxxxxxxx/xxxxxxxxxxxxx/xxxxxxxxxx'
 hasnt "AWS secret value is not even partially stored" "$AWS_LINE" 'K7MDENG'
 
 # 2e5. dashed multi-segment sk- key formats (Anthropic sk-ant-, OpenAI
@@ -1452,8 +1452,8 @@ has "prompt: 'author:' prose is preserved" "$(grep 'rewrite the intro' "$BUF/ses
 # reader doesn't mistake this for an oversight and re-add the keyword rule.
 prompt '{"session_id":"P","prompt":"our secrets: hunter2superlongsecretvalue"}'
 has "prompt: bare colon-form secret is a documented gap, not auto-masked" "$(grep 'our secrets' "$BUF/session-P.md")" 'our secrets: hunter2superlongsecretvalue'
-prompt '{"session_id":"P","prompt":"client_secret: aB3xY9zQwErTyUiOp1234567890"}'
-has "prompt: SCREAMING_SNAKE_CASE compound is the same documented gap" "$(grep client_secret "$BUF/session-P.md")" 'client_secret: aB3xY9zQwErTyUiOp1234567890'
+prompt '{"session_id":"P","prompt":"client_secret: xxxxxxxxxxxxxxxxxxx"}'
+has "prompt: SCREAMING_SNAKE_CASE compound is the same documented gap" "$(grep client_secret "$BUF/session-P.md")" 'client_secret: xxxxxxxxxxxxxxxxxxx'
 # Structural scheme rules still catch a pasted Authorization header, INCLUDING
 # the Token scheme (DRF/GitLab-style) — redact_prompt lacked this rule
 # entirely until it was added alongside Bearer/Basic.
@@ -1784,7 +1784,7 @@ _PEM_BAD=$(cd "$ROOT" || exit 1; git ls-files -z | xargs -0 /usr/bin/grep -IzhoE
 BEGIN /g' | /usr/bin/grep -E 'KEY-----' | /usr/bin/grep -vE 'KEY-----(\\n| )+EXAMPLE' || true)
 # Positive control: the same pipeline must flag a real-shaped token, so a broken
 # grep/xargs/regex cannot pass as "scanned, clean".
-_CTL=$(printf '%s\n' "x gh""p_Ab1Cd2Ef3Gh4Ij5Kl6Mn" | /usr/bin/grep -IhoE "$_TOK" | sed -E 's/^(\\[nrt]|[^A-Za-z])//' | /usr/bin/grep -vE '^[A-Za-z_.-]+[EXAMPLx0_.-]*$' || true)
+_CTL=$(printf '%s%s\n' "x gh""p_" "$(printf 'z%.0s' 1 2 3 4 5 6 7 8 9 10 11 12)" | /usr/bin/grep -IhoE "$_TOK" | sed -E 's/^(\\[nrt]|[^A-Za-z])//' | sed -E "s/${_STRIP}//" | /usr/bin/grep -vE '^[EXAMPLx0_.-]+$' || true)
 if [ -n "$_CTL" ]; then ok "credential guard flags a real-shaped token (positive control)"; else bad "credential guard flags a real-shaped token (positive control)"; fi
 eq "no credential-shaped vendor literals in tracked files (placeholder bodies only)" "$_BAD" ""
 eq "no PEM key bodies in tracked files (EXAMPLE marker only)" "$_PEM_BAD" ""
