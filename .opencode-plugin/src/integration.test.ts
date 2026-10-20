@@ -424,11 +424,11 @@ describe('Throughline Plugin Integration Tests', () => {
       await chatMessage(
         ctx,
         { sessionID } as any,
-        userMessageOutput('set the token to ghp_EXAMPLE0000x before you push') as any,
+        userMessageOutput('set the token to ghp_xxxxxxxxxxxx before you push') as any,
       );
 
       const content = readBuffer(sessionID);
-      assert.ok(!content.includes('ghp_EXAMPLE0000x'));
+      assert.ok(!content.includes('ghp_xxxxxxxxxxxx'));
       assert.ok(content.includes('ghp_***'));
     });
 
