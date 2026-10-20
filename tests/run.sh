@@ -200,8 +200,8 @@ cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"pemnoeND"
 hasnt "pem key body with NO end marker not stored" "$(grep pemnoeND "$BUF/session-T.md")" 'EXAMPLEKEYBODY'
 
 # 2d. ghr_ refresh tokens are redacted (gh[oprsu]_ class, not gh[opsu]_)
-cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"ghrtok","command":"echo ghr_1234567890abcdefghij"}}'
-hasnt "ghr_ refresh token not stored" "$(grep ghrtok "$BUF/session-T.md")" 'ghr_1234567890abcdefghij'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"ghrtok","command":"echo ghr_EXAMPLE0000x"}}'
+hasnt "ghr_ refresh token not stored" "$(grep ghrtok "$BUF/session-T.md")" 'ghr_EXAMPLE0000x'
 
 # 2e. broadened keyword alternation catches "credential" (not just token/secret/password)
 cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"credtest","command":"export DB_CREDENTIAL=s3cr3tHunter2value"}}'
@@ -1758,23 +1758,34 @@ codex_fixture emptymarketplace
 : > "$WORK/codex/emptymarketplace/.agents/plugins/marketplace.json"
 codex_expect "codex check: zero-byte marketplace file exits non-zero" 1 "invalid JSON" "$WORK/codex/emptymarketplace"
 
+# --- OMP manifest lives at the repo root, next to skills/ and hooks/ --------------
+# OMP resolves skills/ and hooks/ as siblings of the package.json carrying the
+# `omp` field, with no path override.
+eq "root package.json carries the omp manifest name" "$(jq -r '.omp.name // empty' "$ROOT/package.json")" "throughline"
+eq "skills/ beside the OMP manifest holds 4 skills" "$(ls "$ROOT"/skills/*/SKILL.md | wc -l | tr -d ' ')" "4"
+present "OMP hook shim beside the OMP manifest" "$ROOT/hooks/post/throughline.ts"
+
 # --- no credential-shaped literals in tracked files ---------------------------
 # The Claude plugin directory ships the whole repo and rejects any file holding
-# something that looks like a live vendor key. Fixtures keep the prefix and the
-# length (the redaction regexes have floors and exact lengths) but use a
-# placeholder body of E/X/A/M/P/L, x and 0 only; PEM bodies start EXAMPLE. The
+# something that looks like a live vendor key. Fixtures keep the prefix, and the
+# length wherever a redaction rule has an exact or minimum one, but use a
+# placeholder body of E/X/A/M/P/L, x, 0 and separators only; PEM bodies start EXAMPLE. The
 # prefixes are assembled from pieces so this block does not match itself.
-_B='(^|[^A-Za-z0-9_])'
-_P="gh""p_|gh""o_|github""_pat_|sk""_live_|sk""_test_|rk""_test_|xo""x[baprs]-|xa""pp-|sk""-|AK""IA|AI""za|glp""at-|np""m_"
+_B='(^|[^A-Za-z0-9_]|\\[nrt])'
+_P="gh""[oprsu]_|github""_pat_|sk""_live_|sk""_test_|rk""_test_|xo""x[baprs]-|xa""pp-|sk""-|AK""IA|AI""za|glp""at-|np""m_"
 _TOK="${_B}(${_P})[A-Za-z0-9_-]{10,}|${_B}S""G\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}"
 _STRIP="^(${_P})([0-9]{1,2}-)?((ant|proj)-)?(api03-)?"
 _BAD=$(cd "$ROOT" && git ls-files -z | xargs -0 /usr/bin/grep -IhoE "$_TOK" 2>/dev/null \
-  | sed -E 's/^[^A-Za-z]//' | /usr/bin/grep -vx 'xa''pp-config-generator' \
+  | sed -E 's/^(\\[nrt]|[^A-Za-z])//' | /usr/bin/grep -vx 'xa''pp-config-generator' \
   | sed -E "s/${_STRIP}//; s/^S""G\.//" \
   | /usr/bin/grep -vE '^[EXAMPLx0_.-]+$' || true)
 _PEM_BAD=$(cd "$ROOT" && git ls-files -z | xargs -0 /usr/bin/grep -IzhoE 'BEGIN [A-Z ]*PRIVATE KEY-----(\\n|[[:space:]])+[A-Za-z0-9+/=]{4,}' 2>/dev/null \
   | tr '\0\n' '  ' | sed 's/BEGIN /\
 BEGIN /g' | /usr/bin/grep -E 'KEY-----' | /usr/bin/grep -vE 'KEY-----(\\n| )+EXAMPLE' || true)
+# Positive control: the same pipeline must flag a real-shaped token, so a broken
+# grep/xargs/regex cannot pass as "scanned, clean".
+_CTL=$(printf '%s\n' "x gh""p_Ab1Cd2Ef3Gh4Ij5Kl6Mn" | /usr/bin/grep -IhoE "$_TOK" | sed -E 's/^(\\[nrt]|[^A-Za-z])//' | /usr/bin/grep -vE '^[A-Za-z_.-]+[EXAMPLx0_.-]*$' || true)
+[ -n "$_CTL" ] && ok "credential guard flags a real-shaped token (positive control)" || bad "credential guard flags a real-shaped token (positive control)"
 eq "no credential-shaped vendor literals in tracked files (placeholder bodies only)" "$_BAD" ""
 eq "no PEM key bodies in tracked files (EXAMPLE marker only)" "$_PEM_BAD" ""
 

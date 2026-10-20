@@ -13,7 +13,7 @@ All notable changes to throughline are documented here. Format loosely follows
   any machine that linked `.omp-plugin` before. `.omp-plugin/` remains the bun
   test and typecheck harness.
 - **Test fixtures use placeholder credentials.** Vendor-token and PEM fixtures
-  keep their prefix and length but carry `EXAMPLE` bodies, and `tests/run.sh`
+  keep their prefix (and length where a rule has an exact or minimum one) but carry `EXAMPLE` bodies, and `tests/run.sh`
   fails if a tracked file holds a credential-shaped literal.
 
 ### Added

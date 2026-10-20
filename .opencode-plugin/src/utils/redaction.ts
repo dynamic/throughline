@@ -58,7 +58,7 @@
  *     approximation of it lands on the safe side, so each input where the two disagree
  *     is pinned by direction in `ENGINE_DIVERGENCES` in `redaction.test.ts`.
  *
- * `.omp-plugin` is NOT affected by any of this: its shim shells out to the same
+ * The OMP shim (`hooks/post/throughline.ts`) is NOT affected by any of this: it shells out to the same
  * `hooks/*.sh` scripts, so it inherits the jq rules directly.
  */
 

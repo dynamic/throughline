@@ -179,6 +179,10 @@ install), `git pull` is the update step - no separate reinstall needed. The runn
 version is printed in the injected session-start block (`## throughline vX.Y.Z`),
 same as every other harness.
 
+**Upgrading from an earlier link.** Older checkouts were linked from `.omp-plugin`. That
+directory no longer carries `skills/` or `hooks/`, so remove the old link and relink from
+the repo root: `omp plugin uninstall @dynamicagency/throughline-omp && omp plugin link .`
+
 **Marketplace install (alternative).** If you don't want a local checkout to
 manage:
 
