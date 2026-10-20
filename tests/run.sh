@@ -1762,7 +1762,7 @@ codex_expect "codex check: zero-byte marketplace file exits non-zero" 1 "invalid
 # OMP resolves skills/ and hooks/ as siblings of the package.json carrying the
 # `omp` field, with no path override.
 eq "root package.json carries the omp manifest name" "$(jq -r '.omp.name // empty' "$ROOT/package.json")" "throughline"
-eq "skills/ beside the OMP manifest holds 4 skills" "$(ls "$ROOT"/skills/*/SKILL.md | wc -l | tr -d ' ')" "4"
+eq "skills/ beside the OMP manifest holds 4 skills" "$(find "$ROOT/skills" -name SKILL.md | wc -l | tr -d ' ')" "4"
 present "OMP hook shim beside the OMP manifest" "$ROOT/hooks/post/throughline.ts"
 
 # --- no credential-shaped literals in tracked files ---------------------------
@@ -1775,17 +1775,17 @@ _B='(^|[^A-Za-z0-9_]|\\[nrt])'
 _P="gh""[oprsu]_|github""_pat_|sk""_live_|sk""_test_|rk""_test_|xo""x[baprs]-|xa""pp-|sk""-|AK""IA|AI""za|glp""at-|np""m_"
 _TOK="${_B}(${_P})[A-Za-z0-9_-]{10,}|${_B}S""G\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}"
 _STRIP="^(${_P})([0-9]{1,2}-)?((ant|proj)-)?(api03-)?"
-_BAD=$(cd "$ROOT" && git ls-files -z | xargs -0 /usr/bin/grep -IhoE "$_TOK" 2>/dev/null \
+_BAD=$(cd "$ROOT" || exit 1; git ls-files -z | xargs -0 /usr/bin/grep -IhoE "$_TOK" 2>/dev/null \
   | sed -E 's/^(\\[nrt]|[^A-Za-z])//' | /usr/bin/grep -vx 'xa''pp-config-generator' \
   | sed -E "s/${_STRIP}//; s/^S""G\.//" \
   | /usr/bin/grep -vE '^[EXAMPLx0_.-]+$' || true)
-_PEM_BAD=$(cd "$ROOT" && git ls-files -z | xargs -0 /usr/bin/grep -IzhoE 'BEGIN [A-Z ]*PRIVATE KEY-----(\\n|[[:space:]])+[A-Za-z0-9+/=]{4,}' 2>/dev/null \
+_PEM_BAD=$(cd "$ROOT" || exit 1; git ls-files -z | xargs -0 /usr/bin/grep -IzhoE 'BEGIN [A-Z ]*PRIVATE KEY-----(\\n|[[:space:]])+[A-Za-z0-9+/=]{4,}' 2>/dev/null \
   | tr '\0\n' '  ' | sed 's/BEGIN /\
 BEGIN /g' | /usr/bin/grep -E 'KEY-----' | /usr/bin/grep -vE 'KEY-----(\\n| )+EXAMPLE' || true)
 # Positive control: the same pipeline must flag a real-shaped token, so a broken
 # grep/xargs/regex cannot pass as "scanned, clean".
 _CTL=$(printf '%s\n' "x gh""p_Ab1Cd2Ef3Gh4Ij5Kl6Mn" | /usr/bin/grep -IhoE "$_TOK" | sed -E 's/^(\\[nrt]|[^A-Za-z])//' | /usr/bin/grep -vE '^[A-Za-z_.-]+[EXAMPLx0_.-]*$' || true)
-[ -n "$_CTL" ] && ok "credential guard flags a real-shaped token (positive control)" || bad "credential guard flags a real-shaped token (positive control)"
+if [ -n "$_CTL" ]; then ok "credential guard flags a real-shaped token (positive control)"; else bad "credential guard flags a real-shaped token (positive control)"; fi
 eq "no credential-shaped vendor literals in tracked files (placeholder bodies only)" "$_BAD" ""
 eq "no PEM key bodies in tracked files (EXAMPLE marker only)" "$_PEM_BAD" ""
 
