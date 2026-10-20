@@ -36,7 +36,7 @@ _tl_canonicalize_path() {
 tl_root() {
   # Return the raw path - don't canonicalize
   # File relativization needs to match tool input paths exactly
-  printf '%s' "${CLAUDE_PROJECT_DIR:-$PWD}"
+  printf '%s' "${CLAUDE_PROJECT_DIR:-$(pwd)}"
 }
 
 # The project root throughline's DATA dir anchors to. Normally the session's own
@@ -218,7 +218,7 @@ _tl_compute_data_root() {
 # orientation or stamped buffers would not read as "off."
 
 # Path canonicalization fix for issue #33: on macOS, git returns canonical paths
-# (/private/tmp/...) while $PWD uses symlinked paths (/tmp/...). This caused
+# (/private/tmp/...) while the shell's logical cwd uses symlinked paths (/tmp/...). This caused
 # worktrees to resolve to different data directories than the main tree.
 # The _tl_canonicalize_path function and updated tl_root() now ensure all paths
 # are canonicalized consistently across platforms.

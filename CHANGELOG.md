@@ -523,7 +523,7 @@ with per-harness install instructions across all four formats.
   Code and the new Codex delivery, since executing a non-executable file's path
   fails at the OS level before the script's own logic ever runs.
 - Path canonicalization on macOS (issue #33) — git returns canonical paths
-  (`/private/tmp/...`) while `$PWD` uses symlinked paths (`/tmp/...`), which caused
+  (`/private/tmp/...`) while the shell's logical cwd uses symlinked paths (`/tmp/...`), which caused
   worktree resolution to disagree with itself depending on which path form a given
   code path used.
 - Shell hook test suite failed with no ambient git identity or on a symlinked path
