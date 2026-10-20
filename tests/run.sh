@@ -204,16 +204,16 @@ cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"ghrtok","
 hasnt "ghr_ refresh token not stored" "$(grep ghrtok "$BUF/session-T.md")" 'ghr_xxxxxxxxxxxx'
 
 # 2e. broadened keyword alternation catches "credential" (not just token/secret/password)
-cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"credtest","command":"export DB_CREDENTIAL=s3cr3tHunter2value"}}'
-hasnt "DB_CREDENTIAL value not stored" "$(grep credtest "$BUF/session-T.md")" 's3cr3tHunter2value'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"credtest","command":"export DB_CREDENTIAL=xxxxxxxxxxxxxxxxxx"}}'
+hasnt "DB_CREDENTIAL value not stored" "$(grep credtest "$BUF/session-T.md")" 'xxxxxxxxxxxxxxxxxx'
 
 # 2e2. compound variable names (keyword immediately followed by more word
 #      chars, not just preceded) are still redacted - these used to fall
 #      through entirely since the keyword group had no trailing \w*.
-cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"compoundkey","command":"export SECRET_KEY=foo123456789bar"}}'
-hasnt "SECRET_KEY value not stored" "$(grep compoundkey "$BUF/session-T.md")" 'foo123456789bar'
-cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"compoundapi","command":"export API_KEY_VALUE=baz987654321qux"}}'
-hasnt "API_KEY_VALUE value not stored" "$(grep compoundapi "$BUF/session-T.md")" 'baz987654321qux'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"compoundkey","command":"export SECRET_KEY=xxxxxxxxxxxxxxx"}}'
+hasnt "SECRET_KEY value not stored" "$(grep compoundkey "$BUF/session-T.md")" 'xxxxxxxxxxxxxxx'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"compoundapi","command":"export API_KEY_VALUE=xxxxxxxxxxxxxxx"}}'
+hasnt "API_KEY_VALUE value not stored" "$(grep compoundapi "$BUF/session-T.md")" 'xxxxxxxxxxxxxxx'
 
 # 2e3. the generic keyword=value rule must not re-swallow text the URL-userinfo
 #      rule already redacted: a "token"/"secret" substring inside a URL
@@ -243,15 +243,15 @@ hasnt "sk-ant- key is not stored" "$(grep anthropickey "$BUF/session-T.md")" 'sk
 #      the linking word "is" - the separator group used to only recognize
 #      :/=/bare-whitespace, so the generic value-capture grabbed whatever
 #      single word came right after the keyword regardless of what it was.
-cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"prose","command":"my password is hunter3verylongsecretvalue"}}'
-hasnt "secret value after a copula (is/was/are) is not stored" "$(grep prose "$BUF/session-T.md")" 'hunter3verylongsecretvalue'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"prose","command":"my password is xxxxxxxxxxxxxxxxxxxxxxxxxx"}}'
+hasnt "secret value after a copula (is/was/are) is not stored" "$(grep prose "$BUF/session-T.md")" 'xxxxxxxxxxxxxxxxxxxxxxxxxx'
 
 # 2e7. "Authorization: Token <value>" (DRF/GitLab-style auth header) masks the
 #      real key, not the scheme word "Token" itself - needs its own dedicated
 #      rule alongside Bearer/Basic, since the generic rule would otherwise
 #      treat "Token" as the value to redact and leave the real key exposed.
-cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"drfauth","command":"curl -H Authorization: Token abc123def456ghi789"}}'
-hasnt "DRF-style Token value is not stored" "$(grep drfauth "$BUF/session-T.md")" 'abc123def456ghi789'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"drfauth","command":"curl -H Authorization: Token xxxxxxxxxxxxxxxxxx"}}'
+hasnt "DRF-style Token value is not stored" "$(grep drfauth "$BUF/session-T.md")" 'xxxxxxxxxxxxxxxxxx'
 
 # 2e8. a secret value that legitimately contains a literal @ (common in
 #      human-chosen passwords) is fully masked, not truncated at the first @ -
@@ -292,9 +292,9 @@ hasnt "internal sentinel never leaks for scheme-relative userinfo" "$REL_LINE" '
 #       trailing one, so `password="X"` redacted to `password=***"` (the
 #       secret itself was masked; only the stray quote was cosmetic, but it
 #       is malformed output).
-cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"quotedpw","command":"config: password=\"hunter2superlongvalue\""}}'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"quotedpw","command":"config: password=\"xxxxxxxxxxxxxxxxxxxxx\""}}'
 QUOTED_LINE=$(grep quotedpw "$BUF/session-T.md")
-hasnt "quoted secret value is not stored" "$QUOTED_LINE" 'hunter2superlongvalue'
+hasnt "quoted secret value is not stored" "$QUOTED_LINE" 'xxxxxxxxxxxxxxxxxxxxx'
 hasnt "no orphaned trailing quote after the mask" "$QUOTED_LINE" '***"'
 has   "quoted secret value is masked" "$QUOTED_LINE" 'password=***'
 
@@ -302,8 +302,8 @@ has   "quoted secret value is masked" "$QUOTED_LINE" 'password=***'
 #       after it - malformed/truncated input) is still masked rather than
 #       silently falling through to cleartext, matching this rule's
 #       pre-#15-fix behavior for exactly that shape.
-cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"unclosedpw","command":"config: password=\"hunter2superlongvalue"}}'
-hasnt "unterminated quoted secret is not stored" "$(grep unclosedpw "$BUF/session-T.md")" 'hunter2superlongvalue'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"unclosedpw","command":"config: password=\"xxxxxxxxxxxxxxxxxxxxx"}}'
+hasnt "unterminated quoted secret is not stored" "$(grep unclosedpw "$BUF/session-T.md")" 'xxxxxxxxxxxxxxxxxxxxx'
 
 # 2e12. a MULTI-WORD unterminated quoted value is masked IN FULL, not just its
 #       first token - an earlier version of the unterminated-quote fallback
@@ -1450,8 +1450,8 @@ has "prompt: 'author:' prose is preserved" "$(grep 'rewrite the intro' "$BUF/ses
 # "passwords:", "credentials:") is now consistently left untouched rather than
 # inconsistently redacted depending on suffix — documented here so a future
 # reader doesn't mistake this for an oversight and re-add the keyword rule.
-prompt '{"session_id":"P","prompt":"our secrets: hunter2superlongsecretvalue"}'
-has "prompt: bare colon-form secret is a documented gap, not auto-masked" "$(grep 'our secrets' "$BUF/session-P.md")" 'our secrets: hunter2superlongsecretvalue'
+prompt '{"session_id":"P","prompt":"our secrets: xxxxxxxxxxxxxxxxxxxxxxxxxxx"}'
+has "prompt: bare colon-form secret is a documented gap, not auto-masked" "$(grep 'our secrets' "$BUF/session-P.md")" 'our secrets: xxxxxxxxxxxxxxxxxxxxxxxxxxx'
 prompt '{"session_id":"P","prompt":"client_secret: xxxxxxxxxxxxxxxxxxx"}'
 has "prompt: SCREAMING_SNAKE_CASE compound is the same documented gap" "$(grep client_secret "$BUF/session-P.md")" 'client_secret: xxxxxxxxxxxxxxxxxxx'
 # Structural scheme rules still catch a pasted Authorization header, INCLUDING
@@ -1460,8 +1460,8 @@ has "prompt: SCREAMING_SNAKE_CASE compound is the same documented gap" "$(grep c
 prompt '{"session_id":"P","prompt":"Authorization: Bearer eyJxxxxxxxxxxxxxxxxxx.fake.jwt.body"}'
 hasnt "prompt: bearer JWT body not stored" "$(grep Authorization "$BUF/session-P.md")" 'eyJxxxxxxxxxxxxxxxxxx'
 reset_buf
-prompt '{"session_id":"P","prompt":"Authorization: Token abcdefghijklmnopqrstuvwxyzTHISISAVERYLONGSECRETVALUE"}'
-hasnt "prompt: Authorization Token value not stored" "$(cat "$BUF/session-P.md")" 'abcdefghijklmnopqrstuvwxyzTHISISAVERYLONGSECRETVALUE'
+prompt '{"session_id":"P","prompt":"Authorization: Token xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}'
+hasnt "prompt: Authorization Token value not stored" "$(cat "$BUF/session-P.md")" 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'
 has   "prompt: Authorization Token scheme word preserved" "$(cat "$BUF/session-P.md")" 'Authorization: Token ***'
 # The scheme rules must NOT fire on short English words after
 # "bearer"/"basic"/"token" — this is the exact corruption class redact_prompt
@@ -1472,8 +1472,8 @@ prompt '{"session_id":"P","prompt":"we need basic authentication support"}'
 has "prompt: 'basic authentication' prose is preserved" "$(grep 'basic authentication' "$BUF/session-P.md")" 'we need basic authentication support'
 # Same documented length-gate gap applies to short real scheme values (a
 # 8-15 char Bearer/Basic/Token value is not masked) — deliberate, not a bug.
-prompt '{"session_id":"P","prompt":"Authorization: Basic dXNlcjpwdw=="}'
-has "prompt: short Basic value is the same documented gap" "$(grep 'Authorization: Basic' "$BUF/session-P.md")" 'Authorization: Basic dXNlcjpwdw=='
+prompt '{"session_id":"P","prompt":"Authorization: Basic xxxxxxxxxx=="}'
+has "prompt: short Basic value is the same documented gap" "$(grep 'Authorization: Basic' "$BUF/session-P.md")" 'Authorization: Basic xxxxxxxxxx=='
 # Truncation at 200 chars with the same marker as the Bash command path.
 LONGP=$(printf 'x%.0s' $(seq 1 300))
 prompt '{"session_id":"P","prompt":"'"$LONGP"'"}'
@@ -1503,10 +1503,10 @@ present "prompt: missing session_id breadcrumbs to .capture-errors" "$DATA/.capt
 reset_buf
 cap '{"session_id":"W","tool_name":"Grep","tool_input":{"pattern":"needle.*haystack"}}'
 has "grep captured with pattern" "$(cat "$BUF/session-W.md")" '**grep** `needle.*haystack`'
-cap '{"session_id":"W","tool_name":"WebFetch","tool_input":{"url":"https://alice:s3cr3tpw@example.com/doc"}}'
+cap '{"session_id":"W","tool_name":"WebFetch","tool_input":{"url":"https://alice:xxxxxxxx@example.com/doc"}}'
 WF=$(grep webfetch "$BUF/session-W.md")
 has   "webfetch captured with url"      "$WF" '**webfetch** https://alice:'
-hasnt "webfetch url userinfo is masked" "$WF" 's3cr3tpw'
+hasnt "webfetch url userinfo is masked" "$WF" 'xxxxxxxx'
 cap '{"session_id":"W","tool_name":"WebSearch","tool_input":{"query":"posix sh idempotency"}}'
 has "websearch captured with query" "$(grep websearch "$BUF/session-W.md")" '**websearch** posix sh idempotency'
 # Regression: WebSearch query is prose, so it must use redact_prompt, not the
