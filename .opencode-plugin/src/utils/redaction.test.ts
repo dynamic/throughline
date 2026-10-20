@@ -1048,9 +1048,9 @@ describe('issue #81 rules, ported to the OpenCode plugin', () => {
   }
 
   const prefixes = [
-    ['glab api -H "X: glpat-' + 'EXAMPLE0000xxxxEXAMP"', 'glab api -H "X: glpat-***"'],
-    ['deploy --key sk_live_' + 'EXAMPLE0000xxxxEXA', 'deploy --key sk_live_***'],
-    ['deploy --key rk_test_' + 'EXAMPLE0000xxxxEXA', 'deploy --key rk_test_***'],
+    ['glab api -H "X: glpat-' + 'xxxxxxxxxxxxxxxxxxxx"', 'glab api -H "X: glpat-***"'],
+    ['deploy --key sk_live_' + 'xxxxxxxxxxxxxxxxxx', 'deploy --key sk_live_***'],
+    ['deploy --key rk_test_' + 'xxxxxxxxxxxxxxxxxx', 'deploy --key rk_test_***'],
     ['echo xapp-1-xxxxxxxxxxxx-xxxxxxxxxxxxxxxx-xxxxxxxxxx', 'echo xapp-***'],
     ['echo npm_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', 'echo npm_***'],
     ['mail --key SG.xxxxxxxxxxxxxxxxxxxx.xxxxxxxxxxxxxxxxxxxx', 'mail --key SG.***'],
@@ -1064,11 +1064,11 @@ describe('issue #81 rules, ported to the OpenCode plugin', () => {
   }
 
   const prefixFalsePositives = [
-    'echo glpat-' + 'EXAMPLE0000xxxxEXAM',
+    'echo glpat-' + 'xxxxxxxxxxxxxxxxxxx',
     'echo glpat-abc',
     'cat MSG.errorMessageTemplate.userNotFoundError',
     'ls xapp-config-generator',
-    'echo disk_test_' + 'EXAMPLE0000xxxxEXA',
+    'echo disk_test_' + 'xxxxxxxxxxxxxxxxxx',
     'echo fooxapp-1-xxxxxxxxxxxx-xxxxxxxxxxxxxxxx',
     'echo mynpm_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
   ];
@@ -1526,16 +1526,16 @@ describe('regex-engine parity with jq (issue #90)', () => {
       'ls -p /tmp',
       'notmysql -pX',
       'mysqldump ' + Array(20).fill('2>&1').join(' ') + ' db',
-      'glab api -H "X: glpat-' + 'EXAMPLE0000xxxxEXAMP"',
-      'deploy --key sk_live_' + 'EXAMPLE0000xxxxEXA',
-      'deploy --key rk_test_' + 'EXAMPLE0000xxxxEXA',
+      'glab api -H "X: glpat-' + 'xxxxxxxxxxxxxxxxxxxx"',
+      'deploy --key sk_live_' + 'xxxxxxxxxxxxxxxxxx',
+      'deploy --key rk_test_' + 'xxxxxxxxxxxxxxxxxx',
       'echo xapp-1-xxxxxxxxxxxx-xxxxxxxxxxxxxxxx-xxxxxxxxxx',
       'echo npm_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
       'mail --key SG.xxxxxxxxxxxxxxxxxxxx.xxxxxxxxxxxxxxxxxxxx',
-      'echo glpat-' + 'EXAMPLE0000xxxxEXAM',
+      'echo glpat-' + 'xxxxxxxxxxxxxxxxxxx',
       'cat MSG.errorMessageTemplate.userNotFoundError',
       'ls xapp-config-generator',
-      'echo disk_test_' + 'EXAMPLE0000xxxxEXA',
+      'echo disk_test_' + 'xxxxxxxxxxxxxxxxxx',
       'echo fooxapp-1-xxxxxxxxxxxx-xxxxxxxxxxxxxxxx',
       'echo mynpm_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
       'https://user:password@example.com/path',
@@ -1641,7 +1641,7 @@ describe('regex-engine parity with jq (issue #90)', () => {
    * a pinned count would fail the test for the safe direction, and the `over` rows above
    * pin the shapes that matter by name.
    */
-  const FUZZ_SECRETS: readonly string[] = ['S3cretPw', 'AbCd.mn_op', 'hunter2', 'pa ss', 'open sesame', 'YWJjZGVmZ2hpamts', 'ghp_xxxxxxxxxxxx', 'sk_live_' + 'EXAMPLE0000xxxxEXA', 'glpat-' + 'EXAMPLE0000xxxxEXAMP', 'SG.xxxxxxxxxxxxxxxxxxxx.xxxxxxxxxxxxxxxxxxxx', 'A01B2C3D4E5F-1234567890abcdef', 'Sup3rS3cret', 'ſup3rS3cret'];
+  const FUZZ_SECRETS: readonly string[] = ['S3cretPw', 'AbCd.mn_op', 'hunter2', 'pa ss', 'open sesame', 'YWJjZGVmZ2hpamts', 'ghp_xxxxxxxxxxxx', 'sk_live_' + 'xxxxxxxxxxxxxxxxxx', 'glpat-' + 'xxxxxxxxxxxxxxxxxxxx', 'SG.xxxxxxxxxxxxxxxxxxxx.xxxxxxxxxxxxxxxxxxxx', 'A01B2C3D4E5F-1234567890abcdef', 'Sup3rS3cret', 'ſup3rS3cret'];
 
   /** The seeded corpus, built once so both paths are asked about the same 400 inputs. */
   function buildSeededCorpus(): string[] {
@@ -1665,7 +1665,7 @@ describe('regex-engine parity with jq (issue #90)', () => {
     // `ſup3rS3cret` is a secret whose FIRST character is a fold partner: jq's
     // `(?i)[A-Za-z0-9._-]` value class walks over it, JS's stops in front of it, and a
     // mask that stops early leaves this exact string visible in the output.
-    const values = ['S3cretPw', 'AbCd.mn_op', 'hunter2', '"pa ss"', '"open sesame', 'YWJjZGVmZ2hpamts', 'ghp_xxxxxxxxxxxx', 'sk_live_' + 'EXAMPLE0000xxxxEXA', 'glpat-' + 'EXAMPLE0000xxxxEXAMP', 'SG.xxxxxxxxxxxxxxxxxxxx.xxxxxxxxxxxxxxxxxxxx', 'xapp-1-xxxxxxxxxxxx-xxxxxxxxxxxxxxxx', 'ſup3rS3cret', 'AbCdſfGh', 'ß3cret'];
+    const values = ['S3cretPw', 'AbCd.mn_op', 'hunter2', '"pa ss"', '"open sesame', 'YWJjZGVmZ2hpamts', 'ghp_xxxxxxxxxxxx', 'sk_live_' + 'xxxxxxxxxxxxxxxxxx', 'glpat-' + 'xxxxxxxxxxxxxxxxxxxx', 'SG.xxxxxxxxxxxxxxxxxxxx.xxxxxxxxxxxxxxxxxxxx', 'xapp-1-xxxxxxxxxxxx-xxxxxxxxxxxxxxxx', 'ſup3rS3cret', 'AbCdſfGh', 'ß3cret'];
     const schemeWords = ['bearer', 'basic', 'token', 'baſic', 'toKen'];
     const clients = ['mysql', 'mysqldump', 'mysqladmin', 'mariadb-dump', 'mysql -u app', 'mysqldump -uroot', 'ssh host "mysqldump'];
     const pwArgs = ['-pS3cretPw', '-p"pa ss"', "\"-pS3cretPw\"", "'-pS3cret Pw'", '-p\u00e9S3cretPw', '-p\ufeffS3cretPw', '-p\u200bS3cretPw', '-p S3cretPw'];

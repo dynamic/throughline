@@ -236,8 +236,8 @@ hasnt "AWS secret value is not even partially stored" "$AWS_LINE" 'K7MDENG'
 # 2e5. dashed multi-segment sk- key formats (Anthropic sk-ant-, OpenAI
 #      sk-proj-) are fully redacted, not left untouched by a body class that
 #      only allowed alnum and rejected the internal dashes.
-cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"anthropickey","command":"export ANTHROPIC_API_KEY=sk-ant-''api03-EXAMPLE0000xxxxEXAMPL"}}'
-hasnt "sk-ant- key is not stored" "$(grep anthropickey "$BUF/session-T.md")" 'sk-ant-''api03-EXAMPLE0000xxxxEXAMPL'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"anthropickey","command":"export ANTHROPIC_API_KEY=sk-ant-''api03-xxxxxxxxxxxxxxxxxxxxx"}}'
+hasnt "sk-ant- key is not stored" "$(grep anthropickey "$BUF/session-T.md")" 'sk-ant-''api03-xxxxxxxxxxxxxxxxxxxxx'
 
 # 2e6. natural-language "keyword is X" phrasing masks the real value X, not
 #      the linking word "is" - the separator group used to only recognize
@@ -409,14 +409,14 @@ has "known false positive: docker -p3306:3306 after a mysql name is masked too" 
 #     rk_test_, xapp-, npm_, SG.x.y). Each floor is set above anything an
 #     ordinary word or identifier could be, and the cases at the end pin that:
 #     a 19-char glpat body and vendor-shaped identifiers stay unmasked.
-cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"gitlabpat","command":"glab api -H \"X: glpat-''EXAMPLE0000xxxxEXAMP\""}}'
-hasnt "gitlab glpat- token not stored" "$(cap_line gitlabpat)" 'glpat-''EXAMPLE0000xxxxEXAMP'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"gitlabpat","command":"glab api -H \"X: glpat-''xxxxxxxxxxxxxxxxxxxx\""}}'
+hasnt "gitlab glpat- token not stored" "$(cap_line gitlabpat)" 'glpat-''xxxxxxxxxxxxxxxxxxxx'
 has   "gitlab glpat- token: mask sentinel is present" "$(cap_line gitlabpat)" 'glpat-***'
-cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"stripelive","command":"deploy --key sk_live_''EXAMPLE0000xxxxEXA"}}'
-hasnt "stripe sk_live_ key not stored" "$(cap_line stripelive)" 'sk_live_''EXAMPLE0000xxxxEXA'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"stripelive","command":"deploy --key sk_live_''xxxxxxxxxxxxxxxxxx"}}'
+hasnt "stripe sk_live_ key not stored" "$(cap_line stripelive)" 'sk_live_''xxxxxxxxxxxxxxxxxx'
 has   "stripe sk_live_ key: mask sentinel is present" "$(cap_line stripelive)" 'sk_live_***'
-cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"striperestricted","command":"deploy --key rk_test_''EXAMPLE0000xxxxEXA"}}'
-hasnt "stripe rk_test_ key not stored" "$(cap_line striperestricted)" 'rk_test_''EXAMPLE0000xxxxEXA'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"striperestricted","command":"deploy --key rk_test_''xxxxxxxxxxxxxxxxxx"}}'
+hasnt "stripe rk_test_ key not stored" "$(cap_line striperestricted)" 'rk_test_''xxxxxxxxxxxxxxxxxx'
 has   "stripe rk_test_ key: mask sentinel is present" "$(cap_line striperestricted)" 'rk_test_***'
 cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"slackapp","command":"echo xapp-1-xxxxxxxxxxxx-xxxxxxxxxxxxxxxx-xxxxxxxxxx"}}'
 hasnt "slack xapp- token not stored" "$(cap_line slackapp)" 'xapp-1-xxxxxxxxxxxx-xxxxxxxxxxxxxxxx-xxxxxxxxxx'
@@ -427,8 +427,8 @@ has   "npm_ automation token: mask sentinel is present" "$(cap_line npmtoken)" '
 cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"sendgrid","command":"mail --key SG.xxxxxxxxxxxxxxxxxxxx.xxxxxxxxxxxxxxxxxxxx"}}'
 hasnt "sendgrid SG. key not stored" "$(cap_line sendgrid)" 'SG.xxxxxxxxxxxxxxxxxxxx.xxxxxxxxxxxxxxxxxxxx'
 has   "sendgrid SG. key: mask sentinel is present" "$(cap_line sendgrid)" 'SG.***'
-cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"shortglpat","command":"echo glpat-''EXAMPLE0000xxxxEXAM"}}'
-has   "a 19-character glpat body is NOT masked (the 20 floor is real)" "$(cap_line shortglpat)" 'glpat-''EXAMPLE0000xxxxEXAM'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"shortglpat","command":"echo glpat-''xxxxxxxxxxxxxxxxxxx"}}'
+has   "a 19-character glpat body is NOT masked (the 20 floor is real)" "$(cap_line shortglpat)" 'glpat-''xxxxxxxxxxxxxxxxxxx'
 cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"shortglpat2","command":"echo glpat-abc"}}'
 has   "a too-short glpat- sample is NOT masked" "$(cap_line shortglpat2)" 'glpat-abc'
 # Prefix rules are LEFT-ANCHORED as well as length-floored: an identifier that
@@ -442,8 +442,8 @@ cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"xappid","
 has   "xapp-config-generator identifier is not mistaken for a Slack token" "$(cap_line xappid)" 'xapp-config-generator'
 # The lookbehind on its own, isolated from the length floor and from the digit
 # segment: each of these CONTAINS a real prefix mid-word.
-cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"disktest","command":"echo disk_test_''EXAMPLE0000xxxxEXA"}}'
-has   "disk_test_ is not mistaken for a Stripe key" "$(cap_line disktest)" 'disk_test_''EXAMPLE0000xxxxEXA'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"disktest","command":"echo disk_test_''xxxxxxxxxxxxxxxxxx"}}'
+has   "disk_test_ is not mistaken for a Stripe key" "$(cap_line disktest)" 'disk_test_''xxxxxxxxxxxxxxxxxx'
 cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"fooxapp","command":"echo fooxapp-1-xxxxxxxxxxxx-xxxxxxxxxxxxxxxx"}}'
 has   "fooxapp- is not mistaken for a Slack token" "$(cap_line fooxapp)" 'fooxapp-1-xxxxxxxxxxxx-xxxxxxxxxxxxxxxx'
 cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mynpm","command":"echo mynpm_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}}'
@@ -1426,11 +1426,11 @@ has   "prompt: gh token masked"     "$PS" '***'
 # issue #81: the newly added vendor prefixes live in the SHARED _prefix_tokens
 # def, so they protect prompts too - and, being shape-distinctive, they do it
 # without the prose-corruption problem that made the keyword rules command-only.
-prompt '{"session_id":"P","prompt":"rotate the gitlab glpat-''EXAMPLE0000xxxxEXAMP before it expires"}'
-hasnt "prompt: glpat- not stored" "$(grep 'rotate the gitlab' "$BUF/session-P.md")" 'glpat-''EXAMPLE0000xxxxEXAMP'
+prompt '{"session_id":"P","prompt":"rotate the gitlab glpat-''xxxxxxxxxxxxxxxxxxxx before it expires"}'
+hasnt "prompt: glpat- not stored" "$(grep 'rotate the gitlab' "$BUF/session-P.md")" 'glpat-''xxxxxxxxxxxxxxxxxxxx'
 has   "prompt: glpat- mask sentinel is present" "$(grep 'rotate the gitlab' "$BUF/session-P.md")" 'glpat-***'
-prompt '{"session_id":"P","prompt":"the stripe key sk_live_''EXAMPLE0000xxxxEXA leaked, rotate it"}'
-hasnt "prompt: sk_live_ key not stored" "$(grep 'the stripe key' "$BUF/session-P.md")" 'sk_live_''EXAMPLE0000xxxxEXA'
+prompt '{"session_id":"P","prompt":"the stripe key sk_live_''xxxxxxxxxxxxxxxxxx leaked, rotate it"}'
+hasnt "prompt: sk_live_ key not stored" "$(grep 'the stripe key' "$BUF/session-P.md")" 'sk_live_''xxxxxxxxxxxxxxxxxx'
 has   "prompt: sk_live_ mask sentinel is present" "$(grep 'the stripe key' "$BUF/session-P.md")" 'sk_live_***'
 # Prose safety: ordinary English containing credential KEYWORDS but no
 # recognizable structural shape survives verbatim — the whole point of
@@ -1457,8 +1457,8 @@ has "prompt: SCREAMING_SNAKE_CASE compound is the same documented gap" "$(grep c
 # Structural scheme rules still catch a pasted Authorization header, INCLUDING
 # the Token scheme (DRF/GitLab-style) — redact_prompt lacked this rule
 # entirely until it was added alongside Bearer/Basic.
-prompt '{"session_id":"P","prompt":"Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.fake.jwt.body"}'
-hasnt "prompt: bearer JWT body not stored" "$(grep Authorization "$BUF/session-P.md")" 'eyJhbGciOiJIUzI1NiJ9'
+prompt '{"session_id":"P","prompt":"Authorization: Bearer eyJxxxxxxxxxxxxxxxxxx.fake.jwt.body"}'
+hasnt "prompt: bearer JWT body not stored" "$(grep Authorization "$BUF/session-P.md")" 'eyJxxxxxxxxxxxxxxxxxx'
 reset_buf
 prompt '{"session_id":"P","prompt":"Authorization: Token abcdefghijklmnopqrstuvwxyzTHISISAVERYLONGSECRETVALUE"}'
 hasnt "prompt: Authorization Token value not stored" "$(cat "$BUF/session-P.md")" 'abcdefghijklmnopqrstuvwxyzTHISISAVERYLONGSECRETVALUE'
