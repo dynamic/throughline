@@ -17,7 +17,7 @@ All notable changes to throughline are documented here. Format loosely follows
   fails if a tracked file holds a credential-shaped literal.
 
 ### Added
-- Claude plugin icon at `.claude-plugin/icon.png`.
+- A 1024x1024 plugin icon for the Claude plugin directory listing.
 - **`consolidate-memory` fifth scan: dangling wikilinks** (issue #82): a
   `[[target]]` in any memory file is now resolved against the set of frontmatter
   `name:` values in the memory directory, with the links themselves collected
