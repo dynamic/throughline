@@ -3,8 +3,9 @@
  *
  * OMP discovers this file two ways, both feeding the same physical file so
  * there is nothing to keep in sync:
- *   - via `.omp-plugin/hooks/post/` (a symlink to this directory) when
- *     throughline is installed as an OMP-native extension package, and
+ *   - via this repo's root `hooks/post/` (the root `package.json` carries the
+ *     `omp` manifest) when throughline is linked as an OMP-native extension
+ *     package, and
  *   - via this literal `hooks/post/` directory when OMP reads a real
  *     Claude Code plugin install from `~/.claude/plugins/cache/` (OMP's
  *     `claude-plugins` discovery provider) — meaning anyone who already has

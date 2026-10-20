@@ -5,7 +5,19 @@ All notable changes to throughline are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Changed
+- **OMP manifest moved to the repo root.** The `omp` field now lives in a root
+  `package.json` and the `.omp-plugin/hooks` and `.omp-plugin/skills` symlinks are
+  gone (OMP resolves `skills/` and `hooks/` as siblings of the manifest, with no
+  path override). Install with `omp plugin link .` from the repo root; re-run it on
+  any machine that linked `.omp-plugin` before. `.omp-plugin/` remains the bun
+  test and typecheck harness.
+- **Test fixtures use placeholder credentials.** Vendor-token and PEM fixtures
+  keep their prefix and length but carry `EXAMPLE` bodies, and `tests/run.sh`
+  fails if a tracked file holds a credential-shaped literal.
+
 ### Added
+- Claude plugin icon at `.claude-plugin/icon.png`.
 - **`consolidate-memory` fifth scan: dangling wikilinks** (issue #82): a
   `[[target]]` in any memory file is now resolved against the set of frontmatter
   `name:` values in the memory directory, with the links themselves collected

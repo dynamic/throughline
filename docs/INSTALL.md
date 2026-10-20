@@ -143,7 +143,7 @@ rebuild to update it.
 
 ```sh
 git clone https://github.com/dynamic/throughline && cd throughline
-omp plugin link .omp-plugin
+omp plugin link .
 ```
 
 `omp plugin link` symlinks a local directory into OMP's plugin roots, so this stays
@@ -154,11 +154,11 @@ your OMP session afterward.
 runtime is Bun-based, and the shim still shells out to the same `jq`-using hook
 scripts Claude Code and Codex CLI run.
 
-**What you get:** the 4 skills (auto-discovered from `.omp-plugin/skills/`, a
-symlink to the shared `skills/` directory - zero extra step) plus all 5 capture
+**What you get:** the 4 skills (auto-discovered from the repo's `skills/`
+directory - zero extra step) plus all 5 capture
 points, wired through OMP's own event bus rather than a subprocess hook transport.
 OMP's hooks are in-process TypeScript event handlers (`pi.on(event, handler)`), so
-`.omp-plugin/hooks/post/throughline.ts` registers against six of OMP's own events -
+`hooks/post/throughline.ts` registers against six of OMP's own events -
 `session_start`, `before_agent_start`, `tool_result`, `session_before_compact`,
 `session_compact`, and `session_shutdown` - and each handler shells out to the
 identical `hooks/*.sh` scripts Claude Code and Codex CLI run, translating OMP's own

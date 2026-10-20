@@ -43,16 +43,17 @@ jobs:
           jq -e '.plugins' .claude-plugin/marketplace.json >/dev/null
           jq -e '.name and .version' .codex-plugin/plugin.json >/dev/null
           jq -e '.plugins' .agents/plugins/marketplace.json >/dev/null
-          jq -e '.name and .version and .omp' .omp-plugin/package.json >/dev/null
+          jq -e '.name and .version and .omp' package.json >/dev/null
       - name: Check plugin version agreement (Linux)
         if: runner.os == 'Linux'
         run: |
           c=$(jq -r .version .claude-plugin/plugin.json)
           x=$(jq -r .version .codex-plugin/plugin.json)
           o=$(jq -r .version .opencode-plugin/package.json)
-          m=$(jq -r .version .omp-plugin/package.json)
-          if [ "$c" != "$x" ] || [ "$c" != "$o" ] || [ "$c" != "$m" ]; then
-            echo "version drift: .claude-plugin/plugin.json=$c .codex-plugin/plugin.json=$x .opencode-plugin/package.json=$o .omp-plugin/package.json=$m" >&2
+          m=$(jq -r .version package.json)
+          h=$(jq -r .version .omp-plugin/package.json)
+          if [ "$c" != "$x" ] || [ "$c" != "$o" ] || [ "$c" != "$m" ] || [ "$c" != "$h" ]; then
+            echo "version drift: .claude-plugin/plugin.json=$c .codex-plugin/plugin.json=$x .opencode-plugin/package.json=$o package.json=$m .omp-plugin/package.json=$h" >&2
             exit 1
           fi
       - name: Typography (Linux)
