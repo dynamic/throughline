@@ -20,7 +20,7 @@ const SESSION_ID = "test-session-id";
 
 // The suite controls its own environment: an ambient THROUGHLINE_DISABLE in the
 // calling shell propagates to the hooks/*.sh scripts this shim spawns (they
-// inherit process.env), so every buffer assertion fails with nothing wrong in the
+// inherit the parent environment), so every buffer assertion fails with nothing wrong in the
 // code. Clear it at module load, before any test runs. The kill switch itself, and
 // the EPIPE regression below that sets the variable deliberately, stay owned by
 // their own tests (see dynamic/throughline#120).
