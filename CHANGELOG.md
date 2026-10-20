@@ -22,10 +22,10 @@ All notable changes to throughline are documented here. Format loosely follows
   `[[target]]` in any memory file is now resolved against the set of frontmatter
   `name:` values in the memory directory, with the links themselves collected
   from every `*.md` including `MEMORY.md` - the four
-  existing scans all look at files and the index, so a pass that split an
+  existing scans all look at files and the index, so a sweep that split an
   oversized file and deleted the original left inbound `[[original-name]]` links
   dangling with every scan reporting clean. Added as a post-operation re-scan
-  after any merge or delete performed in the same pass (this skill's own phases
+  after any merge or delete performed in the same sweep (this skill's own phases
   split and rename no file - the only rename it performs is a frontmatter
   `name:` value from an approved `Duplicate name:` row, which is itself a
   re-scan trigger), plus a Phase 4 step that repoints every link an approved
@@ -65,7 +65,7 @@ All notable changes to throughline are documented here. Format loosely follows
   usable `name:` is reported as missing `name:` rather than repointed, only the
   top-level `name:` key counts and a quoted scalar is unquoted when collected,
   duplicated `name:` values are reported with their own proposal row, and every
-  `name:` a pass proposes to add or rename to has to be unique across that pass
+  `name:` a sweep proposes to add or rename to has to be unique across that succeed
   so two independently written rows cannot mint a fresh duplicate. A `missing
   name:` row carries the rewrite for any inbound link whose text is not the name
   being added, so the post-operation re-scan does not hand the operator the same
@@ -108,13 +108,13 @@ All notable changes to throughline are documented here. Format loosely follows
   store, and a new Phase 0 decides the store from the request before any file is
   read: a request that is only about the memory dir gets one line pointing at
   `consolidate-memory` and ends the turn without touching a log, a request naming
-  both stores does this pass and hands the memory half over instead of dropping it,
+  both stores does this sweep and hands the memory half over instead of dropping it,
   and a request that names no log - a bare "consolidate", or just "consolidation
-  pass" / "promote lessons", which the other skill can equally mean - states which
+  sweep" / "promote lessons", which the other skill can equally mean - states which
   store it is reading in its first line, unconditionally, whatever the request came
   from, rather than only when it looks handoff-shaped. The old "Scope boundary"
   paragraph no longer
-  restates the store rule, keeping only its mid-pass half (write one new memory
+  restates the store rule, keeping only its mid-sweep half (write one new memory
   entry, leave the reflective cleanup of the memory dir to the other skill), so the
   store itself is decided in exactly one place. `consolidate-memory` is left
   unchanged - its description already leads with "Memory file hygiene" - and
@@ -123,7 +123,7 @@ All notable changes to throughline are documented here. Format loosely follows
   size-discipline step - not next-session output.
 
 ### Fixed
-- **Skill docs: dead README pointers, description length, staleness test**: `handoff`, `consolidate` and `onboard` cited README sections ("Git worktrees", "Local by default", "Housekeeping", the `THROUGHLINE_DATA_DIR` convention) that live in `docs/REFERENCE.md`; pointers fixed. `handoff`'s "Phase 1 step 4 below" now reads "above". `consolidate-memory` states one duplicate threshold (>90% flag, 80-90% manual review) and tests staleness by file modification time, not `originSessionId` (a session id). The four skill descriptions are trimmed to 300 characters or fewer, triggers kept except the "consolidation pass" phrase on `consolidate` (it collided with `consolidate-memory`).
+- **Skill docs: dead README pointers, description length, staleness test**: `handoff`, `consolidate` and `onboard` cited README sections ("Git worktrees", "Local by default", "Housekeeping", the `THROUGHLINE_DATA_DIR` convention) that live in `docs/REFERENCE.md`; pointers fixed. `handoff`'s "Phase 1 step 4 below" now reads "above". `consolidate-memory` states one duplicate threshold (>90% flag, 80-90% manual review) and tests staleness by file modification time, not `originSessionId` (a session id). The four skill descriptions are trimmed to 300 characters or fewer, triggers kept except the "consolidation sweep" phrase on `consolidate` (it collided with `consolidate-memory`).
 - **OpenCode plugin port of the issue #81 rules, plus a parity test** (issue #90):
   the OpenCode plugin carries its own TypeScript port of the jq redaction defs, and the
   rules added for issue #81 were not ported at the same time - an OpenCode session running
@@ -147,12 +147,12 @@ All notable changes to throughline are documented here. Format loosely follows
   them, so the keyword literals carry those partners and a mutation test substitutes each
   one into every `s`, `k` and `ss` position), and `\w` (Oniguruma's is Unicode-aware, which
   does not shift a boundary but stops the generic keyword rule firing at all, so that rule
-  runs jq's ASCII affixes first and an over-approximated word class second. The second pass
-  masks a match only where its keyword is one the ASCII pass could not have matched - not
+  runs jq's ASCII affixes first and an over-approximated word class second. The second sweep
+  masks a match only where its keyword is one the ASCII sweep could not have matched - not
   merely one that contains a non-ASCII character, because the case-fold partners live in the
   keyword alternation itself, so `pa\u017f\u017fword` is non-ASCII and was already masked by the
-  first pass, and re-masking it made the port diverge from jq on its own output; over-masking
-  a keyword the first pass already had would apply the rule twice to its own output, and the
+  first sweep, and re-masking it made the port diverge from jq on its own output; over-masking
+  a keyword the first sweep already had would apply the rule twice to its own output, and the
   widened suffix is kept off the leading affix because a star there costs the length of the
   run at every position of a spaceless run. Widening the single rule instead of running it
   twice matched earlier and ate keywords the next match needed).
@@ -166,12 +166,12 @@ All notable changes to throughline are documented here. Format loosely follows
   `keyword=value` pair. Closing them is one `\b` decision for both engines, filed as
   dynamic/throughline#116. All three are pinned with both engines' outputs, and the two new
   ones say so on the row, so the count and the shape of a pinned leak cannot grow without a
-  test naming it); the generic keyword rule's two-pass word class leaks two further inputs
-  where its ASCII pass consumes a keyword jq's single Unicode-aware pass would have matched
+  test naming it); the generic keyword rule's two-sweep word class leaks two further inputs
+  where its ASCII sweep consumes a keyword jq's single Unicode-aware sweep would have matched
   (both leak on `main` as well, so they are not regressions, and they are pinned for the
-  same reason); one input where the second pass masks one ASCII character more than jq does,
-  `token\u00e9token="a b"c`, where the first pass masks the second `token` and the second pass -
-  whose widened suffix crosses the accent inside the keyword - then masks the first pass's
+  same reason); one input where the second sweep masks one ASCII character more than jq does,
+  `token\u00e9token="a b"c`, where the first sweep masks the second `token` and the second sweep -
+  whose widened suffix crosses the accent inside the keyword - then masks the first sweep's
   `***` plus the `c` glued to it (pinned with both outputs, because no keyword guard reaches
   this case and a value guard that skips values beginning `***` would also skip
   `password\u00e9=***S3cretPw`, which this port must mask, so the residue is accepted and
@@ -182,54 +182,54 @@ All notable changes to throughline are documented here. Format loosely follows
   `_url` in the hooks rather than by narrowing this port (see the issue #115 entry
   below). The generic keyword rule is quadratic in the length of a long unbroken run
   of text, on both engines, on the full unclamped bash command. What changed on the plugin
-  side is what it hands to that rule: pass 6a is driven from one scan of the word runs
-  (issue #129) and pass 6b now is driven from one scan too (issue #134), so neither plugin
-  word pass asks the regex for the whole rule over a run any more - see the issue #129 and
+  side is what it hands to that rule: stage 6a is driven from one scan of the word runs
+  (issue #129) and stage 6b now is driven from one scan too (issue #134), so neither plugin
+  word sweep asks the regex for the whole rule over a run any more - see the issue #129 and
   #134 entries below.
   (`.omp-plugin` never had this gap: its shim shells out to the same `hooks/*.sh` scripts.)
-- **OpenCode plugin redaction pass 6a driven from one scan** (issue #129): the port's
-  ASCII word pass was quadratic in the length of a single unbroken word run - one scan
+- **OpenCode plugin redaction stage 6a driven from one scan** (issue #129): the port's
+  ASCII word sweep was quadratic in the length of a single unbroken word run - one scan
   start per run, and each start re-walked the run once per keyword it held - so a
   base64-ish blob that happens to contain `token` cost 147 ms at 24 KB and climbing,
   in-process on the full unclamped bash command, and an input repeating a
   sentinel-plus-keyword pair was worse than quadratic (no completion inside 300 s at
-  88 KB). The pass is now driven from one left-to-right scan of the word runs in
+  88 KB). The sweep is now driven from one left-to-right scan of the word runs in
   `.opencode-plugin/src/utils/redaction.ts`: a run is adjudicated by asking at most two
   run ends with the rule's own separator and value groups made sticky, keyword
   occurrences are enumerated by one cursor that remembers both its current hit and its
   exhaustion, and the mask is byte-identical to the global replace's - single-digit
-  milliseconds at 160 KB on this machine. Two properties of the driven pass are pinned
+  milliseconds at 160 KB on this machine. Two properties of the driven sweep are pinned
   rather than assumed: the resume after a sentinel-valued match is case-insensitive, so a
   keyword opening on a case-fold character directly after a lowercase `tlredactsentinel`
   value is still masked, and a keyword far ahead of the current position is found once and
   reused, so a long command whose secret sits at the end costs the same as one whose secret
   sits at the front. The remaining #114 quadratic - measured at ~460 ms for a 40 KB
-  ASCII run with a single accented character, which admits the widened pass through its
+  ASCII run with a single accented character, which admits the widened sweep through its
   whole-string gate - is fixed in the entry below.
-- **OpenCode plugin: redaction pass 6b's attempt was quadratic on a long ASCII run**
-  (issue #134): the widened pass is driven from one scan of the word runs, so a run gets a
+- **OpenCode plugin: redaction stage 6b's attempt was quadratic on a long ASCII run**
+  (issue #134): the widened sweep is driven from one scan of the word runs, so a run gets a
   bounded number of attempts, but each attempt ran the WHOLE rule - jq's unbounded `\w*` lead
   plus the widened suffix - so one long ASCII word run carrying many keywords and no separator
   still cost (keyword hits in the run) x (run length): `('token').repeat(k) + 'é'`, which is
-  one run plus the single non-ASCII character that lets pass 6b run at all, took 29.1 ms at
+  one run plus the single non-ASCII character that lets stage 6b run at all, took 29.1 ms at
   k=2,000 and 460.0 ms at k=8,000 - 15.8x for a 4x-longer run - in-process on the full
   unclamped bash command. The attempt is
-  now anchored at the END of the keyword group, the way issue #129 anchored pass 6a: the driver
+  now anchored at the END of the keyword group, the way issue #129 anchored stage 6a: the driver
   asks the rule's own separator and value groups, made sticky, at the end of the word run that
   contains the keyword's end, and one attempt per run decides it - a keyword can leave its run
   only through the hyphen of `api-key` / `access-key` / `client-id`, and that hyphen sits
   exactly AT the run end, so the crossing keyword is the run's last occurrence and the other
   group end is doomed. Output is byte-identical to the previous driver: measured over 1.26 M
   generated inputs (random pieces, crossing-keyword shapes, and 10-20-segment long strings)
-  against a build of the pre-#134 pass, and the #114 / #118 / #129 latency guards, the seeded jq
+  against a build of the pre-#134 sweep, and the #114 / #118 / #129 latency guards, the seeded jq
   differential and the `ENGINE_DIVERGENCES` pins all stay green. Byte-identical holds only
   because the group START is still the position the rule's own ASCII lead stops at: the keyword
-  group is written back verbatim, but it is also what the widened pass's guard decides on, so a
+  group is written back verbatim, but it is also what the widened sweep's guard decides on, so a
   start further back - one that pulls a non-ASCII character into the group - re-masks on top of
-  pass 6a. `tokenéapi-key="a b"c` must come back `tokenéapi-key=***c`, the same string `main`
+  stage 6a. `tokenéapi-key="a b"c` must come back `tokenéapi-key=***c`, the same string `main`
   and the jq hooks give; a start taken from the earlier in-run anchor instead eats the trailing
   `c`. That row and three like it pin the group START in `redaction.test.ts`, and two more -
-  `tokenéapi-key漢=S3cret` and its ` is ` form, where pass 6a cannot reach the separator at all -
+  `tokenéapi-key漢=S3cret` and its ` is ` form, where stage 6a cannot reach the separator at all -
   pin the crossing group END.
 - **Capture hook dropped every event on Windows** (issue #81 review): the jq program
   is one command-line argument (`redaction defs + capture filter`) and Windows caps a
@@ -280,7 +280,7 @@ All notable changes to throughline are documented here. Format loosely follows
   shared def they protect prompts as well as commands, and each is word-anchored
   and length-floored so identifiers that merely end in a prefix (`MSG.etc`,
   `xapp-config-generator`) are not masked. Remaining bare-flag gaps (e.g.
-  `curl -u user:pass`) are unchanged and still rely on the handoff skill's
+  `curl -u user:sweep`) are unchanged and still rely on the handoff skill's
   re-scan.
 - **Scheme-relative URL credentials** (issue #115): `_url` in `hooks/_lib.sh`
   anchored on `://`, so a credential in a scheme-relative reference was stored
@@ -408,7 +408,7 @@ All notable changes to throughline are documented here. Format loosely follows
 - **OpenCode: session-start context injection never reached a real conversation
   (issue #56).** Live-verified for the first time since the plugin shipped in
   v0.13.0. OpenCode calls `experimental.chat.system.transform` more than once per
-  turn - once for its own small-model title-generation pass, once for the real
+  turn - once for its own small-model title-generation sweep, once for the real
   primary-agent call, both with the same session id and nothing else to tell them
   apart. The plugin's delete-on-first-read design let the title call, which fires
   first, consume and destroy the injected block before the real, user-facing call
@@ -465,7 +465,7 @@ All notable changes to throughline are documented here. Format loosely follows
 
 ## [0.13.0]
 
-Two delivery formats, a fourth skill, and a documentation pass: OpenCode plugin,
+Two delivery formats, a fourth skill, and a documentation sweep: OpenCode plugin,
 Codex CLI plugin (skills only), `consolidate-memory`, and a redesigned promo site
 with per-harness install instructions across all four formats.
 
@@ -545,10 +545,10 @@ consuming project) because nothing measured the result.
 - `handoff` Phase 4 replaces the per-entry size guidance with a **measured**
   stop condition, run only after the file's content is otherwise final: count
   `HANDOFF.md` with both `wc -l` and `wc -c` (the byte count is binding - the
-  file is table-heavy, so line count alone can pass while running well over
+  file is table-heavy, so line count alone can succeed while running well over
   budget in tokens), target 150 lines/~8KB (~2,000 tokens), hard stop at
   200 lines/~11KB. If over, cut before finishing the phase rather than
-  deferring to the next `consolidate` pass.
+  deferring to the next `consolidate` sweep.
 - "Resolved Issues" tightened from ~8-10 rows to ~5.
 - The Phase 5 `HANDOFF.md` template drops its five durable-fact sections
   (Architecture & Services, Environment & Infrastructure, Tools & Integrations,
@@ -668,7 +668,7 @@ Skill-content and documentation only - no hook, test, or plugin-config change
 ## [0.9.0]
 
 Token-efficiency batch (issue #26), driven by a usage audit in a consuming project:
-`HANDOFF.md` is read in full by every session's onboard pass, so it is resident
+`HANDOFF.md` is read in full by every session's onboard sweep, so it is resident
 context paid for on every turn, not a one-time write - it had grown to ~5.3K
 resident tokens (measured at ~12% of that project's total session token usage),
 ~105 of its ~199 content lines duplicating history already captured verbatim in
@@ -687,7 +687,7 @@ behavior change, verified by the unchanged assertion suite plus shellcheck.
   checks `HANDOFF.md`'s own size discipline (separate from mining the session
   logs), and Phase 3's promotion-home table gains a new home, "(e) HANDOFF-diet
   (trim, don't add)", for when per-edit discipline alone has drifted over many
-  small handoffs. Closes the gap where consolidate's periodic pass never
+  small handoffs. Closes the gap where consolidate's periodic sweep never
   looked at HANDOFF.md's own bloat.
 
 ### Fixed (found during review, before merge)
@@ -843,7 +843,7 @@ Docs/skill polish batch from the v0.4.0 audit (docs/AUDIT-v0.4.0.md, P2, items
 Issue #9 from the v0.4.0 audit (docs/AUDIT-v0.4.0.md, P2): inline post-compaction
 recovery content instead of a pointer. Feature bump - onboard's compact-path
 output now carries actual buffer content, not just a filename. An independent
-code-review pass on this release caught two gaps in the initial
+code-review sweep on this release caught two gaps in the initial
 implementation's bounded-output claim, both closed before merge. Verified by
 the full 154-assertion suite (11 new) plus shellcheck under both Homebrew and
 an `apt-get install shellcheck` Ubuntu container.
@@ -870,7 +870,7 @@ an `apt-get install shellcheck` Ubuntu container.
   inline verbatim despite the 30-line cap. Rather than clamp every
   capture-side field (a change to `session-capture.sh`'s existing, separate
   design, out of scope here), the inline-tail block now caps each line to 300
-  characters itself, via an `awk` pass - the bound this feature's own claim
+  characters itself, via an `awk` sweep - the bound this feature's own claim
   depends on is now enforced at the point the claim is made, not assumed from
   upstream.
 - **A stamped `trigger`/`reason` value could break the new markdown fence**:
@@ -885,7 +885,7 @@ an `apt-get install shellcheck` Ubuntu container.
 ## [0.5.2]
 
 Hot-path perf batch plus issue #15, which turned out to have a second,
-un-cosmetic bug underneath it - caught by an independent code-review pass on
+un-cosmetic bug underneath it - caught by an independent code-review sweep on
 this release before merge. Verified by the full 143-assertion suite plus
 shellcheck under both Homebrew and an `apt-get install shellcheck` Ubuntu
 container.
@@ -927,7 +927,7 @@ container.
 
 ## [0.5.1]
 
-Calmer follow-up pass on the three cleanups v0.5.0's review deferred rather
+Calmer follow-up sweep on the three cleanups v0.5.0's review deferred rather
 than fixing under time pressure (issue #16). No behavior change; verified by
 the full 136-assertion suite plus shellcheck under both Homebrew and an
 `apt-get install shellcheck` Ubuntu container (the exact CI/local mismatch
@@ -939,9 +939,9 @@ that broke v0.5.0's first push).
   `session-flush.sh`, `session-precompact.sh`). Collapsed to one definition in
   `hooks/_lib.sh` so a future format change (e.g. a timezone offset) can't be
   applied to 3 of 4 sites.
-- **Single-pass onboard buffer scan**: `session-onboard.sh`'s per-buffer loop
+- **Single-sweep onboard buffer scan**: `session-onboard.sh`'s per-buffer loop
   ran 3 separate `grep` passes (total, prompt-only, session-ended) over the
-  same file. Replaced with one `awk` pass computing all three counters,
+  same file. Replaced with one `awk` sweep computing all three counters,
   preserving the exact same silent-on-error defaulting contract (an
   unreadable file still yields "0 0 0" rather than leaking a diagnostic).
 - **Parameterized `_auth_scheme`**: the command-path and prose-path Bearer/
@@ -1140,7 +1140,7 @@ smaller, unrelated bugs plus deferred cleanup:
   separate `grep` passes per buffer file where one would do, and
   `_auth_scheme`/`_auth_scheme_prose` duplicating the same regex literals at
   different length thresholds instead of one parameterized def. None are
-  correctness bugs; deferred to a calmer pass rather than more mechanical
+  correctness bugs; deferred to a calmer sweep rather than more mechanical
   edits under the same time pressure that caused rounds 2-4.
 
 ### Tests
@@ -1182,7 +1182,7 @@ auto-activation was actually live - and nothing surfaced that.
 - **Consolidate mined the wrong portable path**: the skill said to mine
   `.agent/handoffs/` (plural) while the README's documented convention is
   `THROUGHLINE_DATA_DIR=.agent/handoff` (singular) - a one-letter mismatch
-  that could make a consolidation pass silently miss a repo's actual logs.
+  that could make a consolidation sweep silently miss a repo's actual logs.
   The skill now checks both forms, skipping whichever is already `DATA`.
 
 ### Tests
@@ -1196,12 +1196,12 @@ auto-activation was actually live - and nothing surfaced that.
 Capture and handoff answer "what happened this session?"; nothing answered "what
 keeps happening?" A lesson could recur in session log after session log without
 ever graduating to the durable layer where it stops needing to be re-learned.
-This release adds the missing periodic pass (#3).
+This release adds the missing periodic sweep (#3).
 
 ### Added
 - **`throughline-consolidate` skill**: a periodic (monthly or on-demand)
-  consolidation pass over the timestamped handoff session logs. Four phases:
-  determine scope (logs since the last recorded pass; the pass history lives in
+  consolidation sweep over the timestamped handoff session logs. Four phases:
+  determine scope (logs since the last recorded sweep; the sweep history lives in
   a "Consolidation passes" section of `HANDOFF.md`), extract candidate lessons
   (anything recurring in 2+ sessions - workflow corrections, tool quirks,
   environment gotchas, conventions - each carrying its evidence logs and a
@@ -1248,7 +1248,7 @@ a silent chicken-and-egg trap" finding raised in the original v0.1.0 review
   are left untouched, throughline simply stops adding to the project. Documented
   under "Opting a project out" in the README.
 - **A failed auto-activation is distinguishable from a deliberate opt-out.** A
-  review pass found that a bootstrap `mkdir` failure (permissions, disk full)
+  review sweep found that a bootstrap `mkdir` failure (permissions, disk full)
   made `tl_active` return non-zero identically to the `.throughlineignore` path,
   so the very "no more silent chicken-and-egg trap" this release exists to fix
   had a silent failure mode of its own. `tl_active` now sets an internal reason
@@ -1258,7 +1258,7 @@ a silent chicken-and-egg trap" finding raised in the original v0.1.0 review
   first thing that happens in a project, with no manual opt-in step to naturally
   prompt the user to set up `.gitignore` first. `onboard` checks with
   `git check-ignore` (not a hand-rolled pattern match) and warns only when the
-  buffer isn't already covered. A follow-up review pass found this was nested
+  buffer isn't already covered. A follow-up review sweep found this was nested
   only inside the "no `HANDOFF.md` yet" branch, so it permanently stopped firing
   the moment the first handoff ran, whether or not the buffer was ever actually
   gitignored - moved out to fire independently of `HANDOFF.md`'s existence.
@@ -1279,7 +1279,7 @@ a silent chicken-and-egg trap" finding raised in the original v0.1.0 review
   bookkeeping for a session file that already exists; `capture` is unaffected
   and still stops recording new actions the moment the opt-out appears.
 - **A mid-life `.throughlineignore` no longer silences orientation toward
-  content that already exists.** A review pass found that adding the opt-out
+  content that already exists.** A review sweep found that adding the opt-out
   marker to a project that was *already* tracked (had a committed `HANDOFF.md`)
   made `onboard` exit silently before ever reaching the `HANDOFF.md` pointer,
   capture-errors surfacing, or unconsumed-buffer warnings - `.throughlineignore`
@@ -1316,12 +1316,12 @@ a silent chicken-and-egg trap" finding raised in the original v0.1.0 review
 
 ## [0.2.0]
 
-A robustness, privacy, and compaction-survival pass driven by a four-lens review
-(see `docs/REVIEW-v0.1.0.md`), hardened by a follow-up adversarial pass against
+A robustness, privacy, and compaction-survival sweep driven by a four-lens review
+(see `docs/REVIEW-v0.1.0.md`), hardened by a follow-up adversarial sweep against
 the PR itself (general code review plus silent-failure, test-coverage, and
 comment-accuracy specialists) before merge.
 
-### Added (hardening pass)
+### Added (hardening sweep)
 - **Redaction now covers every captured field**, not just the Bash command:
   the Bash `description` and the Edit/Write/NotebookEdit `file_path` previously
   bypassed `redact` entirely (only control-char cleanup ran), so a credential in
@@ -1356,14 +1356,14 @@ comment-accuracy specialists) before merge.
   session_id containing a tab). Capture now resolves the session id via its own
   dedicated jq call, identical to the other hooks.
 - **`.capture-errors` lives at the data-dir root, not under `buffer/`**: a
-  second review pass found that the breadcrumb's own write target depended on
+  second review sweep found that the breadcrumb's own write target depended on
   `buffer/` already existing, so the one failure mode it most needs to report
   (the `mkdir -p` that creates `buffer/` failing) silently defeated the
   breadcrumb along with it. `tl_active` already guarantees the data dir itself
   exists before any hook proceeds, so the breadcrumb now targets that instead.
   README's gitignore guidance updated to match.
 - **`[failed]` no longer false-positives on a benign empty-string `error`**: a
-  third review pass found that jq's `//` operator only treats `null`/`false` as
+  third review sweep found that jq's `//` operator only treats `null`/`false` as
   "absent": a Bash `tool_response` with `exit_code:0` and `error:""` (a
   genuinely successful run) was matched by `(.error? // null) != null` and
   permanently mismarked `[failed]`, exactly the false-positive the prior fix's
@@ -1374,9 +1374,9 @@ comment-accuracy specialists) before merge.
   in `_lib.sh` instead of duplicating the same inline jq `gsub`, removing two of
   the three places that rule had to be kept in sync by hand. `session-capture.sh`
   keeps its own inline version (it applies control-char and backtick stripping
-  together, per-field, inside the same jq pass that also redacts).
+  together, per-field, inside the same jq sweep that also redacts).
 - **Compound credential variable names are now redacted**: a fourth review
-  pass found that the generic keyword=value rule only matched when the keyword
+  sweep found that the generic keyword=value rule only matched when the keyword
   was immediately followed by `:`/`=`/whitespace, so `SECRET_KEY=`,
   `API_KEY_VALUE=`, and similar compound names fell through completely
   unredacted (the keyword group had `\w*` before it but not after). Fixed by
@@ -1412,12 +1412,12 @@ comment-accuracy specialists) before merge.
   that assumption ever breaks.
 - **Handoff skill's re-scan checklist now names two shapes capture's own
   redaction cannot catch mechanically**: a credential attached to a bare CLI
-  flag with no keyword (`mysql -p<password>`, `curl -u user:pass` - flags like
+  flag with no keyword (`mysql -p<password>`, `curl -u user:sweep` - flags like
   `-u`/`-p` are too overloaded across tools, e.g. `docker run -u uid:gid`, to
   redact generically without false positives), and the fact that seeing a
   `***` in a captured line doesn't guarantee the *whole* secret was masked.
 - **The generic rule now masks the real secret, not an intervening word**: a
-  seventh review pass found two more ways the actual credential could survive
+  seventh review sweep found two more ways the actual credential could survive
   in plaintext. First, natural-language phrasing like `password is X` masked
   the linking word `is` instead of `X` (the separator group only recognized
   `:`/`=`/bare whitespace) - now also accepts `is`/`was`/`are`. Second,
@@ -1451,16 +1451,16 @@ comment-accuracy specialists) before merge.
   URL-userinfo rule now marks its own output with an internal sentinel
   (`TLREDACTSENTINEL`, never written to the buffer) instead of the literal
   `***`; the generic rule recognizes that sentinel explicitly instead of
-  inferring it from context, and a final pass converts any sentinel - whether
+  inferring it from context, and a final sweep converts any sentinel - whether
   the generic rule touched it or not - to the user-facing `***`. The value
   group is now fully unbounded except whitespace/quote in every other case, so
   this removes the `@`-vs-`/` tradeoff entirely rather than picking a side.
 - **3 additional test cases** (71 total): a URL credential with no nearby
-  keyword at all (proving the final sentinel-to-`***` pass works
+  keyword at all (proving the final sentinel-to-`***` sweep works
   independently of the generic rule), plus a check that the internal sentinel
   itself never leaks into the buffer.
 - **Session-id resolution deduplicated into `tl_resolve_sid`**: an eighth
-  review pass flagged that `capture`/`flush`/`onboard`/`precompact` each
+  review sweep flagged that `capture`/`flush`/`onboard`/`precompact` each
   hand-duplicated the same "extract `session_id`, then `tl_safe_sid` it" two
   lines - exactly the kind of duplication that already caused a real desync
   bug once (capture deriving it differently than the other three, fixed
