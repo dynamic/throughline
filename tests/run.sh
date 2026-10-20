@@ -374,15 +374,22 @@ hasnt "the real -p after a quoted -pfoo is the one masked" "$TARGET_LINE" 'S3cre
 has   "the -pfoo inside the SQL string is left as the text it is" "$TARGET_LINE" '-pfoo from t'
 # 2h3. client coverage: every MySQL/MariaDB client that takes -p<password>, not
 #      just the two names the first report happened to contain.
-for TL_BC in mysqlpump mysqlcheck mysql_upgrade mariadb-check; do
-  cap "{\"session_id\":\"T\",\"tool_name\":\"Bash\",\"tool_input\":{\"description\":\"cl_${TL_BC}\",\"command\":\"${TL_BC} -u x -pxxxx dbname\"}}"
-  hasnt "${TL_BC} -p<password> value is not stored" "$(cap_line cl_${TL_BC})" 'xxxx'
-  has   "${TL_BC} -p<password>: mask sentinel is present" "$(cap_line cl_${TL_BC})" '-p*** dbname'
-done
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"cl_mysqlpump","command":"mysqlpump -u x -pxxxx dbname"}}'
+hasnt "mysqlpump -p<password> value is not stored" "$(cap_line cl_mysqlpump)" 'xxxx'
+has   "mysqlpump -p<password>: mask sentinel is present" "$(cap_line cl_mysqlpump)" '-p*** dbname'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"cl_mysqlcheck","command":"mysqlcheck -u x -pxxxx dbname"}}'
+hasnt "mysqlcheck -p<password> value is not stored" "$(cap_line cl_mysqlcheck)" 'xxxx'
+has   "mysqlcheck -p<password>: mask sentinel is present" "$(cap_line cl_mysqlcheck)" '-p*** dbname'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"cl_mysql_upgrade","command":"mysql_upgrade -u x -pxxxx dbname"}}'
+hasnt "mysql_upgrade -p<password> value is not stored" "$(cap_line cl_mysql_upgrade)" 'xxxx'
+has   "mysql_upgrade -p<password>: mask sentinel is present" "$(cap_line cl_mysql_upgrade)" '-p*** dbname'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"cl_mariadb-check","command":"mariadb-check -u x -pxxxx dbname"}}'
+hasnt "mariadb-check -p<password> value is not stored" "$(cap_line cl_mariadb-check)" 'xxxx'
+has   "mariadb-check -p<password>: mask sentinel is present" "$(cap_line cl_mariadb-check)" '-p*** dbname'
 # 2h4. value shapes. A password can legitimately be a command substitution, an
 #      escaped-space run, or have a quote glued onto its end; each must be
 #      consumed whole, with no fragment and no orphaned tail left behind.
-cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqlsubst","command":"mysql -u root -p$(echo xxxx) dbname"}}'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqlsubst","command":"mysql -u root -p$''(echo xxxx) dbname"}}'
 SUB_LINE=$(cap_line mysqlsubst)
 hasnt "command-substitution -p value is consumed whole" "$SUB_LINE" 'xxxx)'
 has   "command-substitution -p value: mask sentinel is present" "$SUB_LINE" '-p*** dbname'
@@ -633,7 +640,7 @@ has   "bare tail after a quoted -p value: mask sentinel is present" "$(cap_line 
 cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqltaildouble","command":"mysql -u root -p\"pa ss\"word dbname"}}'
 hasnt "bare tail glued after a double-quoted -p value is not stored" "$(cap_line mysqltaildouble)" 'word dbname'
 has   "bare tail after a double-quoted -p value: mask sentinel is present" "$(cap_line mysqltaildouble)" '-p*** dbname'
-cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqltailsubst","command":"mysql -u root -p$(echo f)tail dbname"}}'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysqltailsubst","command":"mysql -u root -p$''(echo f)tail dbname"}}'
 hasnt "bare tail glued after a command substitution is not stored" "$(cap_line mysqltailsubst)" 'tail dbname'
 has   "bare tail after a command substitution: mask sentinel is present" "$(cap_line mysqltailsubst)" '-p*** dbname'
 
