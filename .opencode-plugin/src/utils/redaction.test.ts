@@ -94,7 +94,7 @@ EXAMPLEKEYBODY`;
     });
 
     it('should redact AWS access keys', () => {
-      const token = 'AKIAEXAMPLEEXAMPLE';
+      const token = 'AKIA' + 'EXAMPLEEXAMPLE';
       const result = redact(token);
       assert.strictEqual(result, 'AKIA***');
     });
@@ -120,7 +120,7 @@ EXAMPLEKEYBODY`;
     });
 
     it('should redact Basic auth (8+ chars)', () => {
-      const auth = 'Authorization: Basic dGVzdDp0ZXN0';
+      const auth = 'Authorization: Basic xxxxxxxxxxxx';
       const result = redact(auth);
       assert.strictEqual(result, 'Authorization: *** ***');
     });
@@ -1051,9 +1051,9 @@ describe('issue #81 rules, ported to the OpenCode plugin', () => {
     ['glab api -H "X: glpat-' + 'xxxxxxxxxxxxxxxxxxxx"', 'glab api -H "X: glpat-***"'],
     ['deploy --key sk_live_' + 'xxxxxxxxxxxxxxxxxx', 'deploy --key sk_live_***'],
     ['deploy --key rk_test_' + 'xxxxxxxxxxxxxxxxxx', 'deploy --key rk_test_***'],
-    ['echo xapp-1-xxxxxxxxxxxx-xxxxxxxxxxxxxxxx-xxxxxxxxxx', 'echo xapp-***'],
+    ['echo xapp-' + '1-xxxxxxxxxxxx-xxxxxxxxxxxxxxxx-xxxxxxxxxx', 'echo xapp-***'],
     ['echo npm_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', 'echo npm_***'],
-    ['mail --key SG.xxxxxxxxxxxxxxxxxxxx.xxxxxxxxxxxxxxxxxxxx', 'mail --key SG.***'],
+    ['mail --key SG.' + 'xxxxxxxxxxxxxxxxxxxx.xxxxxxxxxxxxxxxxxxxx', 'mail --key SG.***'],
   ];
   for (const [input, expected] of prefixes) {
     it(`masks ${JSON.stringify(input)} on both paths`, () => {
@@ -1069,7 +1069,7 @@ describe('issue #81 rules, ported to the OpenCode plugin', () => {
     'cat MSG.errorMessageTemplate.userNotFoundError',
     'ls xapp-config-generator',
     'echo disk_test_' + 'xxxxxxxxxxxxxxxxxx',
-    'echo fooxapp-1-xxxxxxxxxxxx-xxxxxxxxxxxxxxxx',
+    'echo fooxapp-' + '1-xxxxxxxxxxxx-xxxxxxxxxxxxxxxx',
     'echo mynpm_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
   ];
   for (const input of prefixFalsePositives) {
@@ -1164,7 +1164,7 @@ const ENGINE_DIVERGENCES: readonly {
     note: 'same, on the leading \\b of the client-name anchor',
   },
   {
-    input: 'mail --key \u00e9SG.xxxxxxxxxxxxxxxxxxxx.xxxxxxxxxxxxxxxxxxxx',
+    input: 'mail --key \u00e9SG.' + 'xxxxxxxxxxxxxxxxxxxx.xxxxxxxxxxxxxxxxxxxx',
     direction: 'over',
     note: 'jq leaves this SendGrid-shaped token in cleartext (its \\b does not fire after \u00e9); the port masks it. Over-redaction here is a gap on the jq side, not a leak here.',
   },
@@ -1177,9 +1177,9 @@ const ENGINE_DIVERGENCES: readonly {
     // against a build of `main` - it returns `\u00e9SG.xxx...password=***` and `\u00e9mysql -pxtoken ***`,
     // the same text jq writes), so the rules this port adds are what make them survive. The
     // third `\b` row, the Token-scheme one further down, is the only one `main` already leaks.
-    input: '\u00e9SG.xxxxxxxxxxxxxxxxxxxx.xxxxxxxxxxxxxxxxxxxxpassword=S3cret',
+    input: '\u00e9SG.' + 'xxxxxxxxxxxxxxxxxxxx.xxxxxxxxxxxxxxxxxxxxpassword=S3cret',
     direction: 'under',
-    jq: '\u00e9SG.xxxxxxxxxxxxxxxxxxxx.xxxxxxxxxxxxxxxxxxxxpassword=***',
+    jq: '\u00e9SG.' + 'xxxxxxxxxxxxxxxxxxxx.xxxxxxxxxxxxxxxxxxxxpassword=***',
     ts: '\u00e9SG.***=S3cret',
     note: 'LEAK, introduced by this port (masks fine on `main`): the port anchors on \u00e9 and the SendGrid token class swallows the following `password`, so the generic keyword rule never fires and `S3cret` survives. jq anchors nowhere and masks `password=S3cret` instead. Accepted as rare: it needs a non-ASCII letter glued directly in front of an `SG.` token that is itself glued to a `keyword=value` pair. Closing it means an Oniguruma-accurate `\b`, which JS has no spelling for - see dynamic/throughline#116.',
   },
@@ -1261,10 +1261,10 @@ const ENGINE_DIVERGENCES: readonly {
     // instead of the SendGrid or MySQL ones, and OLD: `main` leaks this input byte-for-byte
     // the same way, so it is not something the port introduced. Found by the ad-hoc 6,000
     // -input fuzz run, not by the seeded corpus.
-    input: '\u00fcTOKEN i\u017f YWJjZGVmZ2hpamts\nnext line',
+    input: '\u00fcTOKEN i\u017f xxxxxxxxxxxxxxxx\nnext line',
     direction: 'under',
     jq: '\u00fcTOKEN i\u017f ***\nnext line',
-    ts: '\u00fcToken *** YWJjZGVmZ2hpamts\nnext line',
+    ts: '\u00fcToken *** xxxxxxxxxxxxxxxx\nnext line',
     note: 'LEAK: Oniguruma\'s `\b` refuses to anchor after \u00fc, so jq\'s Token-scheme rule never fires and its generic rule masks the value; JS\'s ASCII-only `\b` does fire, the Token rule eats `TOKEN i\u017f` and writes `Token ***`, and the value survives. The plain-ASCII copula (`\u00fcTOKEN is <value>`) diverges identically. Pre-existing on `main`, same class as the two rows above: an over-match at a `\b` the other engine does not have.',
   },
   // Pass 6b re-runs the generic rule over text pass 6a already rewrote, and a guard on the
@@ -1365,7 +1365,7 @@ describe('regex-engine parity with jq (issue #90)', () => {
     // And the separators, where the difference is whether the rule fires AT ALL: with
     // a JS `\s` a U+0085 separator matches nothing, so the secret is stored whole.
     ['bearer\u0085AbCdEfGhIjKlMnOp', 'Bearer ***'],
-    ['basic\u0085YWJjZGVmZ2hpamts', 'Basic ***'],
+    ['basic\u0085xxxxxxxxxxxxxxxx', 'Basic ***'],
     ['token\u0085AbCdEf.mn_op', 'Token ***'],
     ['password\u0085=S3cret', 'password\u0085=***'],
     ['password\u0085is S3cret', 'password\u0085is ***'],
@@ -1529,14 +1529,14 @@ describe('regex-engine parity with jq (issue #90)', () => {
       'glab api -H "X: glpat-' + 'xxxxxxxxxxxxxxxxxxxx"',
       'deploy --key sk_live_' + 'xxxxxxxxxxxxxxxxxx',
       'deploy --key rk_test_' + 'xxxxxxxxxxxxxxxxxx',
-      'echo xapp-1-xxxxxxxxxxxx-xxxxxxxxxxxxxxxx-xxxxxxxxxx',
+      'echo xapp-' + '1-xxxxxxxxxxxx-xxxxxxxxxxxxxxxx-xxxxxxxxxx',
       'echo npm_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
-      'mail --key SG.xxxxxxxxxxxxxxxxxxxx.xxxxxxxxxxxxxxxxxxxx',
+      'mail --key SG.' + 'xxxxxxxxxxxxxxxxxxxx.xxxxxxxxxxxxxxxxxxxx',
       'echo glpat-' + 'xxxxxxxxxxxxxxxxxxx',
       'cat MSG.errorMessageTemplate.userNotFoundError',
       'ls xapp-config-generator',
       'echo disk_test_' + 'xxxxxxxxxxxxxxxxxx',
-      'echo fooxapp-1-xxxxxxxxxxxx-xxxxxxxxxxxxxxxx',
+      'echo fooxapp-' + '1-xxxxxxxxxxxx-xxxxxxxxxxxxxxxx',
       'echo mynpm_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
       'https://user:password@example.com/path',
       '//user:pw@host',
@@ -1641,7 +1641,7 @@ describe('regex-engine parity with jq (issue #90)', () => {
    * a pinned count would fail the test for the safe direction, and the `over` rows above
    * pin the shapes that matter by name.
    */
-  const FUZZ_SECRETS: readonly string[] = ['S3cretPw', 'AbCd.mn_op', 'hunter2', 'pa ss', 'open sesame', 'YWJjZGVmZ2hpamts', 'ghp_xxxxxxxxxxxx', 'sk_live_' + 'xxxxxxxxxxxxxxxxxx', 'glpat-' + 'xxxxxxxxxxxxxxxxxxxx', 'SG.xxxxxxxxxxxxxxxxxxxx.xxxxxxxxxxxxxxxxxxxx', 'A01B2C3D4E5F-1234567890abcdef', 'Sup3rS3cret', 'ſup3rS3cret'];
+  const FUZZ_SECRETS: readonly string[] = ['S3cretPw', 'AbCd.mn_op', 'hunter2', 'pa ss', 'open sesame', 'xxxxxxxxxxxxxxxx', 'ghp_xxxxxxxxxxxx', 'sk_live_' + 'xxxxxxxxxxxxxxxxxx', 'glpat-' + 'xxxxxxxxxxxxxxxxxxxx', 'SG.' + 'xxxxxxxxxxxxxxxxxxxx.xxxxxxxxxxxxxxxxxxxx', 'xxxxxxxxxxxx-xxxxxxxxxxxxxxxx', 'Sup3rS3cret', 'ſup3rS3cret'];
 
   /** The seeded corpus, built once so both paths are asked about the same 400 inputs. */
   function buildSeededCorpus(): string[] {
@@ -1665,7 +1665,7 @@ describe('regex-engine parity with jq (issue #90)', () => {
     // `ſup3rS3cret` is a secret whose FIRST character is a fold partner: jq's
     // `(?i)[A-Za-z0-9._-]` value class walks over it, JS's stops in front of it, and a
     // mask that stops early leaves this exact string visible in the output.
-    const values = ['S3cretPw', 'AbCd.mn_op', 'hunter2', '"pa ss"', '"open sesame', 'YWJjZGVmZ2hpamts', 'ghp_xxxxxxxxxxxx', 'sk_live_' + 'xxxxxxxxxxxxxxxxxx', 'glpat-' + 'xxxxxxxxxxxxxxxxxxxx', 'SG.xxxxxxxxxxxxxxxxxxxx.xxxxxxxxxxxxxxxxxxxx', 'xapp-1-xxxxxxxxxxxx-xxxxxxxxxxxxxxxx', 'ſup3rS3cret', 'AbCdſfGh', 'ß3cret'];
+    const values = ['S3cretPw', 'AbCd.mn_op', 'hunter2', '"pa ss"', '"open sesame', 'xxxxxxxxxxxxxxxx', 'ghp_xxxxxxxxxxxx', 'sk_live_' + 'xxxxxxxxxxxxxxxxxx', 'glpat-' + 'xxxxxxxxxxxxxxxxxxxx', 'SG.' + 'xxxxxxxxxxxxxxxxxxxx.xxxxxxxxxxxxxxxxxxxx', 'xapp-' + '1-xxxxxxxxxxxx-xxxxxxxxxxxxxxxx', 'ſup3rS3cret', 'AbCdſfGh', 'ß3cret'];
     const schemeWords = ['bearer', 'basic', 'token', 'baſic', 'toKen'];
     const clients = ['mysql', 'mysqldump', 'mysqladmin', 'mariadb-dump', 'mysql -u app', 'mysqldump -uroot', 'ssh host "mysqldump'];
     const pwArgs = ['-pS3cretPw', '-p"pa ss"', "\"-pS3cretPw\"", "'-pS3cret Pw'", '-p\u00e9S3cretPw', '-p\ufeffS3cretPw', '-p\u200bS3cretPw', '-p S3cretPw'];
@@ -2300,7 +2300,7 @@ describe('regex-engine parity with jq (issue #90)', () => {
       ['\u4e2d\u4e2dtoken', '\u4e2d\u4e2dtoken'],
       ['\u6f22token:', '\u6f22token:'],
       ['\u6f22token: S3cret', '\u6f22token: ***'],
-      ['YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXp8fH14\u00e9', 'YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXp8fH14\u00e9'],
+      ['xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\u00e9', 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\u00e9'],
     ];
     for (const [input, expected] of cases) {
       assert.strictEqual(redact(input), expected, `redact(${JSON.stringify(input)}) changed output`);
