@@ -182,26 +182,26 @@ has "Edit with is_error:true IS marked failed" "$(grep bad.js "$BUF/session-T.md
 
 # 2. secret redaction
 reset_buf
-cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"secret","command":"export API_KEY=ghp_abcdefghij1234567890 token"}}'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"secret","command":"export API_KEY=ghp_EXAMPLE0000x token"}}'
 S=$(grep 'secret' "$BUF/session-T.md")
-hasnt "token value is not stored" "$S" 'ghp_abcdefghij1234567890'
+hasnt "token value is not stored" "$S" 'ghp_EXAMPLE0000x'
 has   "token value is masked" "$S" '***'
 
 # 2b. additional secret shapes: Google API key, PEM private key, Basic auth
-cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"gkey","command":"deploy --key AIzaSyD1234567890abcdefghijklmnopqrstuv"}}'
-hasnt "google api key not stored" "$(grep gkey "$BUF/session-T.md")" 'AIzaSyD1234567890abcdefghijklmnopqrstuv'
-cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"pem","command":"echo -----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAK\nABCDEF\n-----END RSA PRIVATE KEY-----"}}'
-hasnt "pem key body (with END marker) not stored" "$(grep pem "$BUF/session-T.md")" 'MIIEowIBAAK'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"gkey","command":"deploy --key AIzaEXAMPLE0000xxxxEXAMPLE0000xxxxEXAMP"}}'
+hasnt "google api key not stored" "$(grep gkey "$BUF/session-T.md")" 'AIzaEXAMPLE0000xxxxEXAMPLE0000xxxxEXAMP'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"pem","command":"echo -----BEGIN RSA PRIVATE'' KEY-----\nEXAMPLEKEYBODY\nEXAMPLEKEYBODY2\n-----END RSA PRIVATE'' KEY-----"}}'
+hasnt "pem key body (with END marker) not stored" "$(grep pem "$BUF/session-T.md")" 'EXAMPLEKEYBODY'
 cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"basicauth","command":"curl -H Authorization:Basic dXNlcjpwYXNzd29yZA=="}}'
 hasnt "basic-auth payload not stored" "$(grep basicauth "$BUF/session-T.md")" 'dXNlcjpwYXNzd29yZA'
 
 # 2c. PEM body with NO end marker (truncated/streamed key) is still redacted
-cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"pemnoeND","command":"echo -----BEGIN RSA PRIVATE KEY-----\nMIITRUNCATEDKEYBODY\nNOENDMARKERHERE"}}'
-hasnt "pem key body with NO end marker not stored" "$(grep pemnoeND "$BUF/session-T.md")" 'MIITRUNCATEDKEYBODY'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"pemnoeND","command":"echo -----BEGIN RSA PRIVATE'' KEY-----\nEXAMPLEKEYBODY\nEXAMPLETRAILER"}}'
+hasnt "pem key body with NO end marker not stored" "$(grep pemnoeND "$BUF/session-T.md")" 'EXAMPLEKEYBODY'
 
 # 2d. ghr_ refresh tokens are redacted (gh[oprsu]_ class, not gh[opsu]_)
-cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"ghrtok","command":"echo ghr_1234567890abcdefghij"}}'
-hasnt "ghr_ refresh token not stored" "$(grep ghrtok "$BUF/session-T.md")" 'ghr_1234567890abcdefghij'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"ghrtok","command":"echo ghr_EXAMPLE0000x"}}'
+hasnt "ghr_ refresh token not stored" "$(grep ghrtok "$BUF/session-T.md")" 'ghr_EXAMPLE0000x'
 
 # 2e. broadened keyword alternation catches "credential" (not just token/secret/password)
 cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"credtest","command":"export DB_CREDENTIAL=s3cr3tHunter2value"}}'
@@ -220,9 +220,9 @@ hasnt "API_KEY_VALUE value not stored" "$(grep compoundapi "$BUF/session-T.md")"
 #      username (e.g. "x-access-token") used to make the generic rule's
 #      unbounded value-capture eat through '@' and delete the trailing
 #      host/path, not just mask the credential.
-cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"clone","command":"git clone https://x-access-token:ghp_aaaaaaaaaaaaaaaaaaaaaaaa@github.com/foo/bar.git"}}'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"clone","command":"git clone https://x-access-token:ghp_EXAMPLE0000x@github.com/foo/bar.git"}}'
 CLONE_LINE=$(grep clone "$BUF/session-T.md")
-hasnt "credential in URL userinfo is not stored" "$CLONE_LINE" 'ghp_aaaaaaaaaaaaaaaaaaaaaaaa'
+hasnt "credential in URL userinfo is not stored" "$CLONE_LINE" 'ghp_EXAMPLE0000x'
 has   "URL host/path after the credential is preserved, not deleted" "$CLONE_LINE" 'github.com/foo/bar.git'
 
 # 2e4. a secret VALUE containing slashes (e.g. a realistic AWS-shaped key) is
@@ -236,8 +236,8 @@ hasnt "AWS secret value is not even partially stored" "$AWS_LINE" 'K7MDENG'
 # 2e5. dashed multi-segment sk- key formats (Anthropic sk-ant-, OpenAI
 #      sk-proj-) are fully redacted, not left untouched by a body class that
 #      only allowed alnum and rejected the internal dashes.
-cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"anthropickey","command":"export ANTHROPIC_API_KEY=sk-ant-api03-AbCdEfGh1234567890XYZ"}}'
-hasnt "sk-ant- key is not stored" "$(grep anthropickey "$BUF/session-T.md")" 'sk-ant-api03-AbCdEfGh1234567890XYZ'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"anthropickey","command":"export ANTHROPIC_API_KEY=sk-ant-''api03-EXAMPLE0000xxxxEXAMPL"}}'
+hasnt "sk-ant- key is not stored" "$(grep anthropickey "$BUF/session-T.md")" 'sk-ant-''api03-EXAMPLE0000xxxxEXAMPL'
 
 # 2e6. natural-language "keyword is X" phrasing masks the real value X, not
 #      the linking word "is" - the separator group used to only recognize
@@ -409,26 +409,26 @@ has "known false positive: docker -p3306:3306 after a mysql name is masked too" 
 #     rk_test_, xapp-, npm_, SG.x.y). Each floor is set above anything an
 #     ordinary word or identifier could be, and the cases at the end pin that:
 #     a 19-char glpat body and vendor-shaped identifiers stay unmasked.
-cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"gitlabpat","command":"glab api -H \"X: glpat-ABCDEFGHIJKLMNOPQRST\""}}'
-hasnt "gitlab glpat- token not stored" "$(cap_line gitlabpat)" 'glpat-ABCDEFGHIJKLMNOPQRST'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"gitlabpat","command":"glab api -H \"X: glpat-''EXAMPLE0000xxxxEXAMP\""}}'
+hasnt "gitlab glpat- token not stored" "$(cap_line gitlabpat)" 'glpat-''EXAMPLE0000xxxxEXAMP'
 has   "gitlab glpat- token: mask sentinel is present" "$(cap_line gitlabpat)" 'glpat-***'
-cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"stripelive","command":"deploy --key sk_live_AbCdEfGh1234567890"}}'
-hasnt "stripe sk_live_ key not stored" "$(cap_line stripelive)" 'sk_live_AbCdEfGh1234567890'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"stripelive","command":"deploy --key sk_live_''EXAMPLE0000xxxxEXA"}}'
+hasnt "stripe sk_live_ key not stored" "$(cap_line stripelive)" 'sk_live_''EXAMPLE0000xxxxEXA'
 has   "stripe sk_live_ key: mask sentinel is present" "$(cap_line stripelive)" 'sk_live_***'
-cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"striperestricted","command":"deploy --key rk_test_AbCdEfGh1234567890"}}'
-hasnt "stripe rk_test_ key not stored" "$(cap_line striperestricted)" 'rk_test_AbCdEfGh1234567890'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"striperestricted","command":"deploy --key rk_test_''EXAMPLE0000xxxxEXA"}}'
+hasnt "stripe rk_test_ key not stored" "$(cap_line striperestricted)" 'rk_test_''EXAMPLE0000xxxxEXA'
 has   "stripe rk_test_ key: mask sentinel is present" "$(cap_line striperestricted)" 'rk_test_***'
-cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"slackapp","command":"echo xapp-1-A01B2C3D4E5F-1234567890abcdef-abcdef1234"}}'
-hasnt "slack xapp- token not stored" "$(cap_line slackapp)" 'xapp-1-A01B2C3D4E5F-1234567890abcdef-abcdef1234'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"slackapp","command":"echo xapp-1-EXAMPLE0000x-EXAMPLE0000xxxxE-EXAMPLE000"}}'
+hasnt "slack xapp- token not stored" "$(cap_line slackapp)" 'xapp-1-EXAMPLE0000x-EXAMPLE0000xxxxE-EXAMPLE000'
 has   "slack xapp- token: mask sentinel is present" "$(cap_line slackapp)" 'xapp-***'
-cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"npmtoken","command":"echo npm_AbCdEfGh1234567890AbCdEfGh1234"}}'
-hasnt "npm_ automation token not stored" "$(cap_line npmtoken)" 'npm_AbCdEfGh1234567890AbCdEfGh1234'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"npmtoken","command":"echo npm_EXAMPLE0000xxxxEXAMPLE0000xxxx"}}'
+hasnt "npm_ automation token not stored" "$(cap_line npmtoken)" 'npm_EXAMPLE0000xxxxEXAMPLE0000xxxx'
 has   "npm_ automation token: mask sentinel is present" "$(cap_line npmtoken)" 'npm_***'
-cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"sendgrid","command":"mail --key SG.abcdefghijklmnopqrst.ABCDEFGHIJKLMNOPQRST"}}'
-hasnt "sendgrid SG. key not stored" "$(cap_line sendgrid)" 'SG.abcdefghijklmnopqrst.ABCDEFGHIJKLMNOPQRST'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"sendgrid","command":"mail --key SG.EXAMPLE0000xxxxEXAMP.EXAMPLE0000xxxxEXAMP"}}'
+hasnt "sendgrid SG. key not stored" "$(cap_line sendgrid)" 'SG.EXAMPLE0000xxxxEXAMP.EXAMPLE0000xxxxEXAMP'
 has   "sendgrid SG. key: mask sentinel is present" "$(cap_line sendgrid)" 'SG.***'
-cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"shortglpat","command":"echo glpat-ABCDEFGHIJKLMNOPQRS"}}'
-has   "a 19-character glpat body is NOT masked (the 20 floor is real)" "$(cap_line shortglpat)" 'glpat-ABCDEFGHIJKLMNOPQRS'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"shortglpat","command":"echo glpat-''EXAMPLE0000xxxxEXAM"}}'
+has   "a 19-character glpat body is NOT masked (the 20 floor is real)" "$(cap_line shortglpat)" 'glpat-''EXAMPLE0000xxxxEXAM'
 cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"shortglpat2","command":"echo glpat-abc"}}'
 has   "a too-short glpat- sample is NOT masked" "$(cap_line shortglpat2)" 'glpat-abc'
 # Prefix rules are LEFT-ANCHORED as well as length-floored: an identifier that
@@ -442,12 +442,12 @@ cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"xappid","
 has   "xapp-config-generator identifier is not mistaken for a Slack token" "$(cap_line xappid)" 'xapp-config-generator'
 # The lookbehind on its own, isolated from the length floor and from the digit
 # segment: each of these CONTAINS a real prefix mid-word.
-cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"disktest","command":"echo disk_test_AbCdEfGh1234567890"}}'
-has   "disk_test_ is not mistaken for a Stripe key" "$(cap_line disktest)" 'disk_test_AbCdEfGh1234567890'
-cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"fooxapp","command":"echo fooxapp-1-A01B2C3D4E5F-1234567890abcdef"}}'
-has   "fooxapp- is not mistaken for a Slack token" "$(cap_line fooxapp)" 'fooxapp-1-A01B2C3D4E5F-1234567890abcdef'
-cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mynpm","command":"echo mynpm_AbCdEfGh1234567890AbCdEfGh123456"}}'
-has   "mynpm_ is not mistaken for an npm token" "$(cap_line mynpm)" 'mynpm_AbCdEfGh1234567890AbCdEfGh123456'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"disktest","command":"echo disk_test_''EXAMPLE0000xxxxEXA"}}'
+has   "disk_test_ is not mistaken for a Stripe key" "$(cap_line disktest)" 'disk_test_''EXAMPLE0000xxxxEXA'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"fooxapp","command":"echo fooxapp-1-EXAMPLE0000x-EXAMPLE0000xxxxE"}}'
+has   "fooxapp- is not mistaken for a Slack token" "$(cap_line fooxapp)" 'fooxapp-1-EXAMPLE0000x-EXAMPLE0000xxxxE'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mynpm","command":"echo mynpm_EXAMPLE0000xxxxEXAMPLE0000xxxxEX"}}'
+has   "mynpm_ is not mistaken for an npm token" "$(cap_line mynpm)" 'mynpm_EXAMPLE0000xxxxEXAMPLE0000xxxxEX'
 
 # 2i2. the span must cross the things that LOOK like separators but are not: a
 #      backslash-newline continuation (that chain is ONE command, and capture
@@ -638,15 +638,15 @@ hasnt "bare tail glued after a command substitution is not stored" "$(cap_line m
 has   "bare tail after a command substitution: mask sentinel is present" "$(cap_line mysqltailsubst)" '-p*** dbname'
 
 # 2f. redaction applies to the Bash *description* field, not just command
-cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"deploy with ghp_abcdefghij1234567890","command":"true"}}'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"deploy with ghp_EXAMPLE0000x","command":"true"}}'
 DESC_LINE=$(grep '\*\*bash\*\* deploy' "$BUF/session-T.md")
-hasnt "token in description is not stored" "$DESC_LINE" 'ghp_abcdefghij1234567890'
+hasnt "token in description is not stored" "$DESC_LINE" 'ghp_EXAMPLE0000x'
 has   "token in description is masked" "$DESC_LINE" '***'
 
 # 2g. redaction applies to Edit/Write/NotebookEdit file_path, not just Bash command
-cap '{"session_id":"T","tool_name":"Write","tool_input":{"file_path":"'"$WORK"'/proj/tmp/sk-abcdefghij1234567890.txt"}}'
+cap '{"session_id":"T","tool_name":"Write","tool_input":{"file_path":"'"$WORK"'/proj/tmp/sk-EXAMPLE0000xxxxEXAMP.txt"}}'
 PATH_LINE=$(grep '\*\*Write\*\*' "$BUF/session-T.md")
-hasnt "token in file_path is not stored" "$PATH_LINE" 'sk-abcdefghij1234567890'
+hasnt "token in file_path is not stored" "$PATH_LINE" 'sk-EXAMPLE0000xxxxEXAMP'
 has   "token in file_path is masked" "$PATH_LINE" '***'
 
 # 3. path relativization (Edit, Write, NotebookEdit, and the "?" fallback)
@@ -1419,18 +1419,18 @@ has   "prompt hook records the prompt line" "$(cat "$BUF/session-P.md")" '**prom
 # different one, and there is no boundary rule that admits "secrets:"/
 # "passwords:" while excluding "author:"/"tokens:" — the shapes overlap).
 # A known token-prefix shape is still caught even inside prose:
-prompt '{"session_id":"P","prompt":"deploy with my key ghp_abcdefghij1234567890"}'
+prompt '{"session_id":"P","prompt":"deploy with my key ghp_EXAMPLE0000x"}'
 PS=$(grep 'deploy with' "$BUF/session-P.md")
-hasnt "prompt: gh token not stored" "$PS" 'ghp_abcdefghij1234567890'
+hasnt "prompt: gh token not stored" "$PS" 'ghp_EXAMPLE0000x'
 has   "prompt: gh token masked"     "$PS" '***'
 # issue #81: the newly added vendor prefixes live in the SHARED _prefix_tokens
 # def, so they protect prompts too - and, being shape-distinctive, they do it
 # without the prose-corruption problem that made the keyword rules command-only.
-prompt '{"session_id":"P","prompt":"rotate the gitlab glpat-ABCDEFGHIJKLMNOPQRST before it expires"}'
-hasnt "prompt: glpat- not stored" "$(grep 'rotate the gitlab' "$BUF/session-P.md")" 'glpat-ABCDEFGHIJKLMNOPQRST'
+prompt '{"session_id":"P","prompt":"rotate the gitlab glpat-''EXAMPLE0000xxxxEXAMP before it expires"}'
+hasnt "prompt: glpat- not stored" "$(grep 'rotate the gitlab' "$BUF/session-P.md")" 'glpat-''EXAMPLE0000xxxxEXAMP'
 has   "prompt: glpat- mask sentinel is present" "$(grep 'rotate the gitlab' "$BUF/session-P.md")" 'glpat-***'
-prompt '{"session_id":"P","prompt":"the stripe key sk_live_AbCdEfGh1234567890 leaked, rotate it"}'
-hasnt "prompt: sk_live_ key not stored" "$(grep 'the stripe key' "$BUF/session-P.md")" 'sk_live_AbCdEfGh1234567890'
+prompt '{"session_id":"P","prompt":"the stripe key sk_live_''EXAMPLE0000xxxxEXA leaked, rotate it"}'
+hasnt "prompt: sk_live_ key not stored" "$(grep 'the stripe key' "$BUF/session-P.md")" 'sk_live_''EXAMPLE0000xxxxEXA'
 has   "prompt: sk_live_ mask sentinel is present" "$(grep 'the stripe key' "$BUF/session-P.md")" 'sk_live_***'
 # Prose safety: ordinary English containing credential KEYWORDS but no
 # recognizable structural shape survives verbatim — the whole point of
@@ -1757,6 +1757,37 @@ codex_expect "codex check: marketplace version disagreeing with the manifest exi
 codex_fixture emptymarketplace
 : > "$WORK/codex/emptymarketplace/.agents/plugins/marketplace.json"
 codex_expect "codex check: zero-byte marketplace file exits non-zero" 1 "invalid JSON" "$WORK/codex/emptymarketplace"
+
+# --- OMP manifest lives at the repo root, next to skills/ and hooks/ --------------
+# OMP resolves skills/ and hooks/ as siblings of the package.json carrying the
+# `omp` field, with no path override.
+eq "root package.json carries the omp manifest name" "$(jq -r '.omp.name // empty' "$ROOT/package.json")" "throughline"
+eq "skills/ beside the OMP manifest holds 4 skills" "$(find "$ROOT/skills" -name SKILL.md | wc -l | tr -d ' ')" "4"
+present "OMP hook shim beside the OMP manifest" "$ROOT/hooks/post/throughline.ts"
+
+# --- no credential-shaped literals in tracked files ---------------------------
+# The Claude plugin directory ships the whole repo and rejects any file holding
+# something that looks like a live vendor key. Fixtures keep the prefix, and the
+# length wherever a redaction rule has an exact or minimum one, but use a
+# placeholder body of E/X/A/M/P/L, x, 0 and separators only; PEM bodies start EXAMPLE. The
+# prefixes are assembled from pieces so this block does not match itself.
+_B='(^|[^A-Za-z0-9_]|\\[nrt])'
+_P="gh""[oprsu]_|github""_pat_|sk""_live_|sk""_test_|rk""_test_|xo""x[baprs]-|xa""pp-|sk""-|AK""IA|AI""za|glp""at-|np""m_"
+_TOK="${_B}(${_P})[A-Za-z0-9_-]{10,}|${_B}S""G\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}"
+_STRIP="^(${_P})([0-9]{1,2}-)?((ant|proj)-)?(api03-)?"
+_BAD=$(cd "$ROOT" || exit 1; git ls-files -z | xargs -0 /usr/bin/grep -IhoE "$_TOK" 2>/dev/null \
+  | sed -E 's/^(\\[nrt]|[^A-Za-z])//' | /usr/bin/grep -vx 'xa''pp-config-generator' \
+  | sed -E "s/${_STRIP}//; s/^S""G\.//" \
+  | /usr/bin/grep -vE '^[EXAMPLx0_.-]+$' || true)
+_PEM_BAD=$(cd "$ROOT" || exit 1; git ls-files -z | xargs -0 /usr/bin/grep -IzhoE 'BEGIN [A-Z ]*PRIVATE KEY-----(\\n|[[:space:]])+[A-Za-z0-9+/=]{4,}' 2>/dev/null \
+  | tr '\0\n' '  ' | sed 's/BEGIN /\
+BEGIN /g' | /usr/bin/grep -E 'KEY-----' | /usr/bin/grep -vE 'KEY-----(\\n| )+EXAMPLE' || true)
+# Positive control: the same pipeline must flag a real-shaped token, so a broken
+# grep/xargs/regex cannot pass as "scanned, clean".
+_CTL=$(printf '%s\n' "x gh""p_Ab1Cd2Ef3Gh4Ij5Kl6Mn" | /usr/bin/grep -IhoE "$_TOK" | sed -E 's/^(\\[nrt]|[^A-Za-z])//' | /usr/bin/grep -vE '^[A-Za-z_.-]+[EXAMPLx0_.-]*$' || true)
+if [ -n "$_CTL" ]; then ok "credential guard flags a real-shaped token (positive control)"; else bad "credential guard flags a real-shaped token (positive control)"; fi
+eq "no credential-shaped vendor literals in tracked files (placeholder bodies only)" "$_BAD" ""
+eq "no PEM key bodies in tracked files (EXAMPLE marker only)" "$_PEM_BAD" ""
 
 echo "----------------------"
 printf 'passed: %s   failed: %s\n' "$PASS" "$FAIL"
