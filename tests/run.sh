@@ -539,6 +539,84 @@ has   "a plain newline is still a hard stop for the span" "$(cap_line mysqlmulti
 #      is atomic (?> … ) so it is O(n) regardless of redirect count.
 cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"mysql12redirects","command":"mysql 2>&1 2>&1 2>&1 2>&1 2>&1 2>&1 2>&1 2>&1 2>&1 2>&1 2>&1 2>&1"}}'
 has   "12+ redirects without -p does not cause regex failure" "$(cap_line mysql12redirects)" 'mysql 2>&1'
+# 2i1b2. issue #130: the SAME failure class in the GENERIC keyword=value rule (the
+#      `(?<k>...)` gsub in `def redact`), not just in the mysql span. Its keyword
+#      group was an unanchored `\w*(?:token|password|...)\w*`, so a long word run
+#      with no separator in it - `password=x ` followed by thousands of `tokena` -
+#      made Oniguruma exhaust its retry budget: `Regex failure:
+#      retry-limit-in-match over`. That aborts the hook's ENTIRE jq pipeline, so
+#      session-capture writes NO buffer line: the event is silently dropped,
+#      secrets included. Both size assertions below are therefore `has` on the
+#      captured line, never `hasnt` on a secret - an empty haystack satisfies
+#      `hasnt` and would have made this fixture green while the event was being
+#      dropped (the same trap cap_line's note above closed for #81). The group is
+#      now `(?:(?<!\w)|(?<=\(M)))(?<k>(?>\w*...\w*))`: the lookbehind drops
+#      redundant start positions inside a word run, the atomic group drops
+#      redundant re-entries once the separator fails at the run's end, and the
+#      `(?<=\(M))` alternative keeps the one legitimate mid-run start (the
+#      post-sentinel resume position - pinned by the kwsentinel fixture below).
+#      The lookbehind and the atomic group are both needed: on a 96 KB run the
+#      lookbehind alone still hit the retry limit and the atomic group alone crawled
+#      (no per-machine numbers here - they go stale; the measurements taken while
+#      landing this are in dynamic/throughline#160, the PR that anchored this rule).
+#
+#      The fixture length is asserted first: a `tl_repeat` that silently produced a
+#      short string would make these pass on the PRE-fix regex, which is the one
+#      way this block could lie. Built by concatenation rather than
+#      `printf %.0s $(seq N)` so it needs no coreutils beyond what the suite
+#      already assumes.
+tl_repeat() {
+  tl_w=$1; tl_n=$2; tl_o=''
+  while [ "$tl_n" -gt 0 ]; do tl_o="$tl_o$tl_w"; tl_n=$((tl_n - 1)); done
+  printf '%s' "$tl_o"
+}
+tl_run6k=$(tl_repeat tokena 1000)
+if [ "${#tl_run6k}" -ne 6000 ]; then
+  bad "issue #130 6 KB fixture built ${#tl_run6k} chars, expected 6000 (fixture broken, not the hook)"
+fi
+cap "{\"session_id\":\"T\",\"tool_name\":\"Bash\",\"tool_input\":{\"description\":\"kwrun6k\",\"command\":\"password=x $tl_run6k\"}}"
+has   "6 KB word run after 'password=x ' is redacted, not dropped (issue #130)" "$(cap_line kwrun6k)" 'password=***'
+tl_run24k=$(tl_repeat tokena 4000)
+if [ "${#tl_run24k}" -ne 24000 ]; then
+  bad "issue #130 24 KB fixture built ${#tl_run24k} chars, expected 24000 (fixture broken, not the hook)"
+fi
+cap "{\"session_id\":\"T\",\"tool_name\":\"Bash\",\"tool_input\":{\"description\":\"kwrun24k\",\"command\":\"password=x $tl_run24k\"}}"
+has   "24 KB word run after 'password=x ' is redacted, not dropped (issue #130)" "$(cap_line kwrun24k)" 'password=***'
+#      And the lookbehind's own character class - which is asymmetric, so it needs
+#      two fixtures pointing opposite ways. The class is `(?<!\w)` rather than the
+#      `(?<![A-Za-z0-9_])` some other rules in this file use, and the two failure
+#      directions are NOT equal. WIDENING it (a class that also counts `-`, say
+#      `(?<![A-Za-z0-9_-])`) LEAKS: in `mydb --token=zz` the only position the match
+#      can start at is the `t`, because `-` is not a `\w` so the leading `\w*` cannot
+#      absorb it - reject that position and the value stays in cleartext. NARROWING
+#      it cannot leak at all: dropping characters from the class only ADMITS extra
+#      start positions, which costs doomed backtracking and never rejects a start
+#      that would otherwise work.
+#      `kwaccent` is the narrow-direction case, not a pin on the class. On jq 1.8.2
+#      `\w` does not count `é`, so `(?<!\w)` and `(?<![A-Za-z0-9_])` agree on this
+#      input and both keep the keyword masked - the fixture stays GREEN under the
+#      ASCII-only lookbehind, which is the correct outcome (a narrower class is a
+#      latency bug, not a disclosure), and it is what proves that. What it pins is
+#      that a non-ASCII-prefixed keyword still masks through the anchor.
+#      `kwclasswide` is the direction that actually leaks, and it is the fixture that
+#      goes red under the widening above: `sh tests/run.sh` against a one-character
+#      widening of the lookbehind class returns `mydb --token=zz` in cleartext, and
+#      the same suite on an ASCII-only (narrower) lookbehind stays green).
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwaccent","command":"éPASSWORD=zz"}}'
+has   "a keyword glued to a non-ASCII letter is still masked (issue #130)" "$(cap_line kwaccent)" 'éPASSWORD=***'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwclasswide","command":"mydb --token=zz"}}'
+has   "a keyword glued to a hyphen flag is masked; a lookbehind class wider than the keyword class would leak it (issue #130)" "$(cap_line kwclasswide)" 'mydb --token=***'
+hasnt "a keyword glued to a hyphen flag: value not stored (issue #130)" "$(cap_line kwclasswide)" '--token=zz'
+#      And the one start position inside a word run the lookbehind must KEEP. gsub
+#      resumes after the previous match, and the sentinel value alternative ends
+#      mid-run (the sentinel is all word characters), so the second keyword here only
+#      gets masked if that resume position stays admissible. Anchoring without it
+#      masks LESS than the pre-fix rule - the leak direction - and the first cut of
+#      this fix did exactly that until the plugin's jq-parity suite caught it, so it
+#      is pinned on the hooks side too and not only over there.
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwsentinel","command":"password=TLREDACTSENTINELtoken=x"}}'
+has   "a keyword glued to a masked sentinel value is still masked (issue #130)" "$(cap_line kwsentinel)" 'token=***'
+hasnt "a keyword glued to a masked sentinel: value not stored" "$(cap_line kwsentinel)" 'token=x'
 # 2i1c. quoted -p<value> inside double quotes (the container-entrypoint shape
 #      mysql -uroot "-p$PW" db): the span group consumes the full quoted run
 #      including the -p. The pre-rule _mysql_pw_pre catches this shape.

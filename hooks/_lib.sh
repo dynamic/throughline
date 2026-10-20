@@ -807,6 +807,55 @@ tl_jq_redact_defs() {
   # unquoted "password X" has no signal that X is meant to span multiple
   # words, unlike an opening quote). No @ or / exclusion on the unquoted
   # alternatives, so a secret containing either char is still fully masked.
+  #
+  # The keyword group is `(?:(?<!\w)|(?<=\(M)))(?<k>(?>\w*...\w*))`, not a bare
+  # `(?<k>\w*...\w*)` (issue #130). Unanchored, the leading `\w*` restarted the match
+  # at every position inside a word run and re-entered after every separator failure,
+  # so a long run with no separator in it - `password=x ` plus thousands of plain
+  # characters - exhausted Oniguruma's retry budget and jq aborted the whole filter
+  # ("Regex failure: retry-limit-in-match over"). In session-capture.sh that is not a
+  # slowdown but a DROP: the jq call exits non-zero, `tl_err "jq filter failed"` fires
+  # and the event never reaches the buffer, secrets included. Pre-fix already failed at
+  # 6 KB; tests/run.sh pins 6 KB and 24 KB through the real hook.
+  #
+  # Both new groups are load-bearing: on a 96 KB run the lookbehind alone still died
+  # with retry-limit-in-match, and the atomic group alone (no lookbehind) crawled.
+  # Per-machine timings are deliberately not quoted here - they go stale on the next
+  # checkout and read like a contract; the measurements taken while landing this are
+  # recorded in dynamic/throughline#160 (the PR that anchored this rule).
+  #
+  # What the anchor discards - and the one thing it must not. Every `(?<s>)`
+  # alternative begins with a non-`\w` character (whitespace, `:` or `=`), so a match
+  # that succeeds at all has its k-group span a whole word run and end at that run's
+  # end whatever the start position or backtracking order: start positions in the
+  # MIDDLE of a run can never match, and re-entries after the separator has already
+  # failed at the run's end can never succeed either (trying a shorter keyword does
+  # not change that). So on ordinary input both groups discard only doomed work.
+  # Exactly ONE legitimate mid-run start exists, and the `(?<=\(M))` alternative is
+  # there for it alone: gsub resumes at the end of the PREVIOUS match, and the
+  # sentinel value alternative can end mid-run - the sentinel is all word characters -
+  # which is what lets `password=<sentinel>token=x` mask both halves. Without that
+  # alternative the second keyword is left in cleartext, which masks LESS than the
+  # pre-fix rule: the leak direction, bought for latency, is not a trade this rule
+  # gets to make silently. `.opencode-plugin`'s jq-parity suite pins the same shape
+  # and failed on the first cut of this fix; the hooks test block for issue #130 pins
+  # it here too, so the alternative cannot be "simplified" away from this side either.
+  # And it costs nothing adversarially: a 4000-sentinel glued run (64 KB) matches the
+  # pre-fix rule byte-for-byte in the same time.
+  #
+  # The lookbehind's class is `\w` for ASYMMETRIC reasons - only one direction of a
+  # mismatch is a leak. WIDER than the `\w` the keyword group itself repeats leaks: a
+  # class that also counts `-` (say `(?<![A-Za-z0-9_-])`) rejects the only admissible
+  # start in `mydb --token=zz`, because the `-` before the keyword is not a `\w` so
+  # the leading `\w*` cannot start the match there either, and the value stays in
+  # cleartext. NARROWER than `\w` - the `(?<![A-Za-z0-9_])` some other rules in this
+  # file use - cannot leak at all: it only ADMITS extra start positions, which costs
+  # doomed backtracking on the characters it dropped and never rejects a start that
+  # would otherwise have worked. So a narrow mistake here is a latency bug and a wide
+  # one is a disclosure bug; `\w` is the class that agrees with the group. The issue
+  # #130 block in tests/run.sh pins both halves: the glued-hyphen fixture goes red
+  # under exactly the widening above, and the non-ASCII fixture stays green under
+  # widening and narrowing alike.
   def redact:
     _pem
     | _auth_scheme
@@ -814,7 +863,7 @@ tl_jq_redact_defs() {
     | _url
     | _prefix_tokens
     | _mysql_pw_all
-    | gsub("(?i)(?<k>\\w*(?:token|secret|password|passwd|api[_-]?key|access[_-]?key|credential|auth(?:orization)?|client[_-]?id)\\w*)(?<s>\\s*[:=]\\s*|\\s+(?:is|was|are)\\s+|\\s+)(?<v>\"[^\"]*\"|\(M)|\"[^\\r\\n]*|[^\\s\"]+)"; "\(.k)\(.s)***")
+    | gsub("(?i)(?:(?<!\\w)|(?<=\(M)))(?<k>(?>\\w*(?:token|secret|password|passwd|api[_-]?key|access[_-]?key|credential|auth(?:orization)?|client[_-]?id)\\w*))(?<s>\\s*[:=]\\s*|\\s+(?:is|was|are)\\s+|\\s+)(?<v>\"[^\"]*\"|\(M)|\"[^\\r\\n]*|[^\\s\"]+)"; "\(.k)\(.s)***")
     | _unmask;
   # Prose-safe redaction for user prompts (issue #5), and for the WebSearch
   # query / Task description branches in session-capture.sh (also prose).
