@@ -822,7 +822,7 @@ tl_jq_redact_defs() {
   # with retry-limit-in-match, and the atomic group alone (no lookbehind) crawled.
   # Per-machine timings are deliberately not quoted here - they go stale on the next
   # checkout and read like a contract; the measurements taken while landing this are
-  # recorded in the issue #130 PR body.
+  # recorded in dynamic/throughline#160 (the PR that anchored this rule).
   #
   # What the anchor discards - and the one thing it must not. Every `(?<s>)`
   # alternative begins with a non-`\w` character (whitespace, `:` or `=`), so a match
@@ -849,7 +849,7 @@ tl_jq_redact_defs() {
   # start in `mydb --token=zz`, because the `-` before the keyword is not a `\w` so
   # the leading `\w*` cannot start the match there either, and the value stays in
   # cleartext. NARROWER than `\w` - the `(?<![A-Za-z0-9_])` some other rules in this
-  # file use - cannot leak at all: it only ADMIITS extra start positions, which costs
+  # file use - cannot leak at all: it only ADMITS extra start positions, which costs
   # doomed backtracking on the characters it dropped and never rejects a start that
   # would otherwise have worked. So a narrow mistake here is a latency bug and a wide
   # one is a disclosure bug; `\w` is the class that agrees with the group. The issue

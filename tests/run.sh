@@ -558,7 +558,7 @@ has   "12+ redirects without -p does not cause regex failure" "$(cap_line mysql1
 #      The lookbehind and the atomic group are both needed: on a 96 KB run the
 #      lookbehind alone still hit the retry limit and the atomic group alone crawled
 #      (no per-machine numbers here - they go stale; the measurements taken while
-#      landing this are in the issue #130 PR body).
+#      landing this are in dynamic/throughline#160, the PR that anchored this rule).
 #
 #      The fixture length is asserted first: a `tl_repeat` that silently produced a
 #      short string would make these pass on the PRE-fix regex, which is the one
@@ -589,7 +589,7 @@ has   "24 KB word run after 'password=x ' is redacted, not dropped (issue #130)"
 #      `(?<![A-Za-z0-9_-])`) LEAKS: in `mydb --token=zz` the only position the match
 #      can start at is the `t`, because `-` is not a `\w` so the leading `\w*` cannot
 #      absorb it - reject that position and the value stays in cleartext. NARROWING
-#      it cannot leak at all: dropping characters from the class only ADMIITS extra
+#      it cannot leak at all: dropping characters from the class only ADMITS extra
 #      start positions, which costs doomed backtracking and never rejects a start
 #      that would otherwise work.
 #      `kwaccent` is the narrow-direction case, not a pin on the class. On jq 1.8.2
@@ -599,8 +599,9 @@ has   "24 KB word run after 'password=x ' is redacted, not dropped (issue #130)"
 #      latency bug, not a disclosure), and it is what proves that. What it pins is
 #      that a non-ASCII-prefixed keyword still masks through the anchor.
 #      `kwclasswide` is the direction that actually leaks, and it is the fixture that
-#      goes red under the widening above (see this PR's falsifiability note: same
-#      suite, one-character class change, `mydb --token=zz` comes back in cleartext).
+#      goes red under the widening above: `sh tests/run.sh` against a one-character
+#      widening of the lookbehind class returns `mydb --token=zz` in cleartext, and
+#      the same suite on an ASCII-only (narrower) lookbehind stays green).
 cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwaccent","command":"éPASSWORD=zz"}}'
 has   "a keyword glued to a non-ASCII letter is still masked (issue #130)" "$(cap_line kwaccent)" 'éPASSWORD=***'
 cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwclasswide","command":"mydb --token=zz"}}'
