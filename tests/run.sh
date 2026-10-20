@@ -550,11 +550,15 @@ has   "12+ redirects without -p does not cause regex failure" "$(cap_line mysql1
 #      captured line, never `hasnt` on a secret - an empty haystack satisfies
 #      `hasnt` and would have made this fixture green while the event was being
 #      dropped (the same trap cap_line's note above closed for #81). The group is
-#      now `(?<!\w)(?<k>(?>\w*...\w*))`: the lookbehind drops redundant start
-#      positions inside a word run, the atomic group drops redundant re-entries
-#      once the separator fails at the run's end. Both are needed - on a 96 KB run
-#      the lookbehind alone still hit the retry limit and the atomic group alone
-#      took 44.8 s, where this pair takes 0.02 s.
+#      now `(?:(?<!\w)|(?<=\(M)))(?<k>(?>\w*...\w*))`: the lookbehind drops
+#      redundant start positions inside a word run, the atomic group drops
+#      redundant re-entries once the separator fails at the run's end, and the
+#      `(?<=\(M))` alternative keeps the one legitimate mid-run start (the
+#      post-sentinel resume position - pinned by the kwsentinel fixture below).
+#      The lookbehind and the atomic group are both needed: on a 96 KB run the
+#      lookbehind alone still hit the retry limit and the atomic group alone took
+#      44.8 s, where the pair takes 0.03 s (the figure hooks/_lib.sh's own comment
+#      records for the same shape).
 #
 #      The fixture length is asserted first: a `tl_repeat` that silently produced a
 #      short string would make these pass on the PRE-fix regex, which is the one
