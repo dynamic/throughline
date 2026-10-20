@@ -375,8 +375,8 @@ has   "the -pfoo inside the SQL string is left as the text it is" "$TARGET_LINE"
 # 2h3. client coverage: every MySQL/MariaDB client that takes -p<password>, not
 #      just the two names the first report happened to contain.
 for TL_BC in mysqlpump mysqlcheck mysql_upgrade mariadb-check; do
-  cap "{\"session_id\":\"T\",\"tool_name\":\"Bash\",\"tool_input\":{\"description\":\"cl_${TL_BC}\",\"command\":\"${TL_BC} -u x -pS3cretPw dbname\"}}"
-  hasnt "${TL_BC} -p<password> value is not stored" "$(cap_line cl_${TL_BC})" 'S3cretPw'
+  cap "{\"session_id\":\"T\",\"tool_name\":\"Bash\",\"tool_input\":{\"description\":\"cl_${TL_BC}\",\"command\":\"${TL_BC} -u x -pxxxx dbname\"}}"
+  hasnt "${TL_BC} -p<password> value is not stored" "$(cap_line cl_${TL_BC})" 'xxxx'
   has   "${TL_BC} -p<password>: mask sentinel is present" "$(cap_line cl_${TL_BC})" '-p*** dbname'
 done
 # 2h4. value shapes. A password can legitimately be a command substitution, an
