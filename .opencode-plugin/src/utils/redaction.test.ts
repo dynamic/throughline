@@ -167,7 +167,7 @@ EXAMPLEKEYBODY`;
       const complex = `
         API Key: AIzaxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
         Password: mySecretPass
-        URL: https://admin:mypass@api.example.com/data
+        URL: https://admin:xxxx@api.example.com/data
         Token: ghp_xxxxxxxxxxxx
         Auth: Bearer sometoken123
       `;
@@ -331,7 +331,7 @@ EXAMPLEKEYBODY
     });
 
     it('should perform redact, clean, clamp in sequence - prompt path', () => {
-      const input = 'https://user:pass@example.com';
+      const input = 'https://user:xxxx@example.com';
       const result = redactCleanClamp(input, 40, true);
       // Should redact the password, clean control chars, and clamp to 40 chars
       assert.ok(result.includes('user:***@example.com'));

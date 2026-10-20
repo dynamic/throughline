@@ -40,7 +40,7 @@ export GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL
 
 ROOT=$(unset CDPATH; cd -- "$(dirname -- "$0")/.." && pwd)
 H="$ROOT/hooks"
-PASS=0
+PASSED=0
 FAIL=0
 SKIPPED_WINDOWS=0
 
@@ -77,7 +77,7 @@ unset THROUGHLINE_DISABLE
 DATA="$WORK/proj/.claude/throughline"
 BUF="$DATA/buffer"
 
-ok()  { PASS=$((PASS + 1)); printf '  ok   %s\n' "$1"; }
+ok()  { PASSED=$((PASSED + 1)); printf '  ok   %s\n' "$1"; }
 bad() { FAIL=$((FAIL + 1)); printf '  FAIL %s\n' "$1"; }
 has()    { case "$2" in *"$3"*) ok "$1" ;; *) bad "$1 (missing: $3)"; printf '       got: %s\n' "$2" ;; esac; }
 hasnt()  { case "$2" in *"$3"*) bad "$1 (unexpected: $3)"; printf '       got: %s\n' "$2" ;; *) ok "$1" ;; esac; }
@@ -1790,7 +1790,7 @@ eq "no credential-shaped vendor literals in tracked files (placeholder bodies on
 eq "no PEM key bodies in tracked files (EXAMPLE marker only)" "$_PEM_BAD" ""
 
 echo "----------------------"
-printf 'passed: %s   failed: %s\n' "$PASS" "$FAIL"
+printf 'passed: %s   failed: %s\n' "$PASSED" "$FAIL"
 [ "$SKIPPED_WINDOWS" -eq 0 ] || printf '  (%s permission-based assertion(s) skipped on Windows/NTFS - see is_windows() above)\n' "$SKIPPED_WINDOWS"
 rm -rf "$WORK"
 [ "$FAIL" -eq 0 ]

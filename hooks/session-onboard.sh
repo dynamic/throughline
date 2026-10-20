@@ -60,7 +60,7 @@ if [ "${1:-}" = "--doctor" ]; then
     # ("why isn't capture firing") this diagnostic exists to explain. Pure
     # parameter expansion, not dirname, for the same no-extra-deps reason as
     # the buffer-count loop below - safe to loop unbounded since $data is
-    # always absolute (derived from tl_root(), which is always $PWD or
+    # always absolute (derived from tl_root(), which is always the cwd or
     # $CLAUDE_PROJECT_DIR), so stripping one path segment at a time always
     # terminates at "" (treated as "/") in a bounded number of steps.
     _tl_p="$data"
