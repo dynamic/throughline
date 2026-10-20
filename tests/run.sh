@@ -556,9 +556,9 @@ has   "12+ redirects without -p does not cause regex failure" "$(cap_line mysql1
 #      `(?<=\(M))` alternative keeps the one legitimate mid-run start (the
 #      post-sentinel resume position - pinned by the kwsentinel fixture below).
 #      The lookbehind and the atomic group are both needed: on a 96 KB run the
-#      lookbehind alone still hit the retry limit and the atomic group alone took
-#      44.8 s, where the pair takes 0.03 s (the figure hooks/_lib.sh's own comment
-#      records for the same shape).
+#      lookbehind alone still hit the retry limit and the atomic group alone crawled
+#      (no per-machine numbers here - they go stale; the measurements taken while
+#      landing this are in the issue #130 PR body).
 #
 #      The fixture length is asserted first: a `tl_repeat` that silently produced a
 #      short string would make these pass on the PRE-fix regex, which is the one
@@ -582,14 +582,30 @@ if [ "${#tl_run24k}" -ne 24000 ]; then
 fi
 cap "{\"session_id\":\"T\",\"tool_name\":\"Bash\",\"tool_input\":{\"description\":\"kwrun24k\",\"command\":\"password=x $tl_run24k\"}}"
 has   "24 KB word run after 'password=x ' is redacted, not dropped (issue #130)" "$(cap_line kwrun24k)" 'password=***'
-#      And the lookbehind's own character class: it is `(?<!\w)`, not the
-#      `(?<![A-Za-z0-9_])` used by some other rules in this file, because it has to
-#      agree with the class the group itself repeats (`\w*`). A keyword glued to a
-#      non-ASCII letter is the case where the two classes could disagree, so it is
-#      pinned here: same output before and after the fix, and it would flip to a
-#      leaked value if the lookbehind and the affix ever stopped matching each other.
+#      And the lookbehind's own character class - which is asymmetric, so it needs
+#      two fixtures pointing opposite ways. The class is `(?<!\w)` rather than the
+#      `(?<![A-Za-z0-9_])` some other rules in this file use, and the two failure
+#      directions are NOT equal. WIDENING it (a class that also counts `-`, say
+#      `(?<![A-Za-z0-9_-])`) LEAKS: in `mydb --token=zz` the only position the match
+#      can start at is the `t`, because `-` is not a `\w` so the leading `\w*` cannot
+#      absorb it - reject that position and the value stays in cleartext. NARROWING
+#      it cannot leak at all: dropping characters from the class only ADMIITS extra
+#      start positions, which costs doomed backtracking and never rejects a start
+#      that would otherwise work.
+#      `kwaccent` is the narrow-direction case, not a pin on the class. On jq 1.8.2
+#      `\w` does not count `é`, so `(?<!\w)` and `(?<![A-Za-z0-9_])` agree on this
+#      input and both keep the keyword masked - the fixture stays GREEN under the
+#      ASCII-only lookbehind, which is the correct outcome (a narrower class is a
+#      latency bug, not a disclosure), and it is what proves that. What it pins is
+#      that a non-ASCII-prefixed keyword still masks through the anchor.
+#      `kwclasswide` is the direction that actually leaks, and it is the fixture that
+#      goes red under the widening above (see this PR's falsifiability note: same
+#      suite, one-character class change, `mydb --token=zz` comes back in cleartext).
 cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwaccent","command":"éPASSWORD=zz"}}'
 has   "a keyword glued to a non-ASCII letter is still masked (issue #130)" "$(cap_line kwaccent)" 'éPASSWORD=***'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwclasswide","command":"mydb --token=zz"}}'
+has   "a keyword glued to a hyphen flag is masked; a lookbehind class wider than the keyword class would leak it (issue #130)" "$(cap_line kwclasswide)" 'mydb --token=***'
+hasnt "a keyword glued to a hyphen flag: value not stored (issue #130)" "$(cap_line kwclasswide)" '--token=zz'
 #      And the one start position inside a word run the lookbehind must KEEP. gsub
 #      resumes after the previous match, and the sentinel value alternative ends
 #      mid-run (the sentinel is all word characters), so the second keyword here only

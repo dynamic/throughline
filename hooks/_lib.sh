@@ -818,10 +818,11 @@ tl_jq_redact_defs() {
   # and the event never reaches the buffer, secrets included. Pre-fix already failed at
   # 6 KB; tests/run.sh pins 6 KB and 24 KB through the real hook.
   #
-  # Both new groups are load-bearing, measured on this checkout with jq 1.8.2 over a
-  # 96 KB run: lookbehind alone still died with retry-limit-in-match; the atomic group
-  # alone (no lookbehind) took 44.8 s; lookbehind plus an atomic group around ONLY the
-  # trailing `\w*` took 8.2 s; this form takes 0.03 s.
+  # Both new groups are load-bearing: on a 96 KB run the lookbehind alone still died
+  # with retry-limit-in-match, and the atomic group alone (no lookbehind) crawled.
+  # Per-machine timings are deliberately not quoted here - they go stale on the next
+  # checkout and read like a contract; the measurements taken while landing this are
+  # recorded in the issue #130 PR body.
   #
   # What the anchor discards - and the one thing it must not. Every `(?<s>)`
   # alternative begins with a non-`\w` character (whitespace, `:` or `=`), so a match
@@ -839,14 +840,22 @@ tl_jq_redact_defs() {
   # gets to make silently. `.opencode-plugin`'s jq-parity suite pins the same shape
   # and failed on the first cut of this fix; the hooks test block for issue #130 pins
   # it here too, so the alternative cannot be "simplified" away from this side either.
-  # It costs nothing adversarially: 4000 glued sentinels (88 KB) run in 1.557 s here
-  # against 1.555 s pre-fix, byte-identical output.
+  # And it costs nothing adversarially: a 4000-sentinel glued run (64 KB) matches the
+  # pre-fix rule byte-for-byte in the same time.
   #
-  # The lookbehind stays `\w`-based rather than the `(?<![A-Za-z0-9_])` some other
-  # rules in this file use, because it has to agree with the class the group itself
-  # repeats (`\w*`): a keyword glued to a character one class counts as a word char
-  # and the other does not would flip from masked to leaked. Tests pin the
-  # non-ASCII-prefixed shape (tests/run.sh, issue #130 block).
+  # The lookbehind's class is `\w` for ASYMMETRIC reasons - only one direction of a
+  # mismatch is a leak. WIDER than the `\w` the keyword group itself repeats leaks: a
+  # class that also counts `-` (say `(?<![A-Za-z0-9_-])`) rejects the only admissible
+  # start in `mydb --token=zz`, because the `-` before the keyword is not a `\w` so
+  # the leading `\w*` cannot start the match there either, and the value stays in
+  # cleartext. NARROWER than `\w` - the `(?<![A-Za-z0-9_])` some other rules in this
+  # file use - cannot leak at all: it only ADMIITS extra start positions, which costs
+  # doomed backtracking on the characters it dropped and never rejects a start that
+  # would otherwise have worked. So a narrow mistake here is a latency bug and a wide
+  # one is a disclosure bug; `\w` is the class that agrees with the group. The issue
+  # #130 block in tests/run.sh pins both halves: the glued-hyphen fixture goes red
+  # under exactly the widening above, and the non-ASCII fixture stays green under
+  # widening and narrowing alike.
   def redact:
     _pem
     | _auth_scheme
