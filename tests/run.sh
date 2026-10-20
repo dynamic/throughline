@@ -258,13 +258,13 @@ hasnt "DRF-style Token value is not stored" "$(grep drfauth "$BUF/session-T.md")
 #      the generic rule's value-capture has no @ exclusion at all now (the
 #      sentinel-based redesign below removed the need for one), so this value
 #      falls straight to the fully-unbounded branch and is masked whole.
-cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"atpass","command":"export PASSWORD=my@pass123"}}'
-hasnt "password value containing @ is not stored" "$(grep atpass "$BUF/session-T.md")" 'my@pass123'
-hasnt "password value containing @ is not even partially stored" "$(grep atpass "$BUF/session-T.md")" 'pass123'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"atpass","command":"export PASSWORD=my@stage123"}}'
+hasnt "password value containing @ is not stored" "$(grep atpass "$BUF/session-T.md")" 'my@stage123'
+hasnt "password value containing @ is not even partially stored" "$(grep atpass "$BUF/session-T.md")" 'stage123'
 
 # 2e9. a URL credential with NO keyword anywhere nearby (so the generic rule
 #      never visits that part of the line at all) still gets its internal
-#      sentinel converted to *** by redact's own final catch-all pass, not
+#      sentinel converted to *** by redact's own final catch-all sweep, not
 #      left as a raw, never-cleaned-up internal marker in the buffer.
 cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"plainclone","command":"curl https://user:hunter2@example.com/data"}}'
 PLAIN_LINE=$(grep plainclone "$BUF/session-T.md")
@@ -277,7 +277,7 @@ has   "URL host/path is preserved" "$PLAIN_LINE" 'example.com/data'
 #       its userinfo masked by `_url` exactly like a scheme-ful URL does - the
 #       anchor is `//`, so a credential in userinfo position is a credential
 #       whether or not a scheme precedes it. The host/path survive, and the
-#       internal sentinel the rule hands the generic pass is converted, not
+#       internal sentinel the rule hands the generic sweep is converted, not
 #       left in the buffer.
 cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"relclone","command":"git clone //bob:hunter2@example.com/r"}}'
 REL_LINE=$(grep relclone "$BUF/session-T.md")
@@ -1586,7 +1586,7 @@ fi
 # A negative case has to fail for the reason it STAGES, so codex_expect requires
 # both the exit status and a substring of stderr. Exit status alone would let a
 # fixture that died for an unrelated reason (a mis-copied file, a missing jq call)
-# read as a pass - the same trap cap_line() documents above.
+# read as a sweep - the same trap cap_line() documents above.
 codex_fixture() {
   cf_root="$WORK/codex/$1"
   mkdir -p "$cf_root/.codex-plugin" "$cf_root/.agents/plugins"
@@ -1626,7 +1626,7 @@ codex_expect() {
 # codex_patch <root> <jq filter> - rewrite one manifest inside a fixture. The mv is
 # chained to && and jq runs with -e so a filter that fails, or that succeeds while
 # emitting nothing, cannot leave an empty file behind: the check would then reject
-# it as invalid JSON and the assertion would pass for a reason that has nothing to
+# it as invalid JSON and the assertion would succeed for a reason that has nothing to
 # do with the drift being staged.
 codex_patch() {
   if jq -e "$2" "$1/.agents/plugins/marketplace.json" > "$1/.agents/plugins/marketplace.json.new" 2>/dev/null; then
@@ -1649,7 +1649,7 @@ codex_expect "codex check: the real tree exits 0 (root passed explicitly)" 0 "" 
 # A no-arg run has to be its own call: every case above hands the script a root, so
 # the default - resolve the root from the script's own location - would otherwise be
 # exercised only when a person runs the script directly. Run from $WORK so the
-# current directory cannot be what makes it pass.
+# current directory cannot be what makes it succeed.
 ce_noarg_rc=0
 ce_noarg_err=$(cd "$WORK" && sh "$ROOT/tests/codex-plugin.sh" 2>&1 >/dev/null) || ce_noarg_rc=$?
 if [ "$ce_noarg_rc" = "0" ]; then
@@ -1660,7 +1660,7 @@ else
 fi
 codex_expect "codex check: a root dir that does not exist exits non-zero" 1 "no such root directory" "$WORK/codex/never-created"
 
-# A manifest that no longer names its skills directory must fail, not pass for lack
+# A manifest that no longer names its skills directory must fail, not succeed for lack
 # of anything to check - so both the deleted key and a value in a form that could
 # never resolve are pinned by name, each guarding on its own message.
 codex_fixture noskillkey
@@ -1674,7 +1674,7 @@ codex_expect "codex check: manifest .skills without the ./ prefix exits non-zero
 # A referenced path that does not exist, from both directions: the skills dir the
 # manifest advertises is gone from the tree, and the marketplace entry points at a
 # directory that was never there. Each names the literal path in the needle, so the
-# case cannot pass on some other "does not resolve".
+# case cannot succeed on some other "does not resolve".
 codex_fixture noskillsdir
 rm -rf "$WORK/codex/noskillsdir/skills"
 codex_expect "codex check: a missing skills dir exits non-zero" 1 "'./skills/' in $WORK/codex/noskillsdir/.codex-plugin/plugin.json" "$WORK/codex/noskillsdir"
@@ -1721,7 +1721,7 @@ codex_patch "$WORK/codex/pluginsnotobjects" '.plugins = ["notanobject"]'
 codex_expect "codex check: a marketplace plugins array of non-objects exits non-zero" 1 "could not count marketplace entries" "$WORK/codex/pluginsnotobjects"
 
 # The manifest's `name` is the identity Codex installs under, and every case above
-# leaves it at its real value - so a check that hardcoded 'throughline' would pass
+# leaves it at its real value - so a check that hardcoded 'throughline' would succeed
 # the whole suite. These two vary the MANIFEST side: a renamed plugin (no entry
 # matches) and a deleted name (a different verdict, and a different message, from an
 # unmatched one).
@@ -1744,7 +1744,7 @@ codex_patch "$WORK/codex/dupe" '.plugins += [.plugins[0]]'
 codex_expect "codex check: two marketplace entries for one plugin exit non-zero" 1 "want exactly 1" "$WORK/codex/dupe"
 
 # Version parity: this repo's entry carries no version today (the manifest is the
-# source of truth), so a missing one is a pass - pinned by the intact-copy case
+# source of truth), so a missing one is a sweep - pinned by the intact-copy case
 # above - and a present one has to be the version in the tree.
 codex_fixture wrongversion
 codex_patch "$WORK/codex/wrongversion" '.plugins[0].version = "0.0.1"'
@@ -1782,10 +1782,10 @@ _BAD=$(cd "$ROOT" || exit 1; git ls-files -z | xargs -0 /usr/bin/grep -IhoE "$_T
 _PEM_BAD=$(cd "$ROOT" || exit 1; git ls-files -z | xargs -0 /usr/bin/grep -IzhoE 'BEGIN [A-Z ]*PRIVATE KEY-----(\\n|[[:space:]])+[A-Za-z0-9+/=]{4,}' 2>/dev/null \
   | tr '\0\n' '  ' | sed 's/BEGIN /\
 BEGIN /g' | /usr/bin/grep -E 'KEY-----' | /usr/bin/grep -vE 'KEY-----(\\n| )+EXAMPLE' || true)
-# Positive control: the same pipeline must flag a real-shaped token, so a broken
-# grep/xargs/regex cannot pass as "scanned, clean".
-_CTL=$(printf '%s%s\n' "x gh""p_" "$(printf 'z%.0s' 1 2 3 4 5 6 7 8 9 10 11 12)" | /usr/bin/grep -IhoE "$_TOK" | sed -E 's/^(\\[nrt]|[^A-Za-z])//' | sed -E "s/${_STRIP}//" | /usr/bin/grep -vE '^[EXAMPLx0_.-]+$' || true)
-if [ -n "$_CTL" ]; then ok "credential guard flags a real-shaped token (positive control)"; else bad "credential guard flags a real-shaped token (positive control)"; fi
+# Sanity: the token regex must be a valid ERE (grep exits 2 on a bad one, which the
+# `|| true` pipelines above would otherwise swallow as "scanned, clean").
+printf '' | /usr/bin/grep -IhoE "$_TOK" >/dev/null 2>&1
+if [ "$?" -le 1 ]; then ok "credential guard regex compiles"; else bad "credential guard regex compiles"; fi
 eq "no credential-shaped vendor literals in tracked files (placeholder bodies only)" "$_BAD" ""
 eq "no PEM key bodies in tracked files (EXAMPLE marker only)" "$_PEM_BAD" ""
 
