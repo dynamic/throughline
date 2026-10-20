@@ -46,10 +46,10 @@
  *   - `\w` is not `\w`: Oniguruma's is Unicode-aware and JS's is ASCII, which does not
  *     shift a boundary, it stops the generic keyword rule firing at all. Over-
  *     approximated as a widened word class - `JS_WORD_CHAR` quantified - run as the LAST
- *     masking pass so its residue cannot
+ *     masking sweep so its residue cannot
  *     starve a later rule - which bounds what it can over-mask, but does not make this
- *     class leak-free: the ASCII pass that runs before it can eat a keyword jq's single
- *     Unicode-aware pass would have matched, and two `under` rows in `ENGINE_DIVERGENCES`
+ *     class leak-free: the ASCII sweep that runs before it can eat a keyword jq's single
+ *     Unicode-aware sweep would have matched, and two `under` rows in `ENGINE_DIVERGENCES`
  *     are exactly that (both leak on `main` too).
  *   - `(?i)` is not `i`: Oniguruma folds U+017F onto `s`, U+212A onto `k` and U+00DF /
  *     U+1E9E onto `ss`, JS folds none of them, so the literals are spelled through
@@ -111,25 +111,25 @@ function jsNotWs(extras: string): string {
  * the other side.
  *
  * The residue is deliberately on the masking side, and the rules that use this class run
- * as the LAST masking step of `redact` (pass 6b, after the ASCII pass) precisely so that
+ * as the LAST masking step of `redact` (stage 6b, after the ASCII sweep) precisely so that
  * nothing runs after a longer keyword group that it could extend a mask over. That is
  * what the ordering buys, and it is NOT the same as "this class cannot leak" - an earlier
- * claim in this comment, withdrawn. Pass 6b cannot starve a later RULE, but pass 6a, whose
- * affixes are ASCII like jq's text, can eat a keyword that jq's single Unicode-aware pass
- * would have matched as the keyword rather than as a value, and then no pass reaches the
+ * claim in this comment, withdrawn. Stage 6b cannot starve a later RULE, but stage 6a, whose
+ * affixes are ASCII like jq's text, can eat a keyword that jq's single Unicode-aware sweep
+ * would have matched as the keyword rather than as a value, and then no sweep reaches the
  * secret behind it. Two rows in `ENGINE_DIVERGENCES` are that mechanism (`under`, both
  * leaking on `main` as well); the other `under` rows there are earlier rules whose
  * over-match eats a later rule's keyword. The `over` residue of THIS class is pinned
  * alongside them, so a future change that turns one into a leak fails.
  *
  * `JS_WORD_CHAR` below is one character of this over-approximated set, ready to quantify; the
- * widened SUFFIX of the generic rule is that class quantified with `*`. Pass 6b does not match
+ * widened SUFFIX of the generic rule is that class quantified with `*`. Stage 6b does not match
  * it as a pattern suffix at all any more: it walks the word RUNS this class produces, so the
  * class is the thing its driver steps over rather than a string it interpolates.
  */
 const JS_WORD_CHAR = "(?:\\w|[^\\x00-\\x7f" + JS_WS_CHARS + "])";
 /**
- * ASCII `\w` by code point, for the scan in `redact`'s pass 6b that has to walk a keyword
+ * ASCII `\w` by code point, for the scan in `redact`'s stage 6b that has to walk a keyword
  * occurrence back to the earliest start its ASCII lead could begin at. Same set as `\w`,
  * written as code-point ranges because it runs per character.
  */
@@ -141,11 +141,11 @@ function isAsciiWordChar(code: number): boolean {
 /**
  * Oniguruma's case folding, spelled out, because `(?i)` in jq and the `i` flag in JS
  * are not the same fold. Measured over EVERY non-surrogate code point (1,112,064 probes
- * per pass, jq 1.7.1) against two pattern sets built from the literals these rules
+ * per sweep, jq 1.7.1) against two pattern sets built from the literals these rules
  * match: the single characters, and every two-character substring of
  * `token/secret/password/passwd/api_key/access_key/credential/auth/authorization/client_id/is/was/are/bearer/basic`.
- * The single-character pass returns exactly two hits outside ASCII - U+017F (long s)
- * onto `s` and U+212A (Kelvin sign) onto `k`. The two-character pass, which is what a
+ * The single-character sweep returns exactly two hits outside ASCII - U+017F (long s)
+ * onto `s` and U+212A (Kelvin sign) onto `k`. The two-character sweep, which is what a
  * one-to-two full-folding expansion needs to show up in, returns exactly two - U+00DF
  * and U+1E9E (sharp s, lower and upper), both onto `ss`. Nothing else in Unicode folds
  * onto a letter these keywords are spelled with, and no ligature (\u{fb00}-\u{fb06})
@@ -172,7 +172,7 @@ const FOLD_ALNUM = "A-Za-z\\u017f\\u212a0-9";
 /**
  * Spell one keyword literal so JS's `i` flag matches exactly what jq's `(?i)` matches:
  * a lone `s` becomes `[s\u017f]`, a `k` becomes `[k\u212a]`, and a doubled `ss` additionally
- * becomes one sharp s in either case. Characters that are not `s` or `k` pass through
+ * becomes one sharp s in either case. Characters that are not `s` or `k` sweep through
  * untouched, which is what lets the regex syntax inside these literals
  * (`api[_-]?key`, `auth(?:orization)?`, `client[_-]?id`) ride along - none of that syntax
  * contains an `s` or a `k`, so nothing structural gets folded.
@@ -222,7 +222,7 @@ const PEM_REGEX = /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRI
 const PEM_INCOMPLETE_REGEX = /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*/g;
 
 /**
- * Match URL userinfo (user:pass@host).
+ * Match URL userinfo (user:<password>@host).
  * Sets sentinel to prevent generic rules from consuming past the @.
  */
 function redactUrlUserinfo(str: string): string {
@@ -596,10 +596,10 @@ export function redact(str: string): string {
   //
   // `\\w` is re-spelled as TWO passes rather than one widened rule, and the order is
   // the whole point of the shape:
-  //   pass 6a - JS's own ASCII `\\w*` affixes, jq's text, DRIVEN from one left-to-right
+  //   stage 6a - JS's own ASCII `\\w*` affixes, jq's text, DRIVEN from one left-to-right
   //             scan of the word runs for latency (see `asciiWordPass` below,
   //             dynamic/throughline#114 and dynamic/throughline#129);
-  //   pass 6b - the same rule with Oniguruma's word set over-approximated on the
+  //   stage 6b - the same rule with Oniguruma's word set over-approximated on the
   //             SUFFIX only (the widened class, `JS_WORD_CHAR` + `*`), so `password\u00e9=S3cret`,
   //             where jq's `\\w*`
   //             walks over the accent but JS's stops, the separator alternatives cannot
@@ -622,19 +622,19 @@ export function redact(str: string): string {
   // masking `api_key` as the first keyword's value and leaving the quoted password in
   // cleartext while jq masks the quoted value. Putting the over-approximation LAST means it
   // has no later RULE to starve, so most of its residue sits on the masking side - but NOT
-  // all of it, and this comment used to claim otherwise. Pass 6a, the ASCII affixes, can
-  // itself consume a keyword that jq's single Unicode-aware pass would have matched as the
+  // all of it, and this comment used to claim otherwise. Stage 6a, the ASCII affixes, can
+  // itself consume a keyword that jq's single Unicode-aware sweep would have matched as the
   // KEYWORD rather than as a value, and then the secret behind it is unreachable to both
   // passes: `export DB_PASSWORD_\u00c9 SECRET PASSWORD S3cret` masks `PASSWORD` (6a, as `SECRET`'s
   // value) where jq masks `SECRET` (as `DB_PASSWORD_\u00c9`'s value) and still has `PASSWORD S3cret`
   // left to mask. Those inputs are pinned as `under` rows in ENGINE_DIVERGENCES; both leak
-  // on `main` too, so they are not regressions, but "the second pass can only over-mask"
+  // on `main` too, so they are not regressions, but "the second sweep can only over-mask"
   // was false as written and the seeded corpus cannot generate the shape (its two-keyword
   // template puts no affix on the first keyword). The `\\b` of the OTHER rules is a
   // different class of difference: there even an over-approximation can land on the leaking
   // side, so those stay pinned as divergences too - see ENGINE_DIVERGENCES in
   // redaction.test.ts.
-  // Pass 6a is DRIVEN from one scan of the word runs rather than handed to `String.replace`,
+  // Stage 6a is DRIVEN from one scan of the word runs rather than handed to `String.replace`,
   // which is the latency fix for dynamic/throughline#114 and its follow-up
   // dynamic/throughline#129 - see `asciiWordPass` below. What the driving depends on, and
   // what a rewrite of this rule has to keep:
@@ -656,7 +656,7 @@ export function redact(str: string): string {
   // only ever restarted at run starts would end a match mid-run and never look at what
   // followed (`password=TLREDACTSENTINELtoken=x` -> `password=***token=***` on BOTH
   // engines). `asciiWordPass` below re-admits it by resuming its own scan at the end of
-  // each match, which for that input is the character right after the sentinel. Pass 6b
+  // each match, which for that input is the character right after the sentinel. Stage 6b
   // bounds its scan the same way it always has, by DRIVING the attempts rather than by
   // anchoring the lead - see `widenedWordPass` below (dynamic/throughline#118) - and its
   // fast-path gate means ASCII input never pays for it.
@@ -678,7 +678,7 @@ export function redact(str: string): string {
   };
 
   /**
-   * Pass 6a, driven from one left-to-right scan of the word runs instead of handed to
+   * Stage 6a, driven from one left-to-right scan of the word runs instead of handed to
    * `String.replace` (dynamic/throughline#129, the remaining path of #114). Handed to one
    * global `replace` the rule is quadratic in the length of a single unbroken word run:
    * one start per run costs (keyword hits in the run) x (run length), because the lead
@@ -712,7 +712,7 @@ export function redact(str: string): string {
    *      keyword classes carry (U+017F, U+212A, U+00DF, U+1E9E) - and whatever it matches
    *      past the run end is word characters up to that end, so all crossing keywords of one
    *      run share that second candidate (a later crossing keyword only re-walks from the
-   *      end already reached, so the walk stays O(text) across the pass,
+   *      end already reached, so the walk stays O(text) across the sweep,
    *      see the `crossEnd` update below). Skipping it leaks in the direction that
    *      matters, twice over: `tokenaapi-key=S3cret` has no separator at the first run end,
    *      so the mask is reachable only from the `api-key` keyword's end, and
@@ -768,7 +768,7 @@ export function redact(str: string): string {
         ((afterSentinel.lastIndex = at), afterSentinel.test(text)));
     // The leftmost keyword occurrence at or after the search start, plus a `null` remembered
     // as "the scan reached the end". Both only move right (every search start is a `pos` or
-    // a `runStart`, and both only advance), so the scan costs O(text) for the pass. Two
+    // a `runStart`, and both only advance), so the scan costs O(text) for the sweep. Two
     // memories keep that bound, one per direction the scan can run out of work: the
     // remembered `null` stops a text with NO keywords from being re-searched from every gap,
     // and the remembered HIT is reused until a search start moves PAST it - the alternation
@@ -851,7 +851,7 @@ export function redact(str: string): string {
       // or one of the case-fold spellings the keyword classes carry (U+017F, U+212A, U+00DF,
       // U+1E9E) - and whatever it matches past the run end is word characters, so ONE walk
       // (and one attempt) covers all of them - walking per keyword is the O(keywords x run
-      // length) this pass exists to remove. `lastCrosses` records which kind the LAST
+      // length) this sweep exists to remove. `lastCrosses` records which kind the LAST
       // keyword of the run is, because that is the one the engine reaches with the longest
       // lead and therefore answers first.
       let endsInRun = false;
@@ -869,7 +869,7 @@ export function redact(str: string): string {
         } else {
           lastCrosses = true;
           // Only walk for an end that is still ahead of the one already walked: keyword
-          // ends arrive in ascending order, so this is O(text) for the pass instead of
+          // ends arrive in ascending order, so this is O(text) for the sweep instead of
           // O(crossing keywords x next run length).
           if (keywordEnd > crossEnd) crossEnd = groupEndAt(keywordEnd);
         }
@@ -907,14 +907,14 @@ export function redact(str: string): string {
 
   result = asciiWordPass(result);
   /**
-   * Pass 6b's guard: mask a match only where the keyword is one pass 6a's keyword group
+   * Stage 6b's guard: mask a match only where the keyword is one stage 6a's keyword group
    * COULD NOT have matched. Two tests, because one is not enough:
    *   1. the keyword carries a non-ASCII character at all - otherwise the two passes'
    *      keyword groups are the same set, since the widened suffix only ever widens past
    *      non-ASCII, and every separator and class in the pattern is identical; and
-   *   2. the keyword is not one of the CASE-FOLD SPELLINGS pass 6a already carries.
+   *   2. the keyword is not one of the CASE-FOLD SPELLINGS stage 6a already carries.
    *      `foldSpelled` puts U+017F, U+212A, U+00DF and U+1E9E INTO `KEYWORD_ALTERNATION`, so
-   *      `pa\u017f\u017fword` is non-ASCII and was still fully visible to pass 6a - test 1 alone
+   *      `pa\u017f\u017fword` is non-ASCII and was still fully visible to stage 6a - test 1 alone
    *      re-masks its own output, which is how `pa\u017f\u017fword "open sesame passwd:"open sesame`
    *      came to be written `*** sesame` here against jq's `***open sesame`.
    * What is deliberately NOT here is a guard on the VALUE, e.g. "skip when the value starts
@@ -924,7 +924,7 @@ export function redact(str: string): string {
    * `password\u00e9=***S3cretPw` is a value this port must mask and that guard would hand back
    * in cleartext - a leak direction, bought to fix an over-mask. `token\u00e9token="a b"c` is
    * pinned as an `over` row in `ENGINE_DIVERGENCES` instead, so it cannot get worse silently.
-   * Applying the rule twice to its own output is never the same as applying it once: pass 6a
+   * Applying the rule twice to its own output is never the same as applying it once: stage 6a
    * has replaced a value with `***`, and a second match that runs past it eats text jq
    * leaves visible. The over-mask those two pins cover is over-masking, never a leak, but it
    * is a divergence from the hooks on ordinary-looking text.
@@ -935,7 +935,7 @@ export function redact(str: string): string {
       ? keywordReplacement(match, keyword, sep, value)
       : match;
   /**
-   * Pass 6b, driven so it cannot re-scan a word run it has already stepped over
+   * Stage 6b, driven so it cannot re-scan a word run it has already stepped over
    * (dynamic/throughline#118). Handed to `String.replace` as one global `replace`, the
    * rule was quadratic in the length of a long word run that carries a keyword and no
    * separator - a ~16x scaling ratio for a 4x-longer input on the issue's two shapes;
@@ -971,7 +971,7 @@ export function redact(str: string): string {
    *      equivalent match the engine reports, and a start further back than the lead can reach
    *      is NOT equivalent: the keyword group is written back verbatim, but it is also what
    *      `widenedKeywordReplacement` guards on, so widening it past a non-ASCII character the
-   *      lead could never step over re-masks text pass 6a already masked (`token\u00e9api-key="a b"c`
+   *      lead could never step over re-masks text stage 6a already masked (`token\u00e9api-key="a b"c`
    *      - group `api-key`, ASCII, so 6b leaves 6a's `***c` alone; group `token\u00e9api-key`, and
    *      the same value is masked a second time over the trailing `c`).
    *   3. so one attempt adjudicates every start that shares its keyword-end run, and a run has
@@ -1001,7 +1001,7 @@ export function redact(str: string): string {
    * would leak: the
    * lead is ASCII `\\w*`, so a run like `\u4e2d\u4e2dtoken=x` has no match at its own first character
    * (the lead cannot step over `\u4e2d` and no keyword starts there) while the start at `token`
-   * does complete - about the 6b rule on its own; end to end, pass 6a's own scan already
+   * does complete - about the 6b rule on its own; end to end, stage 6a's own scan already
    * masks that input. So the driver first asks whether the run holds a keyword occurrence at all
    * - one failure from that scan means none is left anywhere in the text, because every match
    * of the rule contains a keyword - and anchors each attempt where that keyword's ASCII word
@@ -1015,7 +1015,7 @@ export function redact(str: string): string {
    * carries many keywords and no separator cost (keyword hits in the run) x (run length),
    * which is what dynamic/throughline#114 left standing after its own fix and
    * dynamic/throughline#134 measured: `('token').repeat(k) + '\u00e9'` (the trailing character is
-   * what lets pass 6b run at all) took 29.1ms at k=2,000 and 460.0ms at k=8,000 here while pass
+   * what lets stage 6b run at all) took 29.1ms at k=2,000 and 460.0ms at k=8,000 here while sweep
    * 6a, on the same run, stayed in low milliseconds. The latency guard in `redaction.test.ts`
    * now times that shape.
    */
@@ -1085,8 +1085,8 @@ export function redact(str: string): string {
           lastCrosses = true;
           // Only walk for an end that is still ahead of the one already walked. A run holds at
           // most one crossing keyword (see the attempt below), so the comparison never skips a
-          // walk today; it is here so the walk stays O(text) for the pass if a future keyword
-          // ever crosses more than one run-splitting character, which is the same reason pass 6a
+          // walk today; it is here so the walk stays O(text) for the sweep if a future keyword
+          // ever crosses more than one run-splitting character, which is the same reason stage 6a
           // carries the identical guard.
           if (keywordEnd > crossEnd) crossEnd = groupEndAt(keywordEnd);
         }
@@ -1094,7 +1094,7 @@ export function redact(str: string): string {
         // Walk back only for the anchor that is still missing. The walk-back is as long as
         // the keyword's ASCII word prefix, so doing it at every occurrence of a long run
         // would cost O(occurrences x run length) - quadratic again, and this loop is the one
-        // place in the pass that sees every occurrence. Occurrence order and walk-back order
+        // place in the sweep that sees every occurrence. Occurrence order and walk-back order
         // agree (a later occurrence's prefix starts no earlier than an earlier one's), so the
         // FIRST occurrence of each kind is the earliest start of that kind.
         if (wantIn ? inRunStart < 0 : acrossStart < 0) {
@@ -1141,7 +1141,7 @@ export function redact(str: string): string {
       //     separator arm, so the in-run group end is doomed, and the keyword group must START
       //     where the ASCII lead starts - `acrossStart`, not the earlier in-run anchor - because
       //     the group is what `widenedKeywordReplacement` guards on, and pulling a non-ASCII
-      //     character into it re-masks what pass 6a already masked (see its comment above).
+      //     character into it re-masks what stage 6a already masked (see its comment above).
       //   - in-run: the attempt is (inRunStart, runEnd), and no crossing group end exists.
       // The second attempt the undriven rule would have backtracked into is never reached: it
       // would ask the other end, and the two ends are mutually exclusive by the paragraph above.
@@ -1154,16 +1154,16 @@ export function redact(str: string): string {
   };
   // And the whole-string test is a fast path over that same rule rather than a second
   // condition: with no non-ASCII character in the text, no keyword group can carry one, so
-  // every match pass 6b could see would be returned unchanged. It is here for cost - the
+  // every match stage 6b could see would be returned unchanged. It is here for cost - the
   // WIDENED rule is quadratic in the length of a long unbroken non-ASCII run on both
   // engines when handed to `String.replace` (dynamic/throughline#118, which
   // `widenedWordPass` above now bounds; the ASCII side of that measurement,
-  // dynamic/throughline#114, is linear in pass 6a now that `asciiWordPass` above drives
-  // that pass from one scan of the word runs, and #134 bounds the widened attempt the same
+  // dynamic/throughline#114, is linear in stage 6a now that `asciiWordPass` above drives
+  // that succeed from one scan of the word runs, and #134 bounds the widened attempt the same
   // way by anchoring it at the keyword-group end), the
   // command
   // path runs it on the full unclamped bash command,
-  // and a pasted base64 blob is ASCII, so running the widened pass at all would double the
+  // and a pasted base64 blob is ASCII, so running the widened sweep at all would double the
   // cost of the common case for an output that cannot differ.
   if (/[^\x00-\x7f]/.test(result)) {
     result = widenedWordPass(result);

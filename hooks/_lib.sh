@@ -336,7 +336,7 @@ tl_have_jq() {
 # Known tradeoff: this collapse is lossy, so two different ids that disagree
 # only in disallowed characters (e.g. "abc/def" vs "abc:def") sanitize to the
 # same filename. Currently unreachable: Claude Code session_ids are UUIDs,
-# which already consist entirely of allowed characters and pass through
+# which already consist entirely of allowed characters and go through
 # unchanged. Revisit if session_ids ever stop being UUID-shaped.
 tl_safe_sid() {
   _tl_s=$(printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '_')
@@ -466,7 +466,7 @@ tl_jq_redact_defs() {
   # bare opaque token with no recognizable shape or keyword will not be caught.
   # Known gap, not fixable here without a high false-positive cost: a
   # credential attached to a bare single-letter CLI flag with no keyword at all
-  # (curl -u user:pass, a bare psql/pg_dump connection string with no keyword)
+  # (curl -u user:<password>, a bare psql/pg_dump connection string with no keyword)
   # has no keyword for this rule to anchor on, and flags like -u/-p are too
   # overloaded across tools (docker run -u uid:gid, ssh -p <port>) to redact
   # generically.
@@ -477,7 +477,7 @@ tl_jq_redact_defs() {
   # only thing it over-matches is a line
   # that merely mentions a client name and then carries an unrelated attached
   # `-p` (see the false-positive note on `_mysql_pw`); remaining bare-flag gaps
-  # (notably `curl -u user:pass`) are still the handoff skill re-scan's job.
+  # (notably `curl -u user:<password>`) are still the handoff skill re-scan's job.
   #
   # Internal sentinel for one specific hand-off: the URL-userinfo rule below is
   # the only shape rule whose replacement abuts a non-whitespace character (the
@@ -748,7 +748,7 @@ tl_jq_redact_defs() {
   # authentication support" / "basic documentation" (English words are a
   # subset of the base64 alphabet, and words like "authentication" clear an
   # 8-char floor easily). A real Authorization value - JWT, opaque API token,
-  # or a base64-encoded "user:pass" - is reliably much longer than a single
+  # or a base64-encoded "user:<password>" - is reliably much longer than a single
   # English word in a sentence (single English words average ~5 chars; JWTs
   # and opaque tokens commonly run 20-100+); requiring 16+ contiguous
   # non-whitespace chars keeps the false-positive rate low without requiring a
