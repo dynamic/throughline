@@ -132,7 +132,7 @@ honest comparison, then jump to the section for your harness.
 |---|---|---|---|---|---|---|
 | Skills (`handoff`, `onboard`, `consolidate`, `consolidate-memory`) | yes | yes | separate install (see below - broadly auto-discovered) | yes (auto-discovered) | yes (registered as `throughline:<name>`) | yes |
 | Automatic capture | yes - 5 hooks | yes - 5 hooks, one-time trust step (see below) | yes - 5 hooks | yes - 6 events (compaction is 2 events, not 1) | yes - 6 hooks, git repos only | no |
-| Compaction survival | yes | yes | yes | yes | no |
+| Compaction survival | yes | yes | yes | yes | yes | no |
 | Native memory binding | yes (Claude's `/memory`) | no | no | no | no | no |
 | Requires `jq` | yes | yes | no | yes | yes | n/a - skills only |
 

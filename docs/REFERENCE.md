@@ -239,13 +239,20 @@ throughline/
 │  ├─ session-prompt.sh      # UserPromptSubmit: redacted, truncated user-intent line
 │  ├─ session-capture.sh     # PostToolUse: structured action buffer (outcome + redaction)
 │  ├─ session-precompact.sh  # PreCompact: stamp the compaction-boundary marker
-│  └─ session-flush.sh       # SessionEnd: safety-net stamp
+│  ├─ session-flush.sh       # SessionEnd: safety-net stamp
+│  └─ post/
+│     ├─ throughline.ts      # OMP shim: OMP events onto the hooks above
+│     └─ hermes.py           # Hermes bridge: Hermes hooks onto the hooks above
 ├─ skills/
 │  ├─ onboard/SKILL.md            # full orientation
 │  ├─ handoff/SKILL.md            # judged distillation + memory binding
 │  ├─ consolidate/SKILL.md        # periodic promotion of recurring lessons
 │  └─ consolidate-memory/SKILL.md # native-memory file hygiene
+├─ plugin.yaml               # Hermes Agent manifest
+├─ __init__.py               # Hermes entry point: registers hooks and skills
+├─ package.json              # OMP manifest (omp field)
 ├─ tests/run.sh              # fixture-driven hook tests (shellcheck + CI)
+├─ tests/hermes/             # pytest suite for the Hermes bridge
 ├─ docs/                     # promo site + reference docs
 └─ CHANGELOG.md
 ```
