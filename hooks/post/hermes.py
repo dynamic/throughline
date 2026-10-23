@@ -27,33 +27,68 @@ GIT_TIMEOUT = 3
 # Hermes caps a pre_llm_call injection at 10,000 chars and spills the rest to disk.
 CONTEXT_CAP = 9500
 
+# Interactive local surfaces only by default. Messaging-platform and cron sessions run in
+# shared checkouts on a gateway host and must not write project data unasked.
+# THROUGHLINE_HERMES_SURFACES (comma-separated, or "all") overrides.
+DEFAULT_SURFACES = ("cli", "tui", "desktop", "acp")
+
 _lock = threading.Lock()
 
 
-def _state_file():
+def _surface_allowed(ctx):
+    raw = os.environ.get("THROUGHLINE_HERMES_SURFACES", "").strip().lower()
+    if raw == "all":
+        return True
+    allowed = tuple(p.strip() for p in raw.split(",") if p.strip()) or DEFAULT_SURFACES
+    getter = getattr(ctx, "session_surface", None)
+    if not callable(getter):
+        return True
+    return str(getter() or "").lower() in allowed
+
+
+def _state_file(create=False):
     try:
         from plugins.plugin_storage import plugin_data_dir
         base = Path(plugin_data_dir("throughline"))
-    except Exception:
+    except ImportError:
         home = os.environ.get("HERMES_HOME") or str(Path.home() / ".hermes")
         base = Path(home) / "plugin-data" / "throughline"
-    base.mkdir(parents=True, exist_ok=True)
+    if create:
+        base.mkdir(parents=True, exist_ok=True)
     return base / "state.json"
 
 
 def _load():
+    empty = {"pending": {}, "alias": {}}
     try:
-        data = json.loads(_state_file().read_text())
+        path = _state_file()
+        if not path.exists():
+            return empty
+        data = json.loads(path.read_text())
+        if not isinstance(data, dict):
+            raise ValueError("state is not a JSON object")
         return {"pending": dict(data.get("pending", {})), "alias": dict(data.get("alias", {}))}
+    except (ValueError, TypeError) as exc:
+        # Corrupt state: keep the evidence rather than overwrite it with empty state.
+        logger.warning("throughline: unreadable state file (%s); moving it aside", exc)
+        try:
+            path.replace(path.with_name(path.name + ".corrupt"))
+        except Exception:
+            pass
+        return empty
     except Exception:
-        return {"pending": {}, "alias": {}}
+        logger.warning("throughline: could not read state file", exc_info=True)
+        return empty
 
 
 def _save(state):
     try:
-        _state_file().write_text(json.dumps(state))
+        path = _state_file(create=True)
+        tmp = path.with_name(path.name + ".%d.tmp" % os.getpid())
+        tmp.write_text(json.dumps(state))
+        os.replace(tmp, path)
     except Exception:
-        logger.debug("throughline: state save failed", exc_info=True)
+        logger.warning("throughline: could not save state file", exc_info=True)
 
 
 def _canon(state, sid):
@@ -68,6 +103,8 @@ def _canon(state, sid):
 def _project(ctx):
     """Git root of the calling session's workspace, or None (hooks then no-op)."""
     try:
+        if not _surface_allowed(ctx):
+            return None
         cwd = ctx.session_cwd()
         if not cwd or not os.path.isdir(cwd):
             return None
@@ -78,6 +115,7 @@ def _project(ctx):
         root = out.stdout.strip()
         return root if out.returncode == 0 and root else None
     except Exception:
+        logger.warning("throughline: could not resolve project root", exc_info=True)
         return None
 
 
@@ -91,8 +129,15 @@ def _run(script, payload, root):
             input=json.dumps(payload), cwd=root, env=env,
             capture_output=True, text=True, timeout=SCRIPT_TIMEOUT,
         )
+        if done.returncode != 0:
+            logger.warning("throughline: %s exited %s: %s", script, done.returncode, (done.stderr or "").strip()[:200])
+            return ""
         return done.stdout or ""
+    except subprocess.TimeoutExpired:
+        logger.warning("throughline: %s timed out after %ss", script, SCRIPT_TIMEOUT)
+        return ""
     except Exception:
+        logger.warning("throughline: could not run %s", script, exc_info=True)
         return ""
 
 
@@ -145,11 +190,11 @@ def build_capture_payload(tool_name, args, status, sid):
 
 
 def _safe(fn):
-    def wrapper(**kwargs):
+    def wrapper(*args, **kwargs):
         try:
             return fn(**kwargs)
         except Exception:
-            logger.debug("throughline: callback failed", exc_info=True)
+            logger.warning("throughline: %s failed", getattr(fn, "__name__", "callback"), exc_info=True)
             return None
     wrapper.__name__ = getattr(fn, "__name__", "callback")
     return wrapper
@@ -162,7 +207,7 @@ def _cap(text):
 
 def register(ctx):
     if not shutil.which("jq") or not shutil.which("git"):
-        logger.warning("throughline: jq and git are required; plugin inactive")
+        logger.error("throughline: jq and git must be on PATH (apt install jq / brew install jq); plugin inactive")
         return
 
     @_safe
@@ -231,15 +276,20 @@ def register(ctx):
     @_safe
     def end_session(session_id="", **_kw):
         root = _project(ctx)
-        if root and session_id:
-            with _lock:
-                sid = _canon(_load(), session_id)
+        if not session_id:
+            return None
+        with _lock:
+            state = _load()
+            sid = _canon(state, session_id)
+        if root:
             _run("session-flush.sh", {"session_id": sid, "reason": "end"}, root)
-        if session_id:
-            with _lock:
-                state = _load()
-                state["pending"].pop(session_id, None)
-                state["alias"].pop(session_id, None)
+        with _lock:
+            state = _load()
+            ids = {session_id, sid}
+            if any(i in state["pending"] or i in state["alias"] for i in ids):
+                for i in ids:
+                    state["pending"].pop(i, None)
+                    state["alias"].pop(i, None)
                 _save(state)
         return None
 

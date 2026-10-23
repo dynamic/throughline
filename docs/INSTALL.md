@@ -234,8 +234,11 @@ Claude Code runs, so capture and redaction logic exists in one place.
 
 **Scope.** The plugin acts on sessions whose workspace (`ctx.session_cwd()`) is inside
 a git repo and writes to that repo's `.claude/throughline/`, the same data directory
-every other harness uses. Sessions outside a git repo, such as a messaging-platform
-session whose terminal directory is not a repo, are skipped.
+every other harness uses. Sessions outside a git repo are skipped. Only interactive
+local sessions (`cli`, `tui`, `desktop`, `acp`) capture by default; messaging-platform
+and cron sessions are skipped so a gateway host's shared checkouts are not written to.
+Set `THROUGHLINE_HERMES_SURFACES` (comma-separated surface names, or `all`) to change
+that.
 
 Plugin-internal state (pending injections) is kept in
 `<hermes home>/plugin-data/throughline/`, never in the install directory.
