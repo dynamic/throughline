@@ -148,7 +148,7 @@ def test_session_start_precompute_is_consumed_once(bridge, repo):
     (repo / ".claude" / "throughline" / "HANDOFF.md").write_text("# handoff\n")
     ctx = registered(bridge, repo)
     ctx.hooks["on_session_start"](session_id="s1")
-    assert "HANDOFF.md" in bridge._load()["pending"]["s1"]
+    assert "HANDOFF.md" in bridge._load()["pending"]["s1"]["text"]
     # Precomputed text wins over a recompute: drop the handoff, the stored text still injects.
     (repo / ".claude" / "throughline" / "HANDOFF.md").unlink()
     first = ctx.hooks["pre_llm_call"](session_id="s1", user_message="hello", is_first_turn=True)
@@ -226,7 +226,7 @@ def test_end_clears_session_state(bridge, repo, hook):
     ctx.hooks[hook](session_id="s2")
     ctx.hooks[hook](session_id="s1")
     state = bridge._load()
-    assert state == {"pending": {}, "alias": {}}
+    assert state == {"pending": {}, "alias": {}, "root": {}}
 
 
 @needs_tools
@@ -361,3 +361,42 @@ def test_surface_gate(bridge, repo, monkeypatch, surface, env, expected):
     ctx.session_surface = lambda: surface
     ctx.hooks["post_tool_call"](tool_name="terminal", args={"command": "echo gate"}, session_id="s1")
     assert ("echo gate" in buffer_text(repo)) is expected
+
+
+@needs_tools
+@pytest.mark.parametrize("hook", ["on_session_finalize", "on_session_reset"])
+def test_end_marker_when_finalize_is_unscoped(bridge, repo, hook):
+    ctx = registered(bridge, repo)
+    ctx.hooks["pre_llm_call"](session_id="s1", user_message="hi", is_first_turn=True)
+    ctx.hooks["post_tool_call"](tool_name="terminal", args={"command": "echo hi"}, session_id="s1")
+    # Hermes fires finalize from reaper threads with no session scope.
+    ctx.session_cwd = lambda: ""
+    ctx.session_surface = lambda: ""
+    ctx.hooks[hook](session_id="s1")
+    assert buffer_text(repo).count("<!-- session-ended") == 1
+    assert bridge._load()["root"] == {}
+
+
+@needs_tools
+def test_startup_block_not_reinjected_mid_session(bridge, repo):
+    ctx = registered(bridge, repo)
+    ctx.hooks["pre_llm_call"](session_id="s1", user_message="turn one", is_first_turn=True)
+    # Hermes rebuilds the prompt mid-session (model switch) and fires on_session_start again.
+    ctx.hooks["on_session_start"](session_id="s1")
+    assert ctx.hooks["pre_llm_call"](session_id="s1", user_message="turn twelve", is_first_turn=False) is None
+    assert "s1" not in bridge._load()["pending"]
+
+
+@needs_tools
+def test_delegate_child_folds_into_parent(bridge, repo):
+    ctx = registered(bridge, repo)
+    ctx.hooks["pre_llm_call"](session_id="parent", user_message="go", is_first_turn=True)
+    child = ctx.hooks["pre_llm_call"](
+        session_id="child", user_message="subtask goal", is_first_turn=True, parent_session_id="parent",
+    )
+    assert child is None
+    ctx.hooks["post_tool_call"](tool_name="terminal", args={"command": "echo from-child"}, session_id="child")
+    bufs = list((repo / ".claude" / "throughline" / "buffer").glob("session-*.md"))
+    assert [b.name for b in bufs] == ["session-parent.md"]
+    assert "echo from-child" in bufs[0].read_text()
+    assert "subtask goal" not in bufs[0].read_text()

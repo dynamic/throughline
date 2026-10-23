@@ -59,7 +59,7 @@ def _state_file(create=False):
 
 
 def _load():
-    empty = {"pending": {}, "alias": {}}
+    empty = {"pending": {}, "alias": {}, "root": {}}
     try:
         path = _state_file()
         if not path.exists():
@@ -67,7 +67,11 @@ def _load():
         data = json.loads(path.read_text())
         if not isinstance(data, dict):
             raise ValueError("state is not a JSON object")
-        return {"pending": dict(data.get("pending", {})), "alias": dict(data.get("alias", {}))}
+        return {
+            "pending": {k: v for k, v in dict(data.get("pending", {})).items() if isinstance(v, dict)},
+            "alias": dict(data.get("alias", {})),
+            "root": dict(data.get("root", {})),
+        }
     except (ValueError, TypeError) as exc:
         # Corrupt state: keep the evidence rather than overwrite it with empty state.
         logger.warning("throughline: unreadable state file (%s); moving it aside", exc)
@@ -210,33 +214,52 @@ def register(ctx):
         logger.error("throughline: jq and git must be on PATH (apt install jq / brew install jq); plugin inactive")
         return
 
+    def remember(sid, root, pending=None):
+        """Persist the resolved project root (finalize fires from unscoped threads) and any pending text."""
+        with _lock:
+            state = _load()
+            state["root"][sid] = root
+            if pending is not None:
+                state["pending"][sid] = pending
+            _save(state)
+
     @_safe
     def on_session_start(session_id="", **_kw):
         root = _project(ctx)
         if not root or not session_id:
             return None
         text = _run("session-onboard.sh", {"session_id": session_id, "source": "startup"}, root).strip()
-        if text:
-            with _lock:
-                state = _load()
-                state["pending"][session_id] = text
-                _save(state)
+        remember(session_id, root, {"text": text, "source": "startup"} if text else None)
         return None
 
     @_safe
-    def pre_llm_call(session_id="", user_message="", is_first_turn=False, **_kw):
+    def pre_llm_call(session_id="", user_message="", is_first_turn=False, parent_session_id="", **_kw):
         root = _project(ctx)
         if not root or not session_id:
+            return None
+        if parent_session_id:
+            # A delegate_task child: fold into the parent's buffer, no second injection.
+            with _lock:
+                state = _load()
+                state["alias"][session_id] = _canon(state, parent_session_id)
+                state["root"].setdefault(_canon(state, parent_session_id), root)
+                _save(state)
             return None
         with _lock:
             state = _load()
             sid = _canon(state, session_id)
-            text = state["pending"].pop(session_id, None) or state["pending"].pop(sid, None)
+            entry = state["pending"].pop(session_id, None) or state["pending"].pop(sid, None)
+            state["root"][sid] = root
             _save(state)
+        # on_session_start also fires when Hermes rebuilds an existing session's prompt
+        # (model switch, cwd drift): a startup block is only valid on the first turn.
+        if entry and entry.get("source") == "startup" and not is_first_turn:
+            entry = None
         prompt = _text(user_message)
         if prompt.strip():
             _run("session-prompt.sh", {"session_id": sid, "prompt": prompt}, root)
-        if text is None and is_first_turn:
+        text = entry["text"] if entry else ""
+        if not text and is_first_turn:
             text = _run("session-onboard.sh", {"session_id": sid, "source": "startup"}, root)
         text = (text or "").strip()
         return {"context": _cap(text)} if text else None
@@ -266,30 +289,29 @@ def register(ctx):
             _save(state)
         _run("session-precompact.sh", {"session_id": sid, "trigger": kind or reason or "auto"}, root)
         text = _run("session-onboard.sh", {"session_id": sid, "source": "compact"}, root).strip()
-        if text:
-            with _lock:
-                state = _load()
-                state["pending"][sid] = text
-                _save(state)
+        remember(sid, root, {"text": text, "source": "compact"} if text else None)
         return None
 
     @_safe
     def end_session(session_id="", **_kw):
-        root = _project(ctx)
         if not session_id:
             return None
         with _lock:
             state = _load()
             sid = _canon(state, session_id)
+            stored = state["root"].get(sid)
+        # Finalize can fire from an unscoped reaper thread where session_cwd() and
+        # session_surface() are blank, so prefer the root recorded while the session ran.
+        root = stored or _project(ctx)
         if root:
             _run("session-flush.sh", {"session_id": sid, "reason": "end"}, root)
         with _lock:
             state = _load()
             ids = {session_id, sid}
-            if any(i in state["pending"] or i in state["alias"] for i in ids):
+            if any(i in bucket for i in ids for bucket in (state["pending"], state["alias"], state["root"])):
                 for i in ids:
-                    state["pending"].pop(i, None)
-                    state["alias"].pop(i, None)
+                    for bucket in (state["pending"], state["alias"], state["root"]):
+                        bucket.pop(i, None)
                 _save(state)
         return None
 
