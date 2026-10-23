@@ -213,7 +213,7 @@ hermes plugins enable throughline
 Hermes disables general plugins until enabled. Restart the gateway or open a new
 session afterward.
 
-**Requirements:** Hermes v0.22 or newer, plus `git` and `jq` on the `PATH` of the
+**Requirements:** Hermes v0.22.3 or newer, plus `git` and `jq` on the `PATH` of the
 machine running Hermes. Without `jq` the plugin logs one warning and registers
 nothing.
 

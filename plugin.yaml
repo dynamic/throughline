@@ -3,7 +3,7 @@ version: 0.16.0
 description: "Automatic session capture and durable handoffs. Records tool actions and prompts to a per-project buffer, re-injects HANDOFF context on the first turn and after compaction, and ships the handoff, onboard, consolidate and consolidate-memory skills."
 author: Dynamic
 homepage: https://github.com/dynamic/throughline
-requires_hermes: ">=0.22.0"
+requires_hermes: ">=0.22.3"
 external_dependencies:
   - name: jq
     install: "apt install jq (Linux) or brew install jq (macOS)"
