@@ -323,8 +323,9 @@ def register(ctx):
         with _lock:
             state = _load()
             ids = {session_id, sid}
-            if any(i in bucket for i in ids for bucket in (state["pending"], state["alias"], state["root"])):
-                for i in ids:
+            children = [k for k, v in state["alias"].items() if v in ids]
+            if children or any(i in bucket for i in ids for bucket in (state["pending"], state["alias"], state["root"])):
+                for i in ids | set(children):
                     for bucket in (state["pending"], state["alias"], state["root"]):
                         bucket.pop(i, None)
                 _save(state)

@@ -438,3 +438,13 @@ def test_delegate_child_folds_into_parent(bridge, repo):
     assert [b.name for b in bufs] == ["session-parent.md"]
     assert "echo from-child" in bufs[0].read_text()
     assert "subtask goal" not in bufs[0].read_text()
+
+
+@needs_tools
+def test_ending_parent_drops_child_aliases(bridge, repo):
+    ctx = registered(bridge, repo)
+    ctx.hooks["pre_llm_call"](session_id="parent", user_message="go", is_first_turn=True)
+    ctx.hooks["pre_llm_call"](session_id="child", user_message="g", is_first_turn=True, parent_session_id="parent")
+    assert bridge._load()["alias"] == {"child": "parent"}
+    ctx.hooks["on_session_finalize"](session_id="parent")
+    assert bridge._load() == {"pending": {}, "alias": {}, "root": {}}
