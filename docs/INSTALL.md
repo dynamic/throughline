@@ -203,6 +203,48 @@ throughline@throughline` for a new version, not `git pull`.
 marketplace snapshot are different files on disk, so OMP would register the hook
 shim twice and every capture point would fire twice per event. Pick one.
 
+## Hermes Agent
+
+```sh
+hermes plugins install dynamic/throughline
+hermes plugins enable throughline
+```
+
+Hermes disables general plugins until enabled. Restart the gateway or open a new
+session afterward.
+
+**Requirements:** Hermes v0.22.3 or newer, plus `git` and `jq` on the `PATH` of the
+machine running Hermes. Without `jq` the plugin logs one warning and registers
+nothing.
+
+**What you get:** the 4 skills, registered as `throughline:handoff`,
+`throughline:onboard`, `throughline:consolidate` and `throughline:consolidate-memory`
+(load them with `skill_view`), plus capture through six Hermes plugin hooks. The
+plugin is a thin Python bridge (`hooks/post/hermes.py`) that translates each Hermes
+hook into the JSON the `hooks/*.sh` scripts already parse and runs the same scripts
+Claude Code runs, so capture and redaction logic exists in one place.
+
+| Hermes hook | Does |
+|---|---|
+| `on_session_start` | Precomputes the HANDOFF orientation block |
+| `pre_llm_call` | Records the prompt; injects the orientation block on the first turn |
+| `post_tool_call` | Captures `terminal`, `execute_code`, `write_file`, `patch`, `delegate_task`, `web_search`, `web_extract` and MCP tools |
+| `post_compaction` | Stamps the compaction boundary; re-injects the buffer tail on the next turn |
+| `on_session_finalize`, `on_session_reset` | Stamps the end of the session buffer |
+
+**Scope.** The plugin acts on sessions whose workspace (`ctx.session_cwd()`) is inside
+a git repo and writes to that repo's `.claude/throughline/`, the same data directory
+every other harness uses. Sessions outside a git repo are skipped. Only interactive
+local sessions (`cli`, `tui`, `desktop`, `acp`, `local`) capture by default; messaging-platform
+and cron sessions are skipped so a gateway host's shared checkouts are not written to.
+Set `THROUGHLINE_HERMES_SURFACES` (comma-separated surface names, or `all`) to change
+that.
+
+Plugin-internal state (pending injections) is kept in
+`<hermes home>/plugin-data/throughline/`, never in the install directory.
+
+**Updating.** `hermes plugins update throughline`.
+
 ## npx skills
 
 ```sh
