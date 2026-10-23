@@ -8,7 +8,7 @@ external_dependencies:
   - name: jq
     install: "apt install jq (Linux) or brew install jq (macOS)"
     check: "jq --version"
-hooks:
+provides_hooks:
   - on_session_start
   - pre_llm_call
   - post_tool_call

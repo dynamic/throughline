@@ -340,7 +340,7 @@ def test_root_shim_and_manifest_agree(repo):
     ctx = StubCtx(repo)
     shim.register(ctx)
     manifest = (REPO / "plugin.yaml").read_text()
-    listed = [l.strip()[2:] for l in manifest.split("hooks:")[1].splitlines() if l.strip().startswith("- ")]
+    listed = [l.strip()[2:] for l in manifest.split("provides_hooks:")[1].splitlines() if l.strip().startswith("- ")]
     assert sorted(listed) == sorted(ctx.hooks)
 
 
@@ -375,6 +375,44 @@ def test_end_marker_when_finalize_is_unscoped(bridge, repo, hook):
     ctx.hooks[hook](session_id="s1")
     assert buffer_text(repo).count("<!-- session-ended") == 1
     assert bridge._load()["root"] == {}
+
+
+@needs_tools
+def test_compaction_uses_stored_root_when_unscoped(bridge, repo):
+    ctx = registered(bridge, repo)
+    ctx.hooks["pre_llm_call"](session_id="s1", user_message="hi", is_first_turn=True)
+    ctx.hooks["post_tool_call"](tool_name="terminal", args={"command": "echo before"}, session_id="s1")
+    ctx.session_cwd = lambda: "/"
+    ctx.session_surface = lambda: ""
+    # In-place compaction: old_session_id is empty and the worker thread has no workspace.
+    ctx.hooks["post_compaction"](session_id="s1", old_session_id="", kind="summarize", reason="manual")
+    assert "compaction-boundary" in buffer_text(repo)
+    ctx.session_cwd = lambda: str(repo)
+    ctx.session_surface = lambda: "cli"
+    again = ctx.hooks["pre_llm_call"](session_id="s1", user_message="more", is_first_turn=False)
+    assert again and "compacted" in again["context"]
+
+
+@needs_tools
+def test_synthetic_delegation_message_not_captured_as_prompt(bridge, repo):
+    ctx = registered(bridge, repo)
+    ctx.hooks["pre_llm_call"](session_id="s1", user_message="real prompt", is_first_turn=True)
+    ctx.hooks["pre_llm_call"](
+        session_id="s1", is_first_turn=False,
+        user_message="[ASYNC DELEGATION BATCH COMPLETE - deleg_1] A background fan-out unit has finished",
+    )
+    text = buffer_text(repo)
+    assert "real prompt" in text and "ASYNC DELEGATION" not in text
+
+
+@needs_tools
+def test_child_session_leaves_no_pending_state(bridge, repo):
+    ctx = registered(bridge, repo)
+    ctx.hooks["pre_llm_call"](session_id="parent", user_message="go", is_first_turn=True)
+    ctx.hooks["on_session_start"](session_id="child")
+    ctx.hooks["pre_llm_call"](session_id="child", user_message="goal", is_first_turn=True, parent_session_id="parent")
+    state = bridge._load()
+    assert "child" not in state["pending"] and "child" not in state["root"]
 
 
 @needs_tools

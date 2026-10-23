@@ -30,7 +30,9 @@ CONTEXT_CAP = 9500
 # Interactive local surfaces only by default. Messaging-platform and cron sessions run in
 # shared checkouts on a gateway host and must not write project data unasked.
 # THROUGHLINE_HERMES_SURFACES (comma-separated, or "all") overrides.
-DEFAULT_SURFACES = ("cli", "tui", "desktop", "acp")
+DEFAULT_SURFACES = ("cli", "tui", "desktop", "acp", "local")
+
+SYNTHETIC_PREFIXES = ("[ASYNC DELEGATION",)
 
 _lock = threading.Lock()
 
@@ -241,8 +243,11 @@ def register(ctx):
             # A delegate_task child: fold into the parent's buffer, no second injection.
             with _lock:
                 state = _load()
-                state["alias"][session_id] = _canon(state, parent_session_id)
-                state["root"].setdefault(_canon(state, parent_session_id), root)
+                parent = _canon(state, parent_session_id)
+                state["alias"][session_id] = parent
+                state["root"].setdefault(parent, root)
+                state["pending"].pop(session_id, None)
+                state["root"].pop(session_id, None)
                 _save(state)
             return None
         with _lock:
@@ -256,7 +261,8 @@ def register(ctx):
         if entry and entry.get("source") == "startup" and not is_first_turn:
             entry = None
         prompt = _text(user_message)
-        if prompt.strip():
+        # Hermes delivers background-delegation completions as synthetic user messages.
+        if prompt.strip() and not prompt.lstrip().startswith(SYNTHETIC_PREFIXES):
             _run("session-prompt.sh", {"session_id": sid, "prompt": prompt}, root)
         text = entry["text"] if entry else ""
         if not text and is_first_turn:
@@ -278,14 +284,23 @@ def register(ctx):
 
     @_safe
     def post_compaction(session_id="", old_session_id="", kind="", reason="", **_kw):
-        root = _project(ctx)
-        if not root or not session_id:
+        if not session_id:
             return None
+        # Fires from a worker thread with no session scope (session_cwd() is the profile
+        # cwd there), so the root recorded while the session ran wins over a fresh lookup.
         with _lock:
             state = _load()
             if old_session_id and old_session_id != session_id:
                 state["alias"][session_id] = _canon(state, old_session_id)
             sid = _canon(state, session_id)
+            root = state["root"].get(sid)
+        root = root or _project(ctx)
+        if not root:
+            return None
+        with _lock:
+            state = _load()
+            if old_session_id and old_session_id != session_id:
+                state["alias"][session_id] = _canon(state, old_session_id)
             _save(state)
         _run("session-precompact.sh", {"session_id": sid, "trigger": kind or reason or "auto"}, root)
         text = _run("session-onboard.sh", {"session_id": sid, "source": "compact"}, root).strip()
