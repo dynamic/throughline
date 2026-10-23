@@ -2,11 +2,11 @@
   "checks": [
     {
       "label": "manifest validation",
-      "run": "jq -e '.hooks | keys' hooks/hooks.json >/dev/null && jq -e '.name and .version' .claude-plugin/plugin.json >/dev/null && jq -e '.plugins' .claude-plugin/marketplace.json >/dev/null && jq -e '.name and .version' .codex-plugin/plugin.json >/dev/null && jq -e '.plugins' .agents/plugins/marketplace.json >/dev/null && jq -e '.name and .version and .omp' package.json >/dev/null"
+      "run": "jq -e '.hooks | keys' hooks/hooks.json >/dev/null && jq -e '.name and .version' .claude-plugin/plugin.json >/dev/null && jq -e '.plugins' .claude-plugin/marketplace.json >/dev/null && jq -e '.name and .version' .codex-plugin/plugin.json >/dev/null && jq -e '.plugins' .agents/plugins/marketplace.json >/dev/null && jq -e '.name and .version and .omp' package.json >/dev/null && grep -q '^version: ' plugin.yaml"
     },
     {
       "label": "plugin version agreement",
-      "run": "set -e; c=$(jq -r .version .claude-plugin/plugin.json); x=$(jq -r .version .codex-plugin/plugin.json); o=$(jq -r .version .opencode-plugin/package.json); m=$(jq -r .version package.json); h=$(jq -r .version .omp-plugin/package.json); [ \"$c\" = \"$x\" ] && [ \"$c\" = \"$o\" ] && [ \"$c\" = \"$m\" ] && [ \"$c\" = \"$h\" ] || { echo \"version drift: .claude-plugin/plugin.json=$c .codex-plugin/plugin.json=$x .opencode-plugin/package.json=$o package.json=$m .omp-plugin/package.json=$h\" >&2; exit 1; }"
+      "run": "set -e; c=$(jq -r .version .claude-plugin/plugin.json); x=$(jq -r .version .codex-plugin/plugin.json); o=$(jq -r .version .opencode-plugin/package.json); m=$(jq -r .version package.json); h=$(jq -r .version .omp-plugin/package.json); y=$(sed -n 's/^version: //p' plugin.yaml); [ \"$c\" = \"$x\" ] && [ \"$c\" = \"$o\" ] && [ \"$c\" = \"$m\" ] && [ \"$c\" = \"$h\" ] && [ \"$c\" = \"$y\" ] || { echo \"version drift: .claude-plugin/plugin.json=$c .codex-plugin/plugin.json=$x .opencode-plugin/package.json=$o package.json=$m .omp-plugin/package.json=$h plugin.yaml=$y\" >&2; exit 1; }"
     },
     {
       "label": "hook tests",
@@ -19,6 +19,10 @@
     {
       "label": "opencode plugin",
       "run": "cd .opencode-plugin && npm ci && npm run typecheck && npm test"
+    },
+    {
+      "label": "hermes plugin",
+      "run": "python3 -m pytest tests/hermes -q"
     },
     {
       "label": "omp plugin",

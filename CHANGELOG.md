@@ -5,6 +5,13 @@ All notable changes to throughline are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Added
+- **Hermes Agent plugin (#161).** A root `plugin.yaml` and `__init__.py` load a thin
+  Python bridge (`hooks/post/hermes.py`) that maps six Hermes hooks onto the existing
+  `hooks/*.sh` scripts and registers the four skills as `throughline:<name>`. Install
+  with `hermes plugins install dynamic/throughline`. `plugin.yaml` joins the version
+  agreement check and must be bumped with the other manifests at release.
+
 ### Changed
 - **OMP manifest moved to the repo root.** The `omp` field now lives in a root
   `package.json` and the `.omp-plugin/hooks` and `.omp-plugin/skills` symlinks are

@@ -44,6 +44,7 @@ jobs:
           jq -e '.name and .version' .codex-plugin/plugin.json >/dev/null
           jq -e '.plugins' .agents/plugins/marketplace.json >/dev/null
           jq -e '.name and .version and .omp' package.json >/dev/null
+          grep -q '^version: ' plugin.yaml
       - name: Check plugin version agreement (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -52,8 +53,9 @@ jobs:
           o=$(jq -r .version .opencode-plugin/package.json)
           m=$(jq -r .version package.json)
           h=$(jq -r .version .omp-plugin/package.json)
-          if [ "$c" != "$x" ] || [ "$c" != "$o" ] || [ "$c" != "$m" ] || [ "$c" != "$h" ]; then
-            echo "version drift: .claude-plugin/plugin.json=$c .codex-plugin/plugin.json=$x .opencode-plugin/package.json=$o package.json=$m .omp-plugin/package.json=$h" >&2
+          y=$(sed -n 's/^version: //p' plugin.yaml)
+          if [ "$c" != "$x" ] || [ "$c" != "$o" ] || [ "$c" != "$m" ] || [ "$c" != "$h" ] || [ "$c" != "$y" ]; then
+            echo "version drift: .claude-plugin/plugin.json=$c .codex-plugin/plugin.json=$x .opencode-plugin/package.json=$o package.json=$m .omp-plugin/package.json=$h plugin.yaml=$y" >&2
             exit 1
           fi
       - name: Typography (Linux)
@@ -123,3 +125,21 @@ jobs:
         run: bun run typecheck
       - name: Run tests
         run: bun test
+
+  hermes-plugin:
+    name: hermes plugin (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Hermes does not run natively on Windows, so no Windows leg.
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install pytest
+        run: python -m pip install pytest
+      - name: Run Hermes bridge tests
+        run: python -m pytest tests/hermes -q
