@@ -128,11 +128,11 @@ system); Codex CLI, OpenCode, and OMP all get full automatic capture through the
 own hook/plugin APIs (Hermes Agent too, see [docs/INSTALL.md#hermes-agent](docs/INSTALL.md#hermes-agent)). Capabilities differ in the details below - see the table for the
 honest comparison, then jump to the section for your harness.
 
-| | [Claude Code](#claude-code) | [Codex CLI](#codex-cli) | [OpenCode](#opencode) | [OMP](#omp) | [Hermes](#hermes-agent) | [npx skills](#npx-skills) |
+| | [Claude Code](#claude-code) | [Codex CLI](#codex-cli) | [OpenCode](#opencode) | [OMP](#omp) | [Hermes](docs/INSTALL.md#hermes-agent) | [npx skills](#npx-skills) |
 |---|---|---|---|---|---|---|
 | Skills (`handoff`, `onboard`, `consolidate`, `consolidate-memory`) | yes | yes | separate install (see below - broadly auto-discovered) | yes (auto-discovered) | yes (registered as `throughline:<name>`) | yes |
 | Automatic capture | yes - 5 hooks | yes - 5 hooks, one-time trust step (see below) | yes - 5 hooks | yes - 6 events (compaction is 2 events, not 1) | yes - 6 hooks, git repos only | no |
-| Compaction survival | yes | yes | yes | yes | no |
+| Compaction survival | yes | yes | yes | yes | yes | no |
 | Native memory binding | yes (Claude's `/memory`) | no | no | no | no | no |
 | Requires `jq` | yes | yes | no | yes | yes | n/a - skills only |
 
