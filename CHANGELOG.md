@@ -5,6 +5,8 @@ All notable changes to throughline are documented here. Format loosely follows
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-10-23
+
 ### Added
 - **Hermes Agent plugin (#161).** A root `plugin.yaml` and `__init__.py` load a thin
   Python bridge (`hooks/post/hermes.py`) that maps six Hermes hooks onto the existing
@@ -130,6 +132,10 @@ All notable changes to throughline are documented here. Format loosely follows
   size-discipline step - not next-session output.
 
 ### Fixed
+
+- **jq capture hooks no longer drop events on long word runs** (issue #130): the generic
+  keyword=value rule in `hooks/_lib.sh` is anchored and atomic, so an unbroken run of about
+  6 KB no longer exhausts the regex retry limit and aborts the capture filter.
 - **Skill docs: dead README pointers, description length, staleness test**: `handoff`, `consolidate` and `onboard` cited README sections ("Git worktrees", "Local by default", "Housekeeping", the `THROUGHLINE_DATA_DIR` convention) that live in `docs/REFERENCE.md`; pointers fixed. `handoff`'s "Phase 1 step 4 below" now reads "above". `consolidate-memory` states one duplicate threshold (>90% flag, 80-90% manual review) and tests staleness by file modification time, not `originSessionId` (a session id). The four skill descriptions are trimmed to 300 characters or fewer, triggers kept except the "consolidation sweep" phrase on `consolidate` (it collided with `consolidate-memory`).
 - **OpenCode plugin port of the issue #81 rules, plus a parity test** (issue #90):
   the OpenCode plugin carries its own TypeScript port of the jq redaction defs, and the

@@ -1,5 +1,5 @@
 name: throughline
-version: 0.16.0
+version: 0.17.0
 description: "Automatic session capture and durable handoffs. Records tool actions and prompts to a per-project buffer, re-injects HANDOFF context on the first turn and after compaction, and ships the handoff, onboard, consolidate and consolidate-memory skills."
 author: Dynamic
 homepage: https://github.com/dynamic/throughline
