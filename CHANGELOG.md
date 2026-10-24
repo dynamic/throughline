@@ -26,7 +26,9 @@ All notable changes to throughline are documented here. Format loosely follows
 - The SessionStart unconsumed-buffer warning reports each buffer once and only counts
   buffers with at least 3 action records (`THROUGHLINE_UNCONSUMED_MIN`); it then says how
   many are new and how large the largest is. It used to appear in 86% of sessions,
-  re-reporting the same pile every time. Same behaviour in the OpenCode plugin. #191.
+  re-reporting the same pile every time. Same behaviour in the OpenCode plugin. Runs whose
+  block may be discarded (Hermes' precomputed startup block, OpenCode subagent sessions)
+  and opted-out projects do not mark buffers as reported. #191.
 - `--doctor` lists the installed throughline version per harness (Claude Code, Codex,
   OpenCode, OMP, Hermes) from each harness's own install record, and marks the ones
   older than the copy running it. #181.
