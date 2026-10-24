@@ -693,11 +693,44 @@ cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwhgenbar
 has   "generic keyword + bare keyword pair: both words masked (issue #173)" "$(cap_line kwhgenbare)" 'password *** ok'
 hasnt "kwhgenbare: secret marker not stored (issue #173)" "$(cap_line kwhgenbare)" 'S3cretPw'
 cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwhchain","command":"export DB_PASSWORD SECRET PASSWORD S3cretPw"}}'
-has   "a three-keyword chain is masked link by link, not swallowed (issue #173)" "$(cap_line kwhchain)" 'PASSWORD ***'
+has   "a three-keyword chain is masked link by link, not swallowed (issue #173)" "$(cap_line kwhchain)" '*** PASSWORD ***'
 hasnt "kwhchain: secret marker not stored (issue #173)" "$(cap_line kwhchain)" 'S3cretPw'
 cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwhsecretword","command":"echo password mysecretpw ok"}}'
 has   "a keyword-shaped word after a bare keyword is still masked (it can be the secret) (issue #173)" "$(cap_line kwhsecretword)" 'password ***'
 hasnt "kwhsecretword: keyword-shaped secret not stored (issue #173)" "$(cap_line kwhsecretword)" 'mysecretpw'
+#      Review of #219: an opaque Bearer/Basic value that merely CONTAINS a keyword
+#      is the credential, so the guard keys on whole keyword segments, never on a
+#      closing quote, `==` padding, or the `is` inside another word.
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwhqbasic","command":"curl -H \"Authorization: Basic zzauthzzzz=\" host"}}'
+has   "a quoted Basic header whose value contains a keyword substring is masked whole (issue #173)" "$(cap_line kwhqbasic)" '*** ***'
+hasnt "kwhqbasic: value not stored (issue #173)" "$(cap_line kwhqbasic)" 'zzauthzzzz'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwhqbearer","command":"curl -H \"Authorization: Bearer zzauthzzzz:\" host"}}'
+has   "a quoted Bearer header whose value contains a keyword substring is masked whole (issue #173)" "$(cap_line kwhqbearer)" '*** ***:'
+hasnt "kwhqbearer: value not stored (issue #173)" "$(cap_line kwhqbearer)" 'zzauthzzzz'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwhvalcop","command":"echo Bearer zzAuthzzQ is valid"}}'
+has   "a Bearer value that contains a keyword, before a copula, is masked (issue #173)" "$(cap_line kwhvalcop)" 'Bearer *** is valid'
+hasnt "kwhvalcop: value not stored (issue #173)" "$(cap_line kwhvalcop)" 'zzAuthzzQ'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwhpad2","command":"echo Basic zzauthzzzz=="}}'
+has   "base64 == padding is never read as a separator (issue #173)" "$(cap_line kwhpad2)" 'Basic ***'
+hasnt "kwhpad2: value not stored (issue #173)" "$(cap_line kwhpad2)" 'zzauthzzzz'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwhpad1","command":"echo Basic zzauthzzzz= ok"}}'
+has   "a single = padding before a space is never read as a separator (issue #173)" "$(cap_line kwhpad1)" 'Basic *** ok'
+hasnt "kwhpad1: value not stored (issue #173)" "$(cap_line kwhpad1)" 'zzauthzzzz'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwhcolend","command":"echo Bearer zzsecretzz:"}}'
+has   "a colon with no value after it does not trigger the guard (issue #173)" "$(cap_line kwhcolend)" 'Bearer ***:'
+hasnt "kwhcolend: value not stored (issue #173)" "$(cap_line kwhcolend)" 'zzsecretzz'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwhisland","command":"echo Bearer zzsecretzz island"}}'
+has   "the copula branch needs a whole word, not the is in island (issue #173)" "$(cap_line kwhisland)" 'Bearer *** island'
+hasnt "kwhisland: value not stored (issue #173)" "$(cap_line kwhisland)" 'zzsecretzz'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwhgencop","command":"echo password is token: S3cretPw"}}'
+has   "a copula separator also stands down on a keyword triple (issue #173)" "$(cap_line kwhgencop)" 'token: ***'
+hasnt "kwhgencop: value not stored (issue #173)" "$(cap_line kwhgencop)" 'S3cretPw'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwhpaireol","command":"echo TOKEN password mysecretpw"}}'
+has   "a pair whose second word is keyword-shaped at end of line is masked whole (issue #173)" "$(cap_line kwhpaireol)" 'Token ***'
+hasnt "kwhpaireol: value not stored (issue #173)" "$(cap_line kwhpaireol)" 'mysecretpw'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwhpairlb","command":"echo password=mytoken appdb"}}'
+has   "the pair alternative only follows whitespace, so = keeps one-word values (issue #173)" "$(cap_line kwhpairlb)" 'password=*** appdb'
+hasnt "kwhpairlb: value not stored (issue #173)" "$(cap_line kwhpairlb)" 'mytoken'
 # 2i1c. quoted -p<value> inside double quotes (the container-entrypoint shape
 #      mysql -uroot "-p$PW" db): the span group consumes the full quoted run
 #      including the -p. The pre-rule _mysql_pw_pre catches this shape.
@@ -1681,6 +1714,12 @@ has "prompt: SCREAMING_SNAKE_CASE compound is the same documented gap" "$(grep c
 # entirely until it was added alongside Bearer/Basic.
 prompt '{"session_id":"P","prompt":"Authorization: Bearer eyJxxxxxxxxxxxxxxxxxx.fake.jwt.body"}'
 hasnt "prompt: bearer JWT body not stored" "$(grep Authorization "$BUF/session-P.md")" 'eyJxxxxxxxxxxxxxxxxxx'
+# Issue #173's keyword-head guard is command-path only: the prompt path has no
+# generic rule behind the scheme rules, so standing down there would unmask the
+# value and mask nothing. A long Bearer value containing a keyword, before a
+# copula, stays masked.
+prompt '{"session_id":"P","prompt":"Bearer zzAuthzzzzzzzzzzzzzQ is expired"}'
+hasnt "prompt: Bearer value with a keyword inside, before a copula, not stored (issue #173)" "$(cat "$BUF/session-P.md")" 'zzAuthzzzzzzzzzzzzzQ'
 reset_buf
 prompt '{"session_id":"P","prompt":"Authorization: Token xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}'
 hasnt "prompt: Authorization Token value not stored" "$(cat "$BUF/session-P.md")" 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'
