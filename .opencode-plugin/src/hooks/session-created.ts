@@ -183,6 +183,9 @@ function sweepUnconsumedBuffers(bufDir: string, dataRoot: string, dataDir: strin
     for (const line of lines) {
       if (RECORD_MARKER.test(line)) {
         total++;
+        // Ended only if no record follows the last end-stamp (issue #180): session.idle
+        // stamps every turn, so an earlier stamp is a pause, not the end.
+        isEnded = false;
         if (PROMPT_MARKER.test(line)) promptOnly++;
       } else if (ENDED_MARKER.test(line)) {
         isEnded = true;
@@ -226,7 +229,7 @@ function sweepUnconsumedBuffers(bufDir: string, dataRoot: string, dataDir: strin
   if (newUnsure !== 0) {
     lines.push("");
     lines.push(
-      `ℹ️ ${unsure} other session buffer(s) in \`${relative(dataRoot, bufDir)}/\` with no end-stamp - could be live in another terminal, or could have exited without a clean shutdown. If none are still running, consider running the handoff.`,
+      `ℹ️ ${unsure} other session buffer(s) in \`${relative(dataRoot, bufDir)}/\` with no end-stamp after their last activity - could be live in another terminal, or could have exited without a clean shutdown. If none are still running, consider running the handoff.`,
     );
   }
   return lines;

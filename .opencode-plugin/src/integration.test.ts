@@ -366,6 +366,18 @@ describe('Throughline Plugin Integration Tests', () => {
       assert.ok(!result!.includes('not gitignored yet'), `expected no gitignore nudge, got: ${result}`);
     });
 
+    it('treats records after an idle stamp as a session that kept going (issue #180)', async () => {
+      const bufDir = join(tlDataDir(ctx), 'buffer');
+      mkdirSync(bufDir, { recursive: true });
+      writeFileSync(
+        join(bufDir, 'session-other-resumed.md'),
+        '- `t` **bash** `a`\n\n<!-- session-ended 2026-01-01 00:00:01 (idle) -->\n- `t` **bash** `b`\n- `t` **bash** `c`\n',
+      );
+      const result = await sessionCreated(ctx, { sessionID: 'test-session-idle' });
+      assert.ok(result!.includes('no end-stamp'), `expected possibly-live wording, got: ${result}`);
+      assert.ok(!result!.includes('ended without'), `expected no ended wording, got: ${result}`);
+    });
+
     it('warns about unconsumed session buffers from OTHER sessions, excluding a prompt-only buffer (issue #56, P2)', async () => {
       const dataDir = tlDataDir(ctx);
       const bufDir = join(dataDir, 'buffer');
