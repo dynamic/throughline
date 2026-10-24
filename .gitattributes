@@ -3,3 +3,6 @@
 # GitHub's hosted runner defaults core.autocrlf to true on checkout (issue
 # #67). Force LF regardless of that setting or a contributor's local config.
 *.sh text eol=lf
+# SKILL.md files are byte-budgeted and frontmatter-parsed by tests/skill-lint.sh
+# (issue #195); a CRLF checkout would change both, so keep them LF everywhere.
+skills/**/SKILL.md text eol=lf

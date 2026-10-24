@@ -6,6 +6,9 @@ All notable changes to throughline are documented here. Format loosely follows
 ## [Unreleased]
 
 ### Added
+- `tests/skill-lint.sh`, run by `tests/run.sh`: every SKILL.md's frontmatter (`name`
+  matches its directory, a description of at most 300 characters), a per-skill byte
+  budget that only ratchets down, and that every repo path a skill names exists. #195.
 - `tests/redaction-sweep.sh`: a generated sweep (about 42,000 prefix x keyword x separator
   x value inputs plus keyword chains) that counts seeded secrets surviving each engine's
   `redact`, and fails CI when either the jq hooks or the OpenCode port leaks more than its
