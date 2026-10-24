@@ -393,6 +393,28 @@ describe('Throughline Plugin Integration Tests', () => {
       );
       const below = await sessionCreated(ctx, { sessionID: 'test-session-consolidate' });
       assert.ok(!below!.includes('consolidate pass'), `expected no nudge below the threshold, got: ${below}`);
+
+      // The greatest tagged marker wins, a tagged line under a later heading is ignored,
+      // an untagged line is no marker, and the threshold comes from the environment.
+      writeFileSync(
+        join(dataDir, 'HANDOFF.md'),
+        '# p\n\n## Consolidation passes\n| 2026-01-05 (session logs) through handoff-2026-01-05-1200.md | a |\n' +
+          '| 2026-01-03 (session logs) through handoff-2026-01-03-1200.md | b |\n' +
+          '| 2026-01-07 through handoff-2026-01-07-1200.md | untagged |\n\n' +
+          '## Recent Session Logs\n1. x (session logs) through handoff-2026-01-08-1200.md\n',
+      );
+      const saved = process.env.THROUGHLINE_CONSOLIDATE_AFTER;
+      process.env.THROUGHLINE_CONSOLIDATE_AFTER = '3';
+      try {
+        const at3 = await sessionCreated(ctx, { sessionID: 'test-session-consolidate' });
+        assert.ok(
+          at3!.includes('3 session logs since the last consolidate pass (through `handoff-2026-01-05-1200.md`)'),
+          `expected the 01-05 marker at threshold 3, got: ${at3}`,
+        );
+      } finally {
+        if (saved === undefined) delete process.env.THROUGHLINE_CONSOLIDATE_AFTER;
+        else process.env.THROUGHLINE_CONSOLIDATE_AFTER = saved;
+      }
     });
 
     it('warns about unconsumed session buffers from OTHER sessions, excluding a prompt-only buffer (issue #56, P2)', async () => {

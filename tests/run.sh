@@ -1336,12 +1336,14 @@ O4a=$(printf '%s' '{"source":"startup","session_id":"T"}' | sh "$H/session-onboa
 has   "8 logs and no consolidate pass: suggested (issue #192)" "$O4a" '8 session logs and no recorded consolidate pass'
 O4b=$(printf '%s' '{"source":"resume","session_id":"T"}' | sh "$H/session-onboard.sh")
 hasnt "not repeated on resume (issue #192)" "$O4b" 'consolidate pass'
-printf '# p\n\n## Consolidation passes\n| Date | Promoted |\n|---|---|\n| 2026-01-05 (session logs) through handoff-2026-01-05-1200.md | nothing promoted |\n\n## Recent Session Logs\n1. x\n' > "$DATA/HANDOFF.md"
+# The newest of two tagged lines is the marker; a tagged line under a LATER heading is
+# outside the section and must be ignored.
+printf '# p\n\n## Consolidation passes\n| Date | Promoted |\n|---|---|\n| 2026-01-05 (session logs) through handoff-2026-01-05-1200.md | nothing promoted |\n| 2026-01-03 (session logs) through handoff-2026-01-03-1200.md | x |\n\n## Recent Session Logs\n1. x (session logs) through handoff-2026-01-08-1200.md\n' > "$DATA/HANDOFF.md"
 O4c=$(printf '%s' '{"source":"startup","session_id":"T"}' | sh "$H/session-onboard.sh")
 hasnt "3 logs after the marker: below the default threshold (issue #192)" "$O4c" 'consolidate pass'
 O4d=$(printf '%s' '{"source":"startup","session_id":"T"}' | THROUGHLINE_CONSOLIDATE_AFTER=3 sh "$H/session-onboard.sh")
 has   "3 logs after the marker at threshold 3: suggested, naming the marker (issue #192)" "$O4d" '3 session logs since the last consolidate pass (through `handoff-2026-01-05-1200.md`)'
-printf '# p\n\n## Consolidation passes\n| 2026-01-07 | an untagged legacy entry |\n' > "$DATA/HANDOFF.md"
+printf '# p\n\n## Consolidation passes\n| 2026-01-07 through handoff-2026-01-07-1200.md | an untagged legacy entry |\n' > "$DATA/HANDOFF.md"
 O4e=$(printf '%s' '{"source":"startup","session_id":"T"}' | sh "$H/session-onboard.sh")
 has   "a legacy untagged section is no marker: every log counts (issue #192)" "$O4e" '8 session logs and no recorded consolidate pass'
 O4f_err=$(printf '%s' '{"source":"startup","session_id":"T"}' | THROUGHLINE_CONSOLIDATE_AFTER=99999999999999999999 sh "$H/session-onboard.sh" 2>&1 >/dev/null)
