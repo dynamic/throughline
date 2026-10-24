@@ -6,6 +6,10 @@ All notable changes to throughline are documented here. Format loosely follows
 ## [Unreleased]
 
 ### Added
+- `tests/redaction-sweep.sh`: a generated sweep (about 42,000 prefix x keyword x separator
+  x value inputs plus keyword chains) that counts seeded secrets surviving each engine's
+  `redact`, and fails CI when either the jq hooks or the OpenCode port leaks more than its
+  pinned baseline. #174.
 - `docs/ROADMAP.md` (epics #166-#172) and `docs/AUDIT-v0.17.0.md`, the audit behind it.
 - `scripts/check-manifests.sh` (manifest validity, version agreement, CHANGELOG top heading)
   and `scripts/check-typography.sh` (outward-docs typography gate). CI and `.local-ci.json`
@@ -44,6 +48,8 @@ All notable changes to throughline are documented here. Format loosely follows
   (`gloas-`, `gldt-`, `glrt-`/`glrtr-`, `glcbt-`, `glptt-`, `glft-`, `glimt-`, `glagent-`,
   `glwt-`, `glsoat-`, `glffct-`), a routable token's `.<version>.<length+crc32>` tail,
   and the `_gitlab_session` cookie. Same rules in the OpenCode port. #175.
+- The OpenCode port's value backstop treats a hyphenated keyword (`access-key`, `api-key`,
+  `client-id`) as one head, as jq does; `Authorization: access-key: X` stored `X`. #174.
 
 ## [0.17.0] - 2026-10-23
 

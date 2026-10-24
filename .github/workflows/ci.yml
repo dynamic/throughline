@@ -62,6 +62,11 @@ jobs:
         run: npm run typecheck
       - name: Run tests
         run: npm test
+      # Generated redaction sweep over both engines (issue #174): fails when either leaks
+      # more seeded secrets than its pinned baseline. Runs here because this job has node
+      # for the port and jq for the hooks; `npm test` above has already built dist/.
+      - name: Redaction sweep
+        run: sh ../tests/redaction-sweep.sh --port dist/utils/redaction.js
 
   omp-plugin:
     runs-on: ubuntu-latest

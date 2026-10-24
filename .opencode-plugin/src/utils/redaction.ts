@@ -1208,6 +1208,7 @@ const BACKSTOP_SCHEME = new RegExp("(?:" + foldSpelled("bearer") + "|" + foldSpe
 const BACKSTOP_QUOTED = /[ \t]+(?=["'])/y;
 const BACKSTOP_EXPLICIT = new RegExp(JS_WS + "*[:=]" + JS_WS + "*|" + JS_WS + "+(?:" + SEPARATOR_ALTERNATION + ")" + JS_WS + "+", "iy");
 const BACKSTOP_WORD = new RegExp("[" + FOLD_ALNUM + "_]+", "g");
+const BACKSTOP_HYPHEN_RUN = new RegExp("-[" + FOLD_ALNUM + "_]+", "y");
 const BACKSTOP_SEPARATOR = new RegExp(
   JS_WS + "*[:=]" + JS_WS + "*|" + JS_WS + "+(?:" + SEPARATOR_ALTERNATION + ")" + JS_WS + "+|[ \\t]+", "iy");
 const BACKSTOP_VALUE = new RegExp("\"[^\"]*\"|'[^']*'|[^" + JS_WS_CHARS + "\"']+", "y");
@@ -1218,13 +1219,26 @@ function backstopValues(original: string): string[] {
   words.lastIndex = 0;
   let word: RegExpExecArray | null;
   while ((word = words.exec(original)) !== null) {
-    const end = word.index + word[0].length;
+    let run = word[0];
+    let end = word.index + run.length;
+    // jq's keyword alternation spans one hyphen (`access-key`, `api-key`, `client-id`)
+    // while a word run stops at it, so join the next run when that is what makes the
+    // keyword - otherwise `access-key: X` would have no head here.
+    if (!BACKSTOP_KEYWORD.test(run)) {
+      BACKSTOP_HYPHEN_RUN.lastIndex = end;
+      const joined = BACKSTOP_HYPHEN_RUN.exec(original);
+      if (joined !== null && BACKSTOP_KEYWORD.test(run + joined[0])) {
+        run += joined[0];
+        end += joined[0].length;
+        words.lastIndex = end;
+      }
+    }
     let valueStart: number;
-    if (BACKSTOP_KEYWORD.test(word[0])) {
+    if (BACKSTOP_KEYWORD.test(run)) {
       BACKSTOP_SEPARATOR.lastIndex = end;
       if (BACKSTOP_SEPARATOR.exec(original) === null) continue;
       valueStart = BACKSTOP_SEPARATOR.lastIndex;
-    } else if (BACKSTOP_SCHEME.test(word[0])) {
+    } else if (BACKSTOP_SCHEME.test(run)) {
       BACKSTOP_EXPLICIT.lastIndex = end;
       if (BACKSTOP_EXPLICIT.exec(original) !== null) {
         valueStart = BACKSTOP_EXPLICIT.lastIndex;
