@@ -1194,7 +1194,12 @@ export function redact(str: string): string {
  * own, which covers both of jq's passes (its pass B exists only because a global regex
  * cannot overlap). Values of 3+ characters, no unterminated-quote alternative, as in jq.
  */
+// jq `_kw_word_rx` (any separator) and `_kw_scheme_rx` (explicit separator only).
 const BACKSTOP_KEYWORD = new RegExp("(?:" + KEYWORD_ALTERNATION + ")", "i");
+const BACKSTOP_SCHEME = new RegExp("(?:" + foldSpelled("bearer") + "|" + foldSpelled("basic") + ")", "i");
+// A bare space before a quoted value also makes a scheme word a head (jq: `[ \t]+(?=["'])`).
+const BACKSTOP_QUOTED = /[ \t]+(?=["'])/y;
+const BACKSTOP_EXPLICIT = new RegExp(JS_WS + "*[:=]" + JS_WS + "*|" + JS_WS + "+(?:" + SEPARATOR_ALTERNATION + ")" + JS_WS + "+", "iy");
 const BACKSTOP_WORD = new RegExp("[" + FOLD_ALNUM + "_]+", "g");
 const BACKSTOP_SEPARATOR = new RegExp(
   JS_WS + "*[:=]" + JS_WS + "*|" + JS_WS + "+(?:" + SEPARATOR_ALTERNATION + ")" + JS_WS + "+|[ \\t]+", "iy");
@@ -1206,10 +1211,25 @@ function backstopValues(original: string): string[] {
   words.lastIndex = 0;
   let word: RegExpExecArray | null;
   while ((word = words.exec(original)) !== null) {
-    if (!BACKSTOP_KEYWORD.test(word[0])) continue;
-    BACKSTOP_SEPARATOR.lastIndex = word.index + word[0].length;
-    if (BACKSTOP_SEPARATOR.exec(original) === null) continue;
-    BACKSTOP_VALUE.lastIndex = BACKSTOP_SEPARATOR.lastIndex;
+    const end = word.index + word[0].length;
+    let valueStart: number;
+    if (BACKSTOP_KEYWORD.test(word[0])) {
+      BACKSTOP_SEPARATOR.lastIndex = end;
+      if (BACKSTOP_SEPARATOR.exec(original) === null) continue;
+      valueStart = BACKSTOP_SEPARATOR.lastIndex;
+    } else if (BACKSTOP_SCHEME.test(word[0])) {
+      BACKSTOP_EXPLICIT.lastIndex = end;
+      if (BACKSTOP_EXPLICIT.exec(original) !== null) {
+        valueStart = BACKSTOP_EXPLICIT.lastIndex;
+      } else {
+        BACKSTOP_QUOTED.lastIndex = end;
+        if (BACKSTOP_QUOTED.exec(original) === null) continue;
+        valueStart = BACKSTOP_QUOTED.lastIndex;
+      }
+    } else {
+      continue;
+    }
+    BACKSTOP_VALUE.lastIndex = valueStart;
     const value = BACKSTOP_VALUE.exec(original);
     if (value !== null && value[0].length >= 3 && value[0] !== "***") values.add(value[0]);
   }

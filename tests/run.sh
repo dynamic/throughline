@@ -701,6 +701,18 @@ cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwhhyphen
 hasnt "kwhhyphen: secret not stored (issue #173)" "$(cap_line kwhhyphen)" 'S3cretPw'
 cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwhexplicit","command":"echo password=secret: S3cretPw"}}'
 hasnt "kwhexplicit: secret not stored (issue #173)" "$(cap_line kwhexplicit)" 'S3cretPw'
+#      A keyword-shaped secret before a bare space, a bare chain of even length, and a
+#      value behind a scheme word with an explicit separator (passes B and C).
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwhkwvalue","command":"echo password TOKEN: mytokenS3cretPw ok"}}'
+hasnt "kwhkwvalue: secret not stored (issue #173)" "$(cap_line kwhkwvalue)" 'mytokenS3cretPw'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwhbare4","command":"echo password token secret auth S3cretPw"}}'
+hasnt "kwhbare4: secret not stored (issue #173)" "$(cap_line kwhbare4)" 'S3cretPw'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwhscheme","command":"echo --token=Bearer: S3cretPw"}}'
+hasnt "kwhscheme: secret not stored (issue #173)" "$(cap_line kwhscheme)" 'S3cretPw'
+#      Scheme words are heads only with an explicit separator: `Basic test` (bare space,
+#      under `_auth_scheme`'s 8-character floor) is left alone.
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwhbasicshort","command":"echo Basic test"}}'
+has   "kwhbasicshort: a short word after a bare scheme word is not masked (issue #173)" "$(cap_line kwhbasicshort)" 'Basic test'
 #      Whole-token replacement: a value that also occurs inside a longer word is not
 #      masked there (`PASSWORD` must not eat the tail of `DB_PASSWORD`), and a closing
 #      quote is never read as a value.
