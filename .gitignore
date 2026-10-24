@@ -20,3 +20,10 @@
 
 # Deepwork progress files (local-only, not shared)
 .slim/deepwork/
+
+# Python bytecode from running the Hermes bridge tests (tests/hermes) - build output,
+# never source. A root package-lock.json is what local-ci's npm install leaves behind;
+# the OpenCode plugin's own lockfile lives in .opencode-plugin/ and stays tracked.
+__pycache__/
+*.pyc
+/package-lock.json
