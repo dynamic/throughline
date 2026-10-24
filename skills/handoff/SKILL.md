@@ -197,24 +197,28 @@ having to carry it. Omit the line entirely for a session that starts something n
      originSessionId: <current session id>
    ---
    ```
-5. **Consume the buffers:** archive each distilled `DATA/buffer/session-*.md` into
-   `DATA/buffer/archive/` so it isn't re-processed next session, with the plugin's
-   script:
+5. **Consume the buffers:** archive each distilled buffer into `DATA/buffer/archive/`
+   so it isn't re-processed next session. Pass the buffer paths you read in Phase 1
+   to the plugin's script:
    ```sh
-   sh <plugin-root>/hooks/archive-buffer.sh DATA/buffer/session-<id>.md [...]
+   sh <plugin-root>/hooks/archive-buffer.sh DATA/buffer/session-<id>.md
    ```
    `<plugin-root>` is two directories above this `SKILL.md` (`skills/handoff/` sits
    beside `hooks/`). The script never overwrites: a second handoff in the same session
    archives a buffer with the same name as the first run's, and the script appends it
-   to the archived file instead of replacing it. A non-zero exit leaves that buffer in
-   place; say so in the report rather than retrying by hand.
-   If the script is not there (a skills-only install, or an older plugin), archive by
-   hand with a collision check, never a bare move onto an existing path: when
-   `DATA/buffer/archive/session-<id>.md` does not exist, move the buffer there;
-   when it does, append the buffer to it and then delete the live buffer.
-   Archive only, never delete: an archived buffer is the recovery path if a
-   distillation later turns out to have missed something. See "Housekeeping" in
-   `docs/REFERENCE.md` for when an archived buffer is old enough to actually delete.
+   to the archived file instead. On a non-zero exit, quote its stderr in the report: it
+   names each buffer it could not archive and where that window was kept.
+   If you can't resolve `<plugin-root>`, or the script isn't there (an OpenCode
+   install, whose hooks come from npm and skills from `npx skills`, or any skills-only
+   install), archive each buffer by hand with this one shell call, which never moves
+   onto an existing archive and renames the live buffer before appending, the same
+   order the script uses:
+   ```sh
+   b=DATA/buffer/session-<id>.md a=DATA/buffer/archive/session-<id>.md; mkdir -p "${a%/*}" && if [ -e "$a" ]; then mv "$b" "$a.tmp" && cat "$a.tmp" >> "$a" && rm "$a.tmp"; else mv "$b" "$a"; fi
+   ```
+   Never delete an archived buffer: it is the recovery path if a distillation later
+   turns out to have missed something. See "Housekeeping" in `docs/REFERENCE.md` for
+   when an archived buffer is old enough to actually delete.
 6. **Clear resolved breadcrumbs:** if `DATA/.capture-errors` exists and its contents
    were surfaced above (as a Phase 2 "Resolved Issues" entry or in the session log),
    clear the file now that it has been distilled - it exists to make a swallowed

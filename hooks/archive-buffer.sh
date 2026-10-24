@@ -10,13 +10,16 @@
 # in order.
 #
 # Usage: sh hooks/archive-buffer.sh DIR/session-<id>.md [...]
-# Exit 0 when every buffer was archived; non-zero if any was not (that buffer
-# is left in place, so nothing is lost and the next handoff retries it).
+# Exit 0 when every buffer was archived; non-zero if any was not. Each failure
+# is reported on stderr, and a window that could not be archived is always left
+# where the next handoff reads buffers (DIR/session-*.md): back at its own name,
+# or beside a newer live buffer as DIR/session-<id>.unmerged-<stamp>.md.
 #
-# The live buffer is renamed into archive/ first and only then appended: a
-# rename is atomic, and capture opens the buffer per event with `>>`, so a
-# record written mid-archive lands in a fresh live buffer instead of being
-# dropped between a copy and a delete.
+# The live buffer is renamed into archive/ first and only then appended. A
+# rename is atomic and capture opens the buffer per event with `>>`, so a record
+# captured after the rename lands in a fresh live buffer. That narrows the loss
+# window to a single write already in flight at the rename, rather than every
+# record captured between a copy and a delete.
 
 DIR=$(unset CDPATH; cd -- "$(dirname -- "$0")" && pwd)
 . "${CLAUDE_PLUGIN_ROOT:-$DIR/..}/hooks/_lib.sh" 2>/dev/null || . "$DIR/_lib.sh"
@@ -31,37 +34,43 @@ for buf in "$@"; do
     continue
   fi
   name=$(basename -- "$buf")
-  arch="$(dirname -- "$buf")/archive"
+  bufdir=$(dirname -- "$buf")
+  arch="$bufdir/archive"
   dest="$arch/$name"
   if ! mkdir -p "$arch" 2>/dev/null; then
-    echo "archive-buffer: cannot create $arch" >&2
+    echo "archive-buffer: cannot create $arch; $buf left in place" >&2
     rc=1
     continue
   fi
   if [ ! -e "$dest" ]; then
     # Plain move only when nothing is there. POSIX mv has no portable
-    # no-clobber flag, so the check and the move are two steps; only a
-    # handoff archives buffers, so nothing else races to create $dest.
-    mv -- "$buf" "$dest" 2>/dev/null || { echo "archive-buffer: move failed: $buf" >&2; rc=1; }
+    # no-clobber flag, so the check and the move are two steps; two handoffs
+    # archiving the same buffer at the same instant could still race here.
+    mv -- "$buf" "$dest" 2>/dev/null || { echo "archive-buffer: move failed; $buf left in place" >&2; rc=1; }
     continue
   fi
-  tmp="$arch/.$name.$$"
-  if ! mv -- "$buf" "$tmp" 2>/dev/null; then
-    echo "archive-buffer: move failed: $buf" >&2
+  # A fresh name per run: a fixed name (say, one keyed on $$) could be reused
+  # by a later run and overwrite a window kept from an earlier failure.
+  tmp=$(mktemp "$arch/.archiving.XXXXXX" 2>/dev/null) || tmp="$arch/.archiving.$$.$(date +%s)"
+  if ! mv -f -- "$buf" "$tmp" 2>/dev/null; then
+    rm -f -- "$tmp"
+    echo "archive-buffer: move failed; $buf left in place" >&2
     rc=1
     continue
   fi
   if { printf -- '\n<!-- archive-append %s - a later handoff in the same session appended the window below -->\n' "$(tl_now)"; cat -- "$tmp"; } >> "$dest" 2>/dev/null; then
     rm -f -- "$tmp"
-  else
-    # Put the window back where the next handoff will find it. If a new live
-    # buffer appeared meanwhile, keep the window beside it instead of on top.
-    if [ -e "$buf" ]; then
-      echo "archive-buffer: append failed; window kept at $tmp" >&2
-    else
-      mv -- "$tmp" "$buf" 2>/dev/null || echo "archive-buffer: append failed; window kept at $tmp" >&2
-    fi
-    rc=1
+    continue
   fi
+  # Append failed: put the window back where the next handoff reads buffers.
+  # If capture already started a new live buffer, keep the window beside it.
+  back=$buf
+  [ -e "$back" ] && back="$bufdir/${name%.md}.unmerged-$(date +%Y%m%d%H%M%S)-$$.md"
+  if mv -- "$tmp" "$back" 2>/dev/null; then
+    echo "archive-buffer: append to $dest failed; window kept at $back" >&2
+  else
+    echo "archive-buffer: append to $dest failed; window kept at $tmp" >&2
+  fi
+  rc=1
 done
 exit "$rc"
