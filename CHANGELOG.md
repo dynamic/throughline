@@ -5,6 +5,9 @@ All notable changes to throughline are documented here. Format loosely follows
 
 ## [Unreleased]
 
+### Added
+- `docs/ROADMAP.md` (epics #166-#172) and `docs/AUDIT-v0.17.0.md`, the audit behind it.
+
 ## [0.17.0] - 2026-10-23
 
 ### Added
