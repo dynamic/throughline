@@ -41,6 +41,11 @@ All notable changes to throughline are documented here. Format loosely follows
   consolidate as on demand or when HANDOFF.md is bloated, matching the skill. #208.
 
 ### Fixed
+- `consolidate` and `consolidate-memory` no longer share a pass record. `consolidate-memory`
+  writes "Memory hygiene passes"; `consolidate` tags its "Consolidation passes" entries
+  `(session logs)` and reads only tagged entries as its last-pass marker, so a memory sweep
+  can no longer move that marker forward and hide unread logs. A legacy section with no
+  tagged entry is not read as a marker: every log is in scope. #136.
 - The handoff skill checks that the project root is a git work tree before its commit/push
   offer and skips the offer silently when it is not, instead of running git commands that
   fail with `fatal: not a git repository`. #193.

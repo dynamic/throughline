@@ -60,8 +60,7 @@ half may be dropped silently.
 Every request that is not redirected reaches Phase 1, but announce first unless the
 request names a log outright. "consolidate handoffs" and "mine the handoff logs" name
 the store, so they need no announcement. "consolidation pass" and "promote lessons" do not -
-`consolidate-memory` calls its own run a pass too, and records it under the same
-"Consolidation passes" heading - and neither does a bare "consolidate". For any of
+`consolidate-memory` calls its own run a pass too - and neither does a bare "consolidate". For any of
 those, whatever it came from, a handoff briefing or the user, state in your first
 line that you are reading the session logs, then continue. That announcement is
 unconditional on every store-less request: it is what makes a wrong briefing surface
@@ -71,9 +70,13 @@ before work is spent, so it must not hinge on the request looking handoff-shaped
 
 ## Phase 1: Determine scope
 
-1. Find the last consolidation pass: `DATA/HANDOFF.md` records each pass under a
-   **"Consolidation passes"** section (date + what was promoted). If the section is
-   absent, this is the first pass - everything is in scope.
+1. Find the last consolidation pass: the newest entry tagged `(session logs)` under
+   the **"Consolidation passes"** section of `DATA/HANDOFF.md` (Phase 4 writes that
+   tag; `consolidate-memory` records its own sweeps under "Memory hygiene passes").
+   If the section is absent, this is the first pass - everything is in scope. If it
+   has entries but none tagged (a section written before the tag existed, which may
+   hold memory sweeps too), do not read a date from it: treat every log as in scope
+   and say so when confirming scope below.
 2. Collect the logs to mine: every `DATA/logs/handoff-*.md` dated after the last
    pass, plus `.agent/handoff/logs/*.md` and `.agent/handoffs/*.md` when those
    directories exist and aren't already `DATA/logs/`. The filenames carry the
@@ -165,7 +168,9 @@ always-loaded files, where one wrong line costs every future session.
    Reminders); a candidate with nothing durable to point to never reaches this
    step (gated in Phase 1.4).
 2. Record the pass in `DATA/HANDOFF.md` under "Consolidation passes" (create the
-   section if absent): date + what was promoted and where, one line per promotion.
+   section if absent): date as `YYYY-MM-DD`, the tag `(session logs)`, and what was
+   promoted and where, one line per promotion. The tag is what Phase 1 and the
+   SessionStart hook read as this skill's marker, so it is required on every line.
    Update the **Last Updated** date.
 3. **Leave the session logs untouched** - they are historical records, and they are
    the evidence trail for every promotion just made. The point of promotion is
