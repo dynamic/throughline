@@ -88,7 +88,9 @@ export const ThroughlinePlugin: Plugin = async ({ directory, worktree }) => {
       switch (event.type) {
         case "session.created": {
           const sessionID = event.properties.info.id;
-          const block = await sessionCreated(tlCtx, { sessionID });
+          // A task-tool subagent's session has a parentID: give it the block, but
+          // read-only, so it does not use up the main session's warning (issue #191).
+          const block = await sessionCreated(tlCtx, { sessionID, readonly: Boolean(event.properties.info.parentID) });
           pendingContext.set(sessionID, block);
           break;
         }

@@ -108,7 +108,7 @@ cap()    { printf '%s' "$1" | sh "$H/session-capture.sh"; }
 cap_line() { grep -F "**bash** $1 - " "$BUF/session-T.md" 2>/dev/null; }
 prompt() { printf '%s' "$1" | sh "$H/session-prompt.sh"; }
 precompact() { printf '%s' "$1" | sh "$H/session-precompact.sh"; }
-reset_buf() { rm -f "$BUF"/session-*.md "$DATA"/.capture-errors; mkdir -p "$BUF"; chmod 755 "$BUF" 2>/dev/null; }
+reset_buf() { rm -f "$BUF"/session-*.md "$BUF"/.unconsumed-reported "$DATA"/.capture-errors; mkdir -p "$BUF"; chmod 755 "$BUF" 2>/dev/null; }
 # fixture_repo <dir> - git init + initial commit in <dir> (self-contained per
 # the GIT_AUTHOR_* exports above). On failure, reports via bad() naming the
 # dir instead of leaving the caller silently skipped - the same debugging
@@ -1140,7 +1140,7 @@ hasnt "current session not flagged as unconsumed" "$O2" 'unconsumed session buff
 # 10. onboard surfaces a prior session that ENDED (has the end-stamp) as
 #     "unconsumed" — wording asserts a fact it can actually verify.
 printf -- '- `t` **bash** old - `x`\n<!-- session-ended 2024-01-01 00:00:00 (end) -->\n' > "$BUF/session-OLD.md"
-O3=$(printf '%s' '{"source":"startup","session_id":"T"}' | sh "$H/session-onboard.sh")
+O3=$(printf '%s' '{"source":"startup","session_id":"T"}' | THROUGHLINE_UNCONSUMED_MIN=1 sh "$H/session-onboard.sh")
 has "ended prior session flagged as unconsumed" "$O3" 'unconsumed session buffer'
 
 # 10a. a prompt-only buffer (intent captured, but no action — a Q&A or
@@ -1149,11 +1149,11 @@ has "ended prior session flagged as unconsumed" "$O3" 'unconsumed session buffer
 reset_buf
 printf -- '- x\n' > "$BUF/session-T.md"
 printf -- '- `t` **prompt** just a question answered from context\n<!-- session-ended 2024-01-01 00:00:00 (end) -->\n' > "$BUF/session-PONLY.md"
-O3a=$(printf '%s' '{"source":"startup","session_id":"T"}' | sh "$H/session-onboard.sh")
+O3a=$(printf '%s' '{"source":"startup","session_id":"T"}' | THROUGHLINE_UNCONSUMED_MIN=1 sh "$H/session-onboard.sh")
 hasnt "prompt-only ended buffer NOT flagged as unconsumed" "$O3a" 'unconsumed session buffer'
 # but the same buffer WITH a real action line IS surfaced.
 printf -- '- `t` **prompt** do the thing\n- `t` **bash** did it - `x`\n<!-- session-ended 2024-01-01 00:00:00 (end) -->\n' > "$BUF/session-PACT.md"
-O3a2=$(printf '%s' '{"source":"startup","session_id":"T"}' | sh "$H/session-onboard.sh")
+O3a2=$(printf '%s' '{"source":"startup","session_id":"T"}' | THROUGHLINE_UNCONSUMED_MIN=1 sh "$H/session-onboard.sh")
 has "prompt+action ended buffer IS flagged as unconsumed" "$O3a2" 'unconsumed session buffer'
 
 # 10a2. regression: the prompt-only filter is ANCHORED to the type-marker
@@ -1164,7 +1164,7 @@ has "prompt+action ended buffer IS flagged as unconsumed" "$O3a2" 'unconsumed se
 reset_buf
 printf -- '- x\n' > "$BUF/session-T.md"
 printf -- '- `t` **prompt** find where **prompt** lines are filtered\n- `t` **grep** `**prompt**`\n<!-- session-ended 2024-01-01 00:00:00 (end) -->\n' > "$BUF/session-SUBSTR.md"
-O3a3=$(printf '%s' '{"source":"startup","session_id":"T"}' | sh "$H/session-onboard.sh")
+O3a3=$(printf '%s' '{"source":"startup","session_id":"T"}' | THROUGHLINE_UNCONSUMED_MIN=1 sh "$H/session-onboard.sh")
 has "action line mentioning the literal **prompt** string is still counted" "$O3a3" 'unconsumed session buffer'
 
 # 10a3. regression: a buffer with ZERO conforming record lines (truncated,
@@ -1176,7 +1176,7 @@ has "action line mentioning the literal **prompt** string is still counted" "$O3
 reset_buf
 printf -- '- x\n' > "$BUF/session-T.md"
 printf -- '<!-- session-ended 2024-01-01 00:00:00 (end) -->\n' > "$BUF/session-EMPTY.md"
-O3a4=$(printf '%s' '{"source":"startup","session_id":"T"}' | sh "$H/session-onboard.sh")
+O3a4=$(printf '%s' '{"source":"startup","session_id":"T"}' | THROUGHLINE_UNCONSUMED_MIN=1 sh "$H/session-onboard.sh")
 has "a buffer with zero conforming lines is still counted, not dropped" "$O3a4" 'unconsumed session buffer'
 
 # 10a5. regression: an UNREADABLE buffer file makes grep -c print an empty
@@ -1210,7 +1210,7 @@ reset_buf
 printf -- '- x\n' > "$BUF/session-T.md"
 cap '{"session_id":"MCPSTAR","tool_name":"mcp__weird*tool","tool_input":{"title":"x"}}'
 printf -- '<!-- session-ended 2024-01-01 00:00:00 (end) -->\n' >> "$BUF/session-MCPSTAR.md"
-O3a6=$(printf '%s' '{"source":"startup","session_id":"T"}' | sh "$H/session-onboard.sh")
+O3a6=$(printf '%s' '{"source":"startup","session_id":"T"}' | THROUGHLINE_UNCONSUMED_MIN=1 sh "$H/session-onboard.sh")
 has "an mcp tool_name with an asterisk is still counted as a real action" "$O3a6" 'unconsumed session buffer'
 
 # 10b. a prior session buffer with NO end-stamp gets hedged wording, not
@@ -1218,9 +1218,75 @@ has "an mcp tool_name with an asterisk is still counted as a real action" "$O3a6
 reset_buf
 printf -- '- x\n' > "$BUF/session-T.md"
 printf -- '- `t` **bash** new - `x`\n' > "$BUF/session-LIVE.md"
-O3b=$(printf '%s' '{"source":"startup","session_id":"T"}' | sh "$H/session-onboard.sh")
+O3b=$(printf '%s' '{"source":"startup","session_id":"T"}' | THROUGHLINE_UNCONSUMED_MIN=1 sh "$H/session-onboard.sh")
 has   "no-end-stamp buffer surfaced with hedged wording" "$O3b" 'no end-stamp'
 hasnt "no-end-stamp buffer NOT mislabeled as ended" "$O3b" 'ended without'
+
+# 10c. issue #191: the warning is reported once per buffer, and only for buffers
+#      with at least THROUGHLINE_UNCONSUMED_MIN (default 3) action records. The
+#      rows above pin the classification with the threshold at 1.
+reset_buf
+printf -- '- x\n' > "$BUF/session-T.md"
+printf -- '- `t` **bash** a - `x`\n- `t` **bash** b - `x`\n<!-- session-ended 2024-01-01 00:00:00 (end) -->\n' > "$BUF/session-TWO.md"
+O3c=$(printf '%s' '{"source":"startup","session_id":"T"}' | sh "$H/session-onboard.sh")
+hasnt "a 2-action ended buffer is below the default threshold (issue #191)" "$O3c" 'unconsumed session buffer'
+printf -- '- `t` **bash** a - `x`\n- `t` **edit** b\n- `t` **bash** c - `x`\n<!-- session-ended 2024-01-01 00:00:00 (end) -->\n' > "$BUF/session-THREE.md"
+O3d=$(printf '%s' '{"source":"startup","session_id":"T"}' | sh "$H/session-onboard.sh")
+has   "a 3-action ended buffer is reported (issue #191)" "$O3d" '1 unconsumed session buffer(s)'
+has   "the warning says how many are new and how large the largest is (issue #191)" "$O3d" '1 new since last reported; largest 3 actions'
+O3e=$(printf '%s' '{"source":"startup","session_id":"T"}' | sh "$H/session-onboard.sh")
+hasnt "the same buffer is not reported again (issue #191)" "$O3e" 'unconsumed session buffer'
+printf -- '- `t` **bash** a - `x`\n- `t` **bash** b - `x`\n- `t` **bash** c - `x`\n- `t` **bash** d - `x`\n<!-- session-ended 2024-01-01 00:00:00 (end) -->\n' > "$BUF/session-FOUR.md"
+O3f=$(printf '%s' '{"source":"startup","session_id":"T"}' | sh "$H/session-onboard.sh")
+has   "a new buffer brings the warning back, counting the whole pile (issue #191)" "$O3f" '2 unconsumed session buffer(s)'
+has   "and names one new buffer (issue #191)" "$O3f" '1 new since last reported; largest 4 actions'
+printf -- '- `t` **bash** a - `x`\n- `t` **bash** b - `x`\n- `t` **bash** c - `x`\n' > "$BUF/session-OPEN.md"
+O3g=$(printf '%s' '{"source":"startup","session_id":"T"}' | sh "$H/session-onboard.sh")
+has   "a new no-end-stamp buffer is reported once (issue #191)" "$O3g" 'no end-stamp'
+hasnt "the already-reported ended buffers stay quiet (issue #191)" "$O3g" 'unconsumed session buffer'
+O3h=$(printf '%s' '{"source":"startup","session_id":"T"}' | sh "$H/session-onboard.sh")
+hasnt "the no-end-stamp buffer is not reported again (issue #191)" "$O3h" 'no end-stamp'
+# A buffer first reported as possibly live is reported again once it has ended.
+printf -- '<!-- session-ended 2024-01-01 00:00:00 (end) -->\n' >> "$BUF/session-OPEN.md"
+O3j=$(printf '%s' '{"source":"startup","session_id":"T"}' | sh "$H/session-onboard.sh")
+has   "a reported no-end-stamp buffer is reported again once it has ended (issue #191)" "$O3j" '1 new since last reported'
+# A bridge that may discard the block (THROUGHLINE_ONBOARD_READONLY=1) records nothing.
+printf -- '- `t` **bash** a - `x`\n- `t` **bash** b - `x`\n- `t` **bash** c - `x`\n<!-- session-ended 2024-01-01 00:00:00 (end) -->\n' > "$BUF/session-FIVE.md"
+O3k=$(printf '%s' '{"source":"startup","session_id":"T"}' | THROUGHLINE_ONBOARD_READONLY=1 sh "$H/session-onboard.sh")
+has   "read-only mode still prints the warning (issue #191)" "$O3k" '1 new since last reported'
+O3l=$(printf '%s' '{"source":"startup","session_id":"T"}' | sh "$H/session-onboard.sh")
+has   "read-only mode did not mark the buffer as reported (issue #191)" "$O3l" '1 new since last reported'
+# A malformed or oversized threshold falls back to 3, silently.
+reset_buf
+printf -- '- x\n' > "$BUF/session-T.md"
+printf -- '- `t` **bash** a - `x`\n- `t` **bash** b - `x`\n<!-- session-ended 2024-01-01 00:00:00 (end) -->\n' > "$BUF/session-TWO.md"
+for tl_min in nonsense 99999999999999999999; do
+  O3i_err=$(printf '%s' '{"source":"startup","session_id":"T"}' | THROUGHLINE_UNCONSUMED_MIN=$tl_min sh "$H/session-onboard.sh" 2>&1 >/dev/null)
+  eq "threshold '$tl_min' prints no diagnostic (issue #191)" "$O3i_err" ""
+  O3i=$(printf '%s' '{"source":"startup","session_id":"T"}' | THROUGHLINE_UNCONSUMED_MIN=$tl_min sh "$H/session-onboard.sh" 2>/dev/null)
+  hasnt "threshold '$tl_min' falls back to 3: a 2-action buffer is not reported (issue #191)" "$O3i" 'unconsumed session buffer'
+done
+# An opted-out project (.throughlineignore) still gets the warning but no seen file.
+reset_buf
+printf -- '- x\n' > "$BUF/session-T.md"
+printf -- '- `t` **bash** a - `x`\n- `t` **bash** b - `x`\n- `t` **bash** c - `x`\n<!-- session-ended 2024-01-01 00:00:00 (end) -->\n' > "$BUF/session-IGN.md"
+: > "$WORK/proj/.throughlineignore"
+O3n=$(printf '%s' '{"source":"startup","session_id":"T"}' | sh "$H/session-onboard.sh")
+rm -f "$WORK/proj/.throughlineignore"
+has   "an opted-out project still gets the warning (issue #191)" "$O3n" 'unconsumed session buffer'
+if [ -f "$BUF/.unconsumed-reported" ]; then bad "an opted-out project got a seen file written (issue #191)"; else ok "an opted-out project gets no seen file (issue #191)"; fi
+# An unwritable seen file only means the warning repeats; nothing reaches stderr.
+if is_windows; then
+  skip_win "unwritable seen-file stderr test"
+elif [ "$(id -u)" != "0" ]; then
+  printf -- '- `t` **bash** a - `x`\n- `t` **bash** b - `x`\n- `t` **bash** c - `x`\n<!-- session-ended 2024-01-01 00:00:00 (end) -->\n' > "$BUF/session-SIX.md"
+  : > "$BUF/.unconsumed-reported"; chmod 000 "$BUF/.unconsumed-reported"
+  O3m_err=$(printf '%s' '{"source":"startup","session_id":"T"}' | sh "$H/session-onboard.sh" 2>&1 >/dev/null)
+  eq "an unwritable seen file prints no diagnostic (issue #191)" "$O3m_err" ""
+  chmod 644 "$BUF/.unconsumed-reported" 2>/dev/null
+else
+  ok "unwritable seen-file test skipped (running as root)"
+fi
 
 # 11. missing jq surfaces a visible warning in onboard (curated PATH without jq)
 # A tiny exec wrapper script per tool, not `ln -sf` or `cp`: a symlink needs

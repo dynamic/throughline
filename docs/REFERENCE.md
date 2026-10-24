@@ -104,6 +104,19 @@ gates every throughline hook for that session: a skipped surface gets no capture
 orientation block and no end-stamp, though the skills stay available. A Hermes build
 without `ctx.session_surface` captures every surface. Other harnesses ignore it.
 
+### Unconsumed-buffer warning
+
+At session start, throughline points out buffers from other sessions that were never
+distilled into a handoff. A buffer counts only when it holds at least 3 action records,
+and each buffer is reported once: the names already reported are kept in
+`buffer/.unconsumed-reported`, and the warning stays quiet until a buffer not on that
+list appears. The warning then gives the whole count, how many are new, and the size of
+the largest. To change the size threshold:
+
+```sh
+export THROUGHLINE_UNCONSUMED_MIN=3   # the default; 1 reports any buffer with an action
+```
+
 ### Local by default
 
 throughline's data - `HANDOFF.md`, `logs/`, `buffer/`, everything under the data

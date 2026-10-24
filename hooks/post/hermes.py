@@ -125,11 +125,12 @@ def _project(ctx):
         return None
 
 
-def _run(script, payload, root):
+def _run(script, payload, root, extra_env=None):
     try:
         env = dict(os.environ)
         env["CLAUDE_PLUGIN_ROOT"] = str(PLUGIN_ROOT)
         env["CLAUDE_PROJECT_DIR"] = root
+        env.update(extra_env or {})
         done = subprocess.run(
             ["sh", str(HOOKS_DIR / script)],
             input=json.dumps(payload), cwd=root, env=env,
@@ -230,7 +231,10 @@ def register(ctx):
         root = _project(ctx)
         if not root or not session_id:
             return None
-        text = _run("session-onboard.sh", {"session_id": session_id, "source": "startup"}, root).strip()
+        # Precomputed, and thrown away on a prompt rebuild or a delegate child, so it must
+        # not record the unconsumed-buffer warning as reported (issue #191).
+        text = _run("session-onboard.sh", {"session_id": session_id, "source": "startup"}, root,
+                    {"THROUGHLINE_ONBOARD_READONLY": "1"}).strip()
         remember(session_id, root, {"text": text, "source": "startup"} if text else None)
         return None
 

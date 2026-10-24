@@ -11,7 +11,7 @@
  * dir exists and log a message.
  */
 
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join, relative, dirname, sep } from "node:path";
 import { execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -33,6 +33,12 @@ import {
 
 interface SessionCreatedInput {
   sessionID: string;
+  /**
+   * True for a child session (a task-tool subagent, `info.parentID` set): compute the
+   * block but do not record the unconsumed-buffer warning as reported (issue #191), so
+   * a subagent cannot use up a report the main session needs.
+   */
+  readonly?: boolean;
 }
 
 // Mirrors session-onboard.sh's `git status -s | head -20` — bounded so a
@@ -122,7 +128,7 @@ const ENDED_MARKER = /^<!-- session-ended /;
  * of session-onboard.sh's awk pass). Returns the warning lines to append, or
  * an empty array when there is nothing to report.
  */
-function sweepUnconsumedBuffers(bufDir: string, dataRoot: string, dataDir: string, currentSid: string): string[] {
+function sweepUnconsumedBuffers(bufDir: string, dataRoot: string, dataDir: string, currentSid: string, readonly = false): string[] {
   let files: string[];
   try {
     files = readdirSync(bufDir).filter((f) => f.startsWith("session-") && f.endsWith(".md"));
@@ -130,8 +136,26 @@ function sweepUnconsumedBuffers(bufDir: string, dataRoot: string, dataDir: strin
     return [];
   }
 
+  // Issue #191, mirroring session-onboard.sh: count a buffer only with at least
+  // THROUGHLINE_UNCONSUMED_MIN (default 3) action records, and report each buffer once
+  // (names kept in buffer/.unconsumed-reported); a class stays quiet until a buffer not
+  // on that list appears.
+  const minRaw = process.env.THROUGHLINE_UNCONSUMED_MIN ?? "";
+  const min = /^[0-9]{1,9}$/.test(minRaw) ? Number(minRaw) : 3; // same 9-digit cap as the shell
+  const seenPath = join(bufDir, ".unconsumed-reported");
+  let seen = new Set<string>();
+  try {
+    seen = new Set(readFileSync(seenPath, "utf-8").split("\n").filter(Boolean));
+  } catch {
+    // No list yet: everything counted is new.
+  }
+  const nowSeen: string[] = [];
+
   let ended = 0;
   let unsure = 0;
+  let newEnded = 0;
+  let newUnsure = 0;
+  let largest = 0;
 
   for (const f of files) {
     if (currentSid && f === `session-${currentSid}.md`) continue;
@@ -147,6 +171,8 @@ function sweepUnconsumedBuffers(bufDir: string, dataRoot: string, dataDir: strin
       // must not silently vanish from the count the way "prompt-only" does.
       tlErr(dataDir, `sweepUnconsumedBuffers: read failed for buffer/${f}: ${err}`);
       unsure++;
+      nowSeen.push(`unsure:${f}`);
+      if (!seen.has(`unsure:${f}`)) newUnsure++;
       continue;
     }
 
@@ -164,19 +190,40 @@ function sweepUnconsumedBuffers(bufDir: string, dataRoot: string, dataDir: strin
     }
 
     if (total > 0 && total === promptOnly) continue; // nothing to distill
+    const actions = total - promptOnly;
+    if (total > 0 && actions < min) continue; // too little to distill
 
-    if (isEnded) ended++;
-    else unsure++;
+    // Keyed by class, as in the shell: a buffer first reported as possibly live must be
+    // reported again once it has ended.
+    const key = `${isEnded ? "ended" : "unsure"}:${f}`;
+    nowSeen.push(key);
+    const isNew = !seen.has(key);
+    if (isEnded) {
+      ended++;
+      if (isNew) newEnded++;
+      if (actions > largest) largest = actions;
+    } else {
+      unsure++;
+      if (isNew) newUnsure++;
+    }
+  }
+
+  if (!readonly) {
+    try {
+      writeFileSync(seenPath, nowSeen.map((n) => n + "\n").join(""));
+    } catch {
+      // Best-effort: an unwritable buffer dir only means the warning repeats.
+    }
   }
 
   const lines: string[] = [];
-  if (ended !== 0) {
+  if (newEnded !== 0) {
     lines.push("");
     lines.push(
-      `⚠️ ${ended} unconsumed session buffer(s) in \`${relative(dataRoot, bufDir)}/\` from sessions that ended without being distilled into a handoff. Consider running the handoff to fold them in.`,
+      `⚠️ ${ended} unconsumed session buffer(s) in \`${relative(dataRoot, bufDir)}/\` (${newEnded} new since last reported; largest ${largest} actions) from sessions that ended without being distilled into a handoff. Consider running the handoff to fold them in.`,
     );
   }
-  if (unsure !== 0) {
+  if (newUnsure !== 0) {
     lines.push("");
     lines.push(
       `ℹ️ ${unsure} other session buffer(s) in \`${relative(dataRoot, bufDir)}/\` with no end-stamp - could be live in another terminal, or could have exited without a clean shutdown. If none are still running, consider running the handoff.`,
@@ -309,7 +356,10 @@ export async function sessionCreated(
 
   // Unconsumed-buffer sweep (issue #56, P2)
   if (existsSync(bufDir)) {
-    lines.push(...sweepUnconsumedBuffers(bufDir, dataRoot, dataDir, tlSafeSid(input.sessionID)));
+    // An opted-out project (.throughlineignore) still gets the warning, but nothing new is
+    // written into its data dir - same as the shell.
+    const optedOut = state.activeReason === "ignored";
+    lines.push(...sweepUnconsumedBuffers(bufDir, dataRoot, dataDir, tlSafeSid(input.sessionID), input.readonly === true || optedOut));
   }
 
   // Git state (if in worktree)
