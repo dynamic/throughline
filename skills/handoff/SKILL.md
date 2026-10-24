@@ -79,8 +79,9 @@ by **durability**, using the test *"would this still be true in three months?"*
   - **Resolved issues** — recently closed, not yet promoted to memory (see Phase 4 cap)
   - **Pending items** — open problems, next steps surfaced this session
   - **Current state** — what's mid-flight: uncommitted work, open PRs/branches, blockers
-  - **Consolidation passes** — not durable-vs-in-flight at all, it's the `consolidate`
-    skill's own scope-tracking record. Never touch it here; leave it exactly as found.
+  - **Consolidation passes** and **Memory hygiene passes** — not durable-vs-in-flight at all,
+    they are the `consolidate` / `consolidate-memory` skills' own scope-tracking records.
+    Never touch them here; leave them exactly as found.
 
 If you're unsure which bucket something falls in, prefer memory — `HANDOFF.md` is read
 in full every session (see Phase 4's size discipline); memory topic files are read on
@@ -141,8 +142,8 @@ having to carry it. Omit the line entirely for a session that starts something n
 1. Apply the Phase 2 updates to `DATA/HANDOFF.md`: durable facts go to memory (step 4
    below), only in-flight state stays here. Keep each entry to 1–2 lines — it's a
    reference doc, not a journal. Update its **Last Updated** date. Keep the
-   **"Consolidation passes"** section untouched if present (owned by `consolidate`,
-   not a candidate for this trim).
+   **"Consolidation passes"** and **"Memory hygiene passes"** sections untouched if
+   present (owned by `consolidate` / `consolidate-memory`, not candidates for this trim).
    - **Match length to substance.** Cover the actual in-flight state; do not pad with
      filler sections, redundant summaries, or boilerplate. An empty section (nothing
      durable was moved out, nothing in-flight exists) should not appear at all.
@@ -247,13 +248,11 @@ having to carry it. Omit the line entirely for a session that starts something n
    correctly find nothing to stage and skip silently. Do not treat "nothing
    offered" as a bug; it's the expected outcome unless the project opted in.
    - **Check for a repo first.** Run `git -C <project root> rev-parse
-     --is-inside-work-tree` before any other git command in this step (the
-     project root, not DATA: in a linked worktree that is the main working tree,
-     and an absolute `THROUGHLINE_DATA_DIR` is handled by the next bullet). Unless
-     it prints `true`, the project is not a git work tree (throughline also
-     captures in plain directories): skip the offer silently, like the other
-     nothing-to-commit cases below, and run no `git check-ignore`, `git add` or
-     `git status` there - each fails with `fatal: not a git repository`.
+     --is-inside-work-tree` before any other git command here (the project root,
+     not DATA; in a linked worktree, the main working tree). Unless it prints
+     `true`, skip the offer silently and run no other git command - throughline
+     also captures in plain directories, where those commands fail with `fatal:
+     not a git repository`.
    - If `DATA` lives outside the current project's git tree (an absolute
      `THROUGHLINE_DATA_DIR` pointed at a shared, cross-harness location - a
      documented, supported config), skip the offer entirely: those files aren't
@@ -312,10 +311,9 @@ Those are durable facts; they go to native memory (Phase 4 step 4), not here:
 1. [Title](logs/handoff-YYYY-MM-DD-HHMM.md) — YYYY-MM-DD
 ```
 
-Do not pre-seed a **"Consolidation passes"** section (note the exact casing — matches
-Phase 2 and `consolidate`'s own lookup, which is case-sensitive). Leave it absent until
-`consolidate`'s own Phase 4 creates it on its first pass; adding an empty one here just
-gives `consolidate` a stray, differently-worded header to reconcile against.
+Do not pre-seed a **"Consolidation passes"** or **"Memory hygiene passes"** section: each
+is created by its own skill (`consolidate`, `consolidate-memory`) on its first run, and an
+empty one here only gives that skill a stray header to reconcile against.
 
 A project migrating from the old template: at the next handoff, sort its existing
 Architecture/Environment/Tools/Auth/Key-Files content into memory topic files (Phase 4
