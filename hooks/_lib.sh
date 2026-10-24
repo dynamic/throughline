@@ -530,11 +530,13 @@ tl_jq_redact_defs() {
   # `MSG.errorMessageTemplate.userNotFoundError` from reading as a key.
   # GitLab (issue #175): every prefix in GitLab's own table at
   # https://docs.gitlab.com/security/tokens/ ("Token prefixes"), one rule so the
-  # set cannot drift prefix by prefix. `glrtr` is listed before `glrt` so the
-  # alternation never stops short of it. The optional dot segments are a
+  # set cannot drift prefix by prefix. The optional dot segments are a
   # routable token's `.<version>.<length+crc32>` tail (GitLab's routable tokens
   # design: <prefix><base64-payload>.<version>.<base64-length><crc32>); a dot
   # must be followed by a token character, so a sentence-ending period stays.
+  # The tail is deliberately looser than the spec's `.<2>.<9>` base36 shape, so
+  # it also takes whatever dotted text is glued to a token (`<token>.json`, a
+  # hostname): over-masking, and only right after a 20+ character body.
   # Known over-match, same as the glpat- rule always had: a prefix followed by a
   # hyphenated phrase of 20+ word characters (a kebab-case page name that starts
   # with `glrt-`, say) is masked. Requiring a digit or capital in the body would avoid that, at the
