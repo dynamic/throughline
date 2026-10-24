@@ -378,6 +378,23 @@ describe('Throughline Plugin Integration Tests', () => {
       assert.ok(!result!.includes('ended without'), `expected no ended wording, got: ${result}`);
     });
 
+    it('suggests consolidate once enough session logs follow its last pass (issue #192)', async () => {
+      const dataDir = tlDataDir(ctx);
+      mkdirSync(join(dataDir, 'logs'), { recursive: true });
+      for (const d of ['01', '02', '03', '04', '05', '06', '07', '08']) {
+        writeFileSync(join(dataDir, 'logs', `handoff-2026-01-${d}-1200.md`), '');
+      }
+      writeFileSync(join(dataDir, 'HANDOFF.md'), '# p\n');
+      const none = await sessionCreated(ctx, { sessionID: 'test-session-consolidate' });
+      assert.ok(none!.includes('8 session logs and no recorded consolidate pass'), `got: ${none}`);
+      writeFileSync(
+        join(dataDir, 'HANDOFF.md'),
+        '# p\n\n## Consolidation passes\n| 2026-01-05 (session logs) through handoff-2026-01-05-1200.md | nothing promoted |\n',
+      );
+      const below = await sessionCreated(ctx, { sessionID: 'test-session-consolidate' });
+      assert.ok(!below!.includes('consolidate pass'), `expected no nudge below the threshold, got: ${below}`);
+    });
+
     it('warns about unconsumed session buffers from OTHER sessions, excluding a prompt-only buffer (issue #56, P2)', async () => {
       const dataDir = tlDataDir(ctx);
       const bufDir = join(dataDir, 'buffer');

@@ -76,8 +76,9 @@ same logic against OpenCode's own API.
 </details>
 
 And over months, the same lesson can appear in session log after session log without
-ever graduating. The `consolidate` skill is the pass you run on demand, or when
-HANDOFF.md has grown bloated, that mines the handoff logs for lessons recurring 2+ times and proposes
+ever graduating. The `consolidate` skill is the pass you run on demand, when
+HANDOFF.md has grown bloated, or when session start reports enough logs since its last
+pass, that mines the handoff logs for lessons recurring 2+ times and proposes
 promoting each one - to a global CLAUDE.md rule, an issue on the owning skill's
 source repo, a durable project section, or native memory - with every promotion
 gated on explicit per-item approval. Session logs stay untouched as historical

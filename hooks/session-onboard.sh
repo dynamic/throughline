@@ -492,6 +492,36 @@ if [ "$in_worktree" = "1" ]; then
   echo '```'
 fi
 
+# Consolidate trigger (issue #192). The consolidate skill only ran when asked, and in
+# practice never did. Count the session logs written since its last pass - its
+# marker is the greatest `through handoff-....md` on a `(session logs)` line under
+# HANDOFF.md's "Consolidation passes" (issue #136) - and suggest it once enough have
+# piled up. No marker means every log counts. Fresh startups only, so a resume,
+# clear or compaction does not repeat it.
+if [ "$src" = "startup" ] && [ -d "$data/logs" ]; then
+  _tl_after=${THROUGHLINE_CONSOLIDATE_AFTER:-8}
+  case "$_tl_after" in ''|*[!0-9]*|??????????*) _tl_after=8 ;; esac
+  _tl_marker=""
+  if [ -f "$hf" ]; then
+    _tl_marker=$(awk '
+      /^#+[[:space:]]*Consolidation passes/ { inside = 1; next }
+      /^#+[[:space:]]/ { inside = 0 }
+      inside && /\(session logs\)/ { print }
+    ' "$hf" 2>/dev/null | grep -o 'through handoff-[0-9-]*\.md' | sed 's/^through //' | sort | tail -n 1)
+  fi
+  _tl_unread=$(for _tl_log in "$data"/logs/handoff-*.md; do
+      [ -f "$_tl_log" ] && printf '%s\n' "${_tl_log##*/}"
+    done | awk -v m="$_tl_marker" '$0 > m { n++ } END { print n + 0 }')
+  if [ "$_tl_after" -gt 0 ] && [ "${_tl_unread:-0}" -ge "$_tl_after" ]; then
+    echo
+    if [ -n "$_tl_marker" ]; then
+      echo "💡 $_tl_unread session logs since the last consolidate pass (through \`$_tl_marker\`). Consider running the consolidate skill to promote lessons that recur across them."
+    else
+      echo "💡 $_tl_unread session logs and no recorded consolidate pass. Consider running the consolidate skill to promote lessons that recur across them."
+    fi
+  fi
+fi
+
 # Surface unconsumed buffers from OTHER sessions. Exclude the current session's
 # own live buffer so a mid-session compaction is never mislabeled as "a prior
 # session." Among the rest: a buffer whose last session-ended stamp (written by
