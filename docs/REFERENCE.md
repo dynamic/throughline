@@ -83,6 +83,22 @@ not buried under a Claude-Code-specific path - useful if other tooling also driv
 this project. Portability of the *location* is independent of whether you commit
 it - see "Local by default" below.
 
+### Hermes capture surfaces
+
+The Hermes plugin captures only interactive local sessions by default. Messaging-platform
+and cron sessions often run in shared checkouts on a gateway host, so they are skipped:
+
+```sh
+export THROUGHLINE_HERMES_SURFACES=cli,tui,desktop,acp,local   # the default
+export THROUGHLINE_HERMES_SURFACES=all                         # capture every surface
+```
+
+The value is a comma-separated list of Hermes surface names (case-insensitive), matched
+against the session's `ctx.session_surface()`. Unset or empty means the default list. It
+gates every throughline hook for that session: a skipped surface gets no capture, no
+orientation block and no end-stamp, though the skills stay available. A Hermes build
+without `ctx.session_surface` captures every surface. Other harnesses ignore it.
+
 ### Local by default
 
 throughline's data - `HANDOFF.md`, `logs/`, `buffer/`, everything under the data
