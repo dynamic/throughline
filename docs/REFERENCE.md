@@ -76,6 +76,13 @@ SessionStart block (not even about existing data), no end-stamps. This is strict
 than `.throughlineignore`, which keeps orienting toward already-existing content.
 Unset it (or set `0`) to re-enable; existing data is untouched either way.
 
+**Cross-harness handoffs.** The data dir is the one knob that makes throughline
+portable. Point it at `.agent/handoff` (or any other path) and the durable
+`HANDOFF.md` it produces lives in a harness-neutral location any agent can read,
+not buried under a Claude-Code-specific path - useful if other tooling also drives
+this project. Portability of the *location* is independent of whether you commit
+it - see "Local by default" below.
+
 ### Hermes capture surfaces
 
 The Hermes plugin captures only interactive local sessions by default. Messaging-platform
@@ -88,15 +95,9 @@ export THROUGHLINE_HERMES_SURFACES=all                         # capture every s
 
 The value is a comma-separated list of Hermes surface names (case-insensitive), matched
 against the session's `ctx.session_surface()`. Unset or empty means the default list. It
-gates the whole plugin for a session: a skipped surface gets no capture, no orientation
-block and no end-stamp. Other harnesses ignore it.
-
-**Cross-harness handoffs.** The data dir is the one knob that makes throughline
-portable. Point it at `.agent/handoff` (or any other path) and the durable
-`HANDOFF.md` it produces lives in a harness-neutral location any agent can read,
-not buried under a Claude-Code-specific path - useful if other tooling also drives
-this project. Portability of the *location* is independent of whether you commit
-it - see "Local by default" below.
+gates every throughline hook for that session: a skipped surface gets no capture, no
+orientation block and no end-stamp, though the skills stay available. A Hermes build
+without `ctx.session_surface` captures every surface. Other harnesses ignore it.
 
 ### Local by default
 
