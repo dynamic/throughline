@@ -10,6 +10,10 @@ All notable changes to throughline are documented here. Format loosely follows
 - `scripts/check-manifests.sh` (manifest validity, version agreement, CHANGELOG top heading)
   and `scripts/check-typography.sh` (outward-docs typography gate). CI and `.local-ci.json`
   both call them, and `.local-ci.json` gained CI's shellcheck step. #205, #206, #207.
+- `tests/run.sh` isolation guard: the suite runs from inside its temp root and fails
+  if a fixture-shaped buffer (or a whole new data dir) appears in this checkout's
+  real data dirs during the run. REFERENCE.md says to set `THROUGHLINE_DISABLE=1`
+  for scripted headless runs. #189.
 
 ### Changed
 - REFERENCE.md documents `THROUGHLINE_HERMES_SURFACES` in Configuration; README describes

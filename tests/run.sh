@@ -138,6 +138,50 @@ fixture_repo_gitignore() {
 
 fixture_repo "$WORK/proj"
 
+# --- isolation guard (issue #189) ----------------------------------------------
+# Every hook below must resolve its data dir under $WORK. Two layers:
+#   1. Run from inside $WORK, so a hook that falls back to `pwd` (tl_root with no
+#      CLAUDE_PROJECT_DIR) lands in the temp root, not the checkout the suite was
+#      started from. The case checks below are a tripwire for edits to the
+#      exports above, which every hook call inherits.
+#   2. Snapshot the real data dirs this checkout would use (its own, and the main
+#      checkout's when this is a linked worktree) before any hook runs, and fail
+#      at the end if something a fixture produces appeared there: a buffer named
+#      for a fixture session id, or the data dir itself created from nothing.
+#      Anything else is left alone, because other sessions on the machine share
+#      the main checkout's data dir and keep writing to it while the suite runs
+#      (their own buffers, a handoff's logs/, .capture-errors, an archive temp
+#      file). Real harness session ids are long (a UUID, OpenCode's ses_<base62>);
+#      fixture ids are short. Keep every fixture session id at 16 characters or
+#      fewer so the guard can tell them apart.
+case "$CLAUDE_PROJECT_DIR" in
+  "$WORK"/*) ;;
+  *) echo "refusing to run: CLAUDE_PROJECT_DIR ($CLAUDE_PROJECT_DIR) is outside $WORK" >&2; exit 1 ;;
+esac
+case "$THROUGHLINE_DATA_DIR" in
+  /*) echo "refusing to run: THROUGHLINE_DATA_DIR is absolute ($THROUGHLINE_DATA_DIR)" >&2; exit 1 ;;
+esac
+# iso_snapshot <dir>: sorted relative paths under <dir>, or the line ABSENT.
+iso_snapshot() {
+  if [ -d "$1" ]; then (cd "$1" && find . -print) | LC_ALL=C sort; else echo ABSENT; fi
+}
+# iso_leaks <snapshot-file> <dir>: fixture-shaped paths now under <dir> that were
+# not in the snapshot: a short-id buffer (live or archived), or `.` when the
+# whole data dir is new.
+iso_leaks() {
+  iso_snapshot "$2" | LC_ALL=C comm -13 "$1" - \
+    | grep -E '^\./buffer/(archive/)?session-[^/]{1,16}\.md$|^\.$'
+}
+ISO_SENTINELS="$ROOT/.claude/throughline"
+ISO_COMMON=$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) \
+  && ISO_SENTINELS="$ISO_SENTINELS
+$(dirname -- "$ISO_COMMON")/.claude/throughline"
+ISO_N=0
+printf '%s\n' "$ISO_SENTINELS" | while IFS= read -r d; do
+  ISO_N=$((ISO_N + 1)); iso_snapshot "$d" > "$WORK/iso-before.$ISO_N"
+done
+cd "$WORK" || exit 1
+
 echo "throughline hook tests"
 echo "----------------------"
 
@@ -1986,6 +2030,33 @@ printf '' | /usr/bin/grep -IhoE "$_TOK" >/dev/null 2>&1
 if [ "$?" -le 1 ]; then ok "credential guard regex compiles"; else bad "credential guard regex compiles"; fi
 eq "no credential-shaped vendor literals in tracked files (placeholder bodies only)" "$_BAD" ""
 eq "no PEM key bodies in tracked files (EXAMPLE marker only)" "$_PEM_BAD" ""
+
+# --- isolation guard: verdict (issue #189) ---------------------------------------
+# First prove the detector can fire, on a stand-in data dir inside $WORK: a fixture
+# buffer is a leak; another session's buffer, log or breadcrumb is not.
+ISO_FAKE="$WORK/iso-fake/.claude/throughline"
+mkdir -p "$ISO_FAKE/buffer"
+iso_snapshot "$ISO_FAKE" > "$WORK/iso-fake.before"
+: > "$ISO_FAKE/buffer/session-0b0d2f6e-1c2a-4f6b-9a1e-3d5c7b9a1f20.md"
+: > "$ISO_FAKE/buffer/session-ses_2f8a91c0d4ffe1QmXbV7tq3KpL.md"
+mkdir -p "$ISO_FAKE/logs" "$ISO_FAKE/buffer/archive"
+: > "$ISO_FAKE/logs/handoff-2026-01-01-0900.md"
+: > "$ISO_FAKE/.capture-errors"
+: > "$ISO_FAKE/buffer/archive/.archiving.Ab12Cd"
+eq "isolation guard: other sessions' buffers, logs and breadcrumbs are not leaks" "$(iso_leaks "$WORK/iso-fake.before" "$ISO_FAKE")" ""
+: > "$ISO_FAKE/buffer/session-T.md"
+: > "$ISO_FAKE/buffer/archive/session-MCPSTAR.md"
+has "isolation guard: a fixture-id buffer is a leak" "$(iso_leaks "$WORK/iso-fake.before" "$ISO_FAKE")" "./buffer/session-T.md"
+has "isolation guard: an archived fixture-id buffer is a leak" "$(iso_leaks "$WORK/iso-fake.before" "$ISO_FAKE")" "./buffer/archive/session-MCPSTAR.md"
+eq "isolation guard: a data dir bootstrapped from nothing is a leak" \
+  "$(printf 'ABSENT\n' > "$WORK/iso-absent.before"; iso_leaks "$WORK/iso-absent.before" "$ISO_FAKE" | head -n 1)" "."
+
+# Then the real verdict: nothing this suite ran wrote into a real data dir.
+ISO_ALL=$(ISO_N=0; printf '%s\n' "$ISO_SENTINELS" | while IFS= read -r d; do
+  ISO_N=$((ISO_N + 1))
+  iso_leaks "$WORK/iso-before.$ISO_N" "$d" | sed "s|^\.|$d|"
+done)
+eq "isolation guard: no hook wrote into this checkout's real data dirs" "$ISO_ALL" ""
 
 echo "----------------------"
 printf 'passed: %s   failed: %s\n' "$PASSED" "$FAIL"

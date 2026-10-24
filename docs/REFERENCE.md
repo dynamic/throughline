@@ -76,6 +76,11 @@ SessionStart block (not even about existing data), no end-stamps. This is strict
 than `.throughlineignore`, which keeps orienting toward already-existing content.
 Unset it (or set `0`) to re-enable; existing data is untouched either way.
 
+Set it for scripted harness runs too. A skill trigger eval or any other loop that
+starts headless sessions (`claude -p`) from inside a project fires
+the hooks like an interactive session does, and leaves one buffer per run in that
+project's data dir. Export `THROUGHLINE_DISABLE=1` in the runner's environment.
+
 **Cross-harness handoffs.** The data dir is the one knob that makes throughline
 portable. Point it at `.agent/handoff` (or any other path) and the durable
 `HANDOFF.md` it produces lives in a harness-neutral location any agent can read,
