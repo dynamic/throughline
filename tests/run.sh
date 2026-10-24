@@ -661,6 +661,74 @@ hasnt "a keyword glued to a hyphen flag: value not stored (issue #130)" "$(cap_l
 cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwsentinel","command":"password=TLREDACTSENTINELtoken=x"}}'
 has   "a keyword glued to a masked sentinel value is still masked (issue #130)" "$(cap_line kwsentinel)" 'token=***'
 hasnt "a keyword glued to a masked sentinel: value not stored" "$(cap_line kwsentinel)" 'token=x'
+# 2i1b3. issue #173: the rules run in sequence over rewritten text, so a rule whose
+#      value is a whitespace-separated word could swallow a keyword a later rule
+#      needed (`token password: X` stored as `Token *** X`). `_backstop` reads the
+#      ORIGINAL text, takes the value after every keyword head on its own, and masks
+#      any of those values the pipeline left visible. It only adds masks, so each row
+#      here checks that the secret marker never reaches the buffer; a few also pin
+#      the shape.
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwhtokcolon","command":"echo token password: S3cretPw"}}'
+has   "kwhtokcolon: masked shape (issue #173)" "$(cap_line kwhtokcolon)" 'Token *** ***'
+hasnt "kwhtokcolon: secret not stored (issue #173)" "$(cap_line kwhtokcolon)" 'S3cretPw'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwhtokcop","command":"echo token password is S3cretPw"}}'
+hasnt "kwhtokcop: secret not stored (issue #173)" "$(cap_line kwhtokcop)" 'S3cretPw'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwhtokbare","command":"echo TOKEN password S3cretPw ok"}}'
+hasnt "kwhtokbare: secret not stored (issue #173)" "$(cap_line kwhtokbare)" 'S3cretPw'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwhbearer","command":"echo Bearer password: S3cretPw"}}'
+has   "kwhbearer: masked shape (issue #173)" "$(cap_line kwhbearer)" 'Bearer ***: ***'
+hasnt "kwhbearer: secret not stored (issue #173)" "$(cap_line kwhbearer)" 'S3cretPw'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwhbeareq","command":"echo bearer secret=S3cretPw"}}'
+hasnt "kwhbeareq: secret not stored (issue #173)" "$(cap_line kwhbeareq)" 'S3cretPw'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwhbasic","command":"echo basic password: S3cretPw"}}'
+hasnt "kwhbasic: secret not stored (issue #173)" "$(cap_line kwhbasic)" 'S3cretPw'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwhgeneric","command":"echo auth password: S3cretPw"}}'
+has   "kwhgeneric: masked shape (issue #173)" "$(cap_line kwhgeneric)" 'auth *** ***'
+hasnt "kwhgeneric: secret not stored (issue #173)" "$(cap_line kwhgeneric)" 'S3cretPw'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwhgenbare","command":"echo password token S3cretPw ok"}}'
+hasnt "kwhgenbare: secret not stored (issue #173)" "$(cap_line kwhgenbare)" 'S3cretPw'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwhchain3","command":"echo token token token: S3cretPw"}}'
+hasnt "kwhchain3: secret not stored (issue #173)" "$(cap_line kwhchain3)" 'S3cretPw'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwhchainsep","command":"echo auth secret password: S3cretPw"}}'
+hasnt "kwhchainsep: secret not stored (issue #173)" "$(cap_line kwhchainsep)" 'S3cretPw'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwhspacedeq","command":"echo token password = S3cretPw"}}'
+hasnt "kwhspacedeq: secret not stored (issue #173)" "$(cap_line kwhspacedeq)" 'S3cretPw'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwhquoted","command":"echo token password \"S3cretPw two\""}}'
+hasnt "kwhquoted: secret not stored (issue #173)" "$(cap_line kwhquoted)" 'S3cretPw'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwhsegment","command":"echo Bearer svc_token_zzS3cretPw is expired"}}'
+hasnt "kwhsegment: secret not stored (issue #173)" "$(cap_line kwhsegment)" 'S3cretPw'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwhhyphen","command":"echo Bearer my-api-key-S3cretPw is invalid"}}'
+hasnt "kwhhyphen: secret not stored (issue #173)" "$(cap_line kwhhyphen)" 'S3cretPw'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwhexplicit","command":"echo password=secret: S3cretPw"}}'
+hasnt "kwhexplicit: secret not stored (issue #173)" "$(cap_line kwhexplicit)" 'S3cretPw'
+#      A keyword-shaped secret before a bare space, a bare chain of even length, and a
+#      value behind a scheme word with an explicit separator (passes B and C).
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwhkwvalue","command":"echo password TOKEN: mytokenS3cretPw ok"}}'
+hasnt "kwhkwvalue: secret not stored (issue #173)" "$(cap_line kwhkwvalue)" 'mytokenS3cretPw'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwhbare4","command":"echo password token secret auth S3cretPw"}}'
+hasnt "kwhbare4: secret not stored (issue #173)" "$(cap_line kwhbare4)" 'S3cretPw'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwhscheme","command":"echo --token=Bearer: S3cretPw"}}'
+hasnt "kwhscheme: secret not stored (issue #173)" "$(cap_line kwhscheme)" 'S3cretPw'
+#      Scheme words are heads only with an explicit separator: `Basic test` (bare space,
+#      under `_auth_scheme`'s 8-character floor) is left alone.
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwhbasicshort","command":"echo Basic test"}}'
+has   "kwhbasicshort: a short word after a bare scheme word is not masked (issue #173)" "$(cap_line kwhbasicshort)" 'Basic test'
+#      Whole-token replacement: a value that also occurs inside a longer word is not
+#      masked there (`PASSWORD` must not eat the tail of `DB_PASSWORD`), and a closing
+#      quote is never read as a value.
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwhwholetok","command":"export DB_PASSWORD SECRET PASSWORD S3cretPw"}}'
+has   "kwhwholetok: a value is masked only as a whole token (issue #173)" "$(cap_line kwhwholetok)" 'DB_PASSWORD'
+hasnt "kwhwholetok: secret not stored (issue #173)" "$(cap_line kwhwholetok)" 'S3cretPw'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwhclosequote","command":"curl -H \"Authorization: Basic zzauthzzzz=\" host"}}'
+has   "kwhclosequote: a closing quote is not read as a value (issue #173)" "$(cap_line kwhclosequote)" '*** ***" host'
+hasnt "kwhclosequote: Basic value not stored (issue #173)" "$(cap_line kwhclosequote)" 'zzauthzzzz'
+#      Ordinary commands are unchanged from the pipeline's own output.
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwhordinary","command":"git commit -m \"fix token refresh flow\""}}'
+has   "kwhordinary: ordinary command keeps the pipeline's shape (issue #173)" "$(cap_line kwhordinary)" 'fix Token *** flow'
+#      Bounded: a long keyword chain stays a single linear pass and is not dropped.
+tl_kwchain=$(i=0; while [ $i -lt 2000 ]; do printf 'token '; i=$((i+1)); done)
+cap "{\"session_id\":\"T\",\"tool_name\":\"Bash\",\"tool_input\":{\"description\":\"kwhlongchain\",\"command\":\"$tl_kwchain: S3cretPw\"}}"
+has   "kwhlongchain: a 2000-keyword chain is captured, not dropped (issue #173)" "$(cap_line kwhlongchain)" 'Token ***'
 # 2i1c. quoted -p<value> inside double quotes (the container-entrypoint shape
 #      mysql -uroot "-p$PW" db): the span group consumes the full quoted run
 #      including the -p. The pre-rule _mysql_pw_pre catches this shape.
@@ -1644,6 +1712,10 @@ has "prompt: SCREAMING_SNAKE_CASE compound is the same documented gap" "$(grep c
 # entirely until it was added alongside Bearer/Basic.
 prompt '{"session_id":"P","prompt":"Authorization: Bearer eyJxxxxxxxxxxxxxxxxxx.fake.jwt.body"}'
 hasnt "prompt: bearer JWT body not stored" "$(grep Authorization "$BUF/session-P.md")" 'eyJxxxxxxxxxxxxxxxxxx'
+# Issue #173's value backstop is command-path only (`redact`); the prompt path is
+# unchanged. A long Bearer value containing a keyword, before a copula, stays masked.
+prompt '{"session_id":"P","prompt":"Bearer zzAuthzzzzzzzzzzzzzQ is expired"}'
+hasnt "prompt: Bearer value with a keyword inside, before a copula, not stored (issue #173)" "$(cat "$BUF/session-P.md")" 'zzAuthzzzzzzzzzzzzzQ'
 reset_buf
 prompt '{"session_id":"P","prompt":"Authorization: Token xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}'
 hasnt "prompt: Authorization Token value not stored" "$(cat "$BUF/session-P.md")" 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'

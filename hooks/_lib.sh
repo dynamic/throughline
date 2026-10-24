@@ -856,15 +856,70 @@ tl_jq_redact_defs() {
   # #130 block in tests/run.sh pins both halves: the glued-hyphen fixture goes red
   # under exactly the widening above, and the non-ASCII fixture stays green under
   # widening and narrowing alike.
+  # Value backstop (issue #173). The rules above run in sequence over text an
+  # earlier rule already rewrote, so a rule whose value is a whitespace-separated
+  # word can swallow a keyword a later rule needed: `token password: X` became
+  # `Token *** X`, `auth password: X` became `auth *** X`. Patching the order or
+  # guarding each rule moved the leak somewhere else every time (measured: a guard
+  # fixed ~36k generated inputs and newly leaked ~7k), so this does not touch the
+  # pipeline. It reads the ORIGINAL text instead, in three linear global passes of
+  # the generic rule's own head (keyword and separator, atomic and anchored the
+  # same way) followed by a value (see `_kw_values` for why three). Any value a
+  # pass finds that the pipeline left visible is masked. It only ever adds masks,
+  # so no input the pipeline masks can become visible.
+  # Values shorter than 3 characters are skipped: masking every `x` or `on` in a
+  # line would corrupt it, and the pipeline already masks the ordinary short-value
+  # cases. A value is masked wherever it appears in the line as a whole token
+  # (never inside a longer word, so `PASSWORD` does not eat the tail of
+  # `DB_PASSWORD`), which also covers the same secret echoed twice. The value
+  # grammar has no unterminated-quote alternative: a lone `"` here is usually a
+  # closing quote, not a value.
+  # Heads are the generic rule's keywords with any of its separators, plus the two
+  # scheme words with an EXPLICIT separator or a bare space before a QUOTED value
+  # (which `_auth_scheme`'s value classes cannot take), so `--token=Bearer: X` and
+  # `bearer "X"` are found while `Basic test` or `basic setup` (bare space, left to
+  # `_auth_scheme`'s own floors) is not.
+  def _kw_word_rx:
+    "(?<!\\w)(?>\\w*(?:token|secret|password|passwd|api[_-]?key|access[_-]?key|credential|auth(?:orization)?|client[_-]?id)\\w*)";
+  def _kw_scheme_rx: "(?<!\\w)(?>\\w*(?:bearer|basic)\\w*)";
+  def _kw_xsep_rx: "(?:\\s*[:=]\\s*|\\s+(?:is|was|are)\\s+)";
+  def _kw_head_rx: "(?:" + _kw_word_rx + "(?:" + _kw_xsep_rx + "|[ \\t]+)|" + _kw_scheme_rx + "(?:" + _kw_xsep_rx + "|[ \\t]+(?=[\"']))" + ")";
+  def _kw_val_rx: "(?<v>\"[^\"]*\"|'[^']*'|[^\\s\"']+)";
+  # Three alignments, because a global regex cannot overlap and a value can itself
+  # be a head: A takes each value as it comes; B refuses a value that heads an
+  # EXPLICIT separator (`token password: X` resolves to X, while a keyword-shaped
+  # secret before a bare space, `TOKEN: mytokenX ok`, is still taken); C refuses
+  # any head, so a bare chain of any length (`k1 k2 k3 k4 X`) reaches its value.
+  # Chain links: heads tile a chain end to end, so when one head ends exactly where
+  # the next begins, the next head's word is the previous head's value. That reaches
+  # a keyword-shaped link in the middle of a bare chain (`k: k2 mytokenX ok`), which
+  # no non-overlapping pass above can, without slicing the string by offset.
+  def _kw_chain_links:
+    [match("(?:(?<w>" + _kw_word_rx + ")(?:" + _kw_xsep_rx + "|[ \\t]+)|(?<s>" + _kw_scheme_rx + ")(?:" + _kw_xsep_rx + "|[ \\t]+(?=[\"']))" + ")"; "gi")]
+    | . as $h
+    | [range(1; length) as $i
+       | select($h[$i - 1].offset + $h[$i - 1].length == $h[$i].offset)
+       | $h[$i].captures[] | select(.string != null) | .string];
+  def _kw_values:
+    [ (_kw_chain_links | .[]), (capture(_kw_head_rx + _kw_val_rx; "gi") | .v),
+      (capture(_kw_head_rx + "(?!(?:" + _kw_word_rx + "|" + _kw_scheme_rx + ")" + _kw_xsep_rx + ")" + _kw_val_rx; "gi") | .v),
+      (capture(_kw_head_rx + "(?!" + _kw_head_rx + ")" + _kw_val_rx; "gi") | .v) ]
+    | map(select(length >= 3 and . != "***")) | unique;
+  def _rx_lit: gsub("(?<c>[.*+?^${}()|\\[\\]\\\\/])"; "\\\(.c)");
+  def _backstop($orig):
+    reduce ($orig | _kw_values[]) as $v (.;
+      if index($v) then gsub("(?<![A-Za-z0-9_])" + ($v | _rx_lit) + "(?![A-Za-z0-9_])"; "***") else . end);
   def redact:
-    _pem
+    . as $orig
+    | _pem
     | _auth_scheme
     | gsub("(?i)\\btoken\\s+(?<t>[A-Za-z0-9._\\-]+)"; "Token ***")
     | _url
     | _prefix_tokens
     | _mysql_pw_all
     | gsub("(?i)(?:(?<!\\w)|(?<=\(M)))(?<k>(?>\\w*(?:token|secret|password|passwd|api[_-]?key|access[_-]?key|credential|auth(?:orization)?|client[_-]?id)\\w*))(?<s>\\s*[:=]\\s*|\\s+(?:is|was|are)\\s+|\\s+)(?<v>\"[^\"]*\"|\(M)|\"[^\\r\\n]*|[^\\s\"]+)"; "\(.k)\(.s)***")
-    | _unmask;
+    | _unmask
+    | _backstop($orig);
   # Prose-safe redaction for user prompts (issue #5), and for the WebSearch
   # query / Task description branches in session-capture.sh (also prose).
   # Prompts are natural language, not commands: running them through `redact`

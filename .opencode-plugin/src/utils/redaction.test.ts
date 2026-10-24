@@ -970,7 +970,7 @@ describe('jq parity with hooks/_lib.sh (issue #90)', () => {
   it('runs the same def chain as jq, in the same order, on both paths', () => {
     const defs = jqDefs();
     assert.deepStrictEqual(jqPipeline(defs, 'redact'), [
-      '_pem', '_auth_scheme', 'gsub', '_url', '_prefix_tokens', '_mysql_pw_all', 'gsub', '_unmask',
+      '_pem', '_auth_scheme', 'gsub', '_url', '_prefix_tokens', '_mysql_pw_all', 'gsub', '_unmask', '_backstop',
     ], 'jq `redact` changed its def chain; the TS port must gain, drop or reorder the matching sweep');
     assert.deepStrictEqual(jqPipeline(defs, 'redact_prompt'), [
       '_pem', '_auth_scheme_prose', '_url', '_prefix_tokens', '_unmask',
@@ -1178,17 +1178,17 @@ const ENGINE_DIVERGENCES: readonly {
     // the same text jq writes), so the rules this port adds are what make them survive. The
     // third `\b` row, the Token-scheme one further down, is the only one `main` already leaks.
     input: '\u00e9SG.' + 'xxxxxxxxxxxxxxxxxxxx.xxxxxxxxxxxxxxxxxxxxpassword=S3cret',
-    direction: 'under',
+    direction: 'over',
     jq: '\u00e9SG.' + 'xxxxxxxxxxxxxxxxxxxx.xxxxxxxxxxxxxxxxxxxxpassword=***',
-    ts: '\u00e9SG.***=S3cret',
-    note: 'LEAK, introduced by this port (masks fine on `main`): the port anchors on \u00e9 and the SendGrid token class swallows the following `password`, so the generic keyword rule never fires and `S3cret` survives. jq anchors nowhere and masks `password=S3cret` instead. Accepted as rare: it needs a non-ASCII letter glued directly in front of an `SG.` token that is itself glued to a `keyword=value` pair. Closing it means an Oniguruma-accurate `\b`, which JS has no spelling for - see dynamic/throughline#116.',
+    ts: '\u00e9SG.***=***',
+    note: 'OVER-REDACTION since issue #173, a LEAK before it: the value backstop reads the original text, finds the `password=` head the SendGrid sweep swallowed, and masks `S3cret`. Both engines mask the secret; the port also masks `password`. Before #173: LEAK, introduced by this port (masks fine on `main`): the port anchors on \u00e9 and the SendGrid token class swallows the following `password`, so the generic keyword rule never fires and `S3cret` survives. jq anchors nowhere and masks `password=S3cret` instead. Accepted as rare: it needs a non-ASCII letter glued directly in front of an `SG.` token that is itself glued to a `keyword=value` pair. Closing it means an Oniguruma-accurate `\b`, which JS has no spelling for - see dynamic/throughline#116.',
   },
   {
     input: '\u00e9mysql -pxtoken abcS3cret',
-    direction: 'under',
+    direction: 'over',
     jq: '\u00e9mysql -pxtoken ***',
-    ts: '\u00e9mysql -p*** abcS3cret',
-    note: 'LEAK, introduced by this port (masks fine on `main`): the port anchors on \u00e9 and the MySQL span eats `token`, so the token-word rule never fires and `abcS3cret` survives. Same mechanism as the row above, different rule order, same acceptance and same #116 anchor decision.',
+    ts: '\u00e9mysql -p*** ***',
+    note: 'OVER-REDACTION since issue #173 (the value backstop masks `abcS3cret` from the original text), a LEAK before it, introduced by this port (masks fine on `main`): the port anchors on \u00e9 and the MySQL span eats `token`, so the token-word rule never fires and `abcS3cret` survives. Same mechanism as the row above, different rule order, same acceptance and same #116 anchor decision.',
   },
   // The `over` rows below are the residue of over-approximating Oniguruma's `\w` in the
   // generic keyword rule (its widened word class): jq's `\w` refuses a non-ASCII PUNCTUATION,
@@ -1262,10 +1262,10 @@ const ENGINE_DIVERGENCES: readonly {
     // the same way, so it is not something the port introduced. Found by the ad-hoc 6,000
     // -input fuzz run, not by the seeded corpus.
     input: '\u00fcTOKEN i\u017f xxxxxxxxxxxxxxxx\nnext line',
-    direction: 'under',
+    direction: 'over',
     jq: '\u00fcTOKEN i\u017f ***\nnext line',
-    ts: '\u00fcToken *** xxxxxxxxxxxxxxxx\nnext line',
-    note: 'LEAK: Oniguruma\'s `\b` refuses to anchor after \u00fc, so jq\'s Token-scheme rule never fires and its generic rule masks the value; JS\'s ASCII-only `\b` does fire, the Token rule eats `TOKEN i\u017f` and writes `Token ***`, and the value survives. The plain-ASCII copula (`\u00fcTOKEN is <value>`) diverges identically. Pre-existing on `main`, same class as the two rows above: an over-match at a `\b` the other engine does not have.',
+    ts: '\u00fcToken *** ***\nnext line',
+    note: 'OVER-REDACTION since issue #173 (the value backstop masks the value behind the copula from the original text), a LEAK before it: Oniguruma\'s `\b` refuses to anchor after \u00fc, so jq\'s Token-scheme rule never fires and its generic rule masks the value; JS\'s ASCII-only `\b` does fire, the Token rule eats `TOKEN i\u017f` and writes `Token ***`, and the value survives. The plain-ASCII copula (`\u00fcTOKEN is <value>`) diverges identically. Pre-existing on `main`, same class as the two rows above: an over-match at a `\b` the other engine does not have.',
   },
   // Stage 6b re-runs the generic rule over text stage 6a already rewrote, and a guard on the
   // keyword alone cannot see every case of that. When a keyword carries a non-ASCII
@@ -1283,31 +1283,11 @@ const ENGINE_DIVERGENCES: readonly {
     ts: 'token\u00e9token=*** d',
     note: 'OVER-REDACTION, pinned verbatim because jq masks part of this line too and the direction heuristic only recognises "jq left it visible": stage 6a masks the second `token`, and stage 6b - whose widened suffix crosses the \u00e9 - then matches `token\u00e9token=***` plus the `c` glued to it and masks that as well. jq stops after its own mask. Both engines mask the secret; this port also eats one ASCII character glued to it.',
   },
-  // The two-sweep keyword rule has a leak direction too, and these rows are it. Stage 6a runs
-  // jq's ASCII affixes FIRST, and a keyword whose ASCII affix stops short of the non-ASCII
-  // letter jq's `\w*` would cross can match a LATER keyword in the same line and eat it as
-  // the earlier one's value - so the keyword jq would have matched is gone before the
-  // widened sweep runs, and the value behind it survives. Stage 6b then masks the earlier
-  // keyword's value, which is why the output looks like it masked more than jq while
-  // leaking a secret jq masks. Both rows leak identically on `main` (measured against a
-  // build of `main`), so neither is a regression; they are pinned because they contradict
-  // any claim that the second sweep can only over-mask. Closing them needs stage 6b to see
-  // the whole line before 6a consumes it, which reintroduces the U+180E leak the two-sweep
-  // shape exists to avoid - so the two-sweep order stays, and this class stays pinned.
-  {
-    input: 'export DB_PASSWORD_\u00c9 SECRET PASSWORD S3cret',
-    direction: 'under',
-    jq: 'export DB_PASSWORD_\u00c9 *** PASSWORD ***',
-    ts: 'export DB_PASSWORD_\u00c9 *** *** S3cret',
-    note: 'LEAK, pre-existing on `main` (`export DB_PASSWORD_\u00c9 SECRET *** S3cret`): JS\'s ASCII `\w*` stops `DB_PASSWORD_` short of \u00c9, so stage 6a matches `SECRET PASSWORD` and masks `PASSWORD` as its value; jq\'s `\w*` crosses \u00c9, matches `DB_PASSWORD_\u00c9 SECRET` first, and still has `PASSWORD S3cret` to mask. `S3cret` survives here and on `main`, and only stage 6b\'s later mask makes the line look over-redacted.',
-  },
-  {
-    input: 'secret\u00e9 api_key credential hunter2',
-    direction: 'under',
-    jq: 'secret\u00e9 *** credential ***',
-    ts: 'secret\u00e9 *** *** hunter2',
-    note: 'LEAK, pre-existing on `main` (`secret\u00e9 api_key *** hunter2`): same mechanism one keyword later - `secret\u00e9` cannot fire in stage 6a, so `api_key credential` is matched instead and `hunter2` is never reached. The shape the seeded corpus cannot generate: its two-keyword template puts no affix on the first keyword.',
-  },
+  // The two-sweep keyword rule's leak direction (a keyword whose ASCII affix stops short of
+  // a non-ASCII letter matching a LATER keyword and eating it as its value) is closed by
+  // issue #173's value backstop, which reads the original text: `export DB_PASSWORD_\u00c9
+  // SECRET PASSWORD S3cret` and `secret\u00e9 api_key credential hunter2` now write the
+  // same text in both engines, so their rows were deleted rather than softened.
 ];
 
 describe('regex-engine parity with jq (issue #90)', () => {
@@ -1692,12 +1672,10 @@ describe('regex-engine parity with jq (issue #90)', () => {
           corpus.push(`${pick(rand, clients)} ${pick(rand, pwArgs)}${tail}`);
           break;
         case 2:
-          // NOTE for anyone widening this template: the first keyword deliberately carries no
-          // affix here, which is why this case cannot generate the two-sweep leak pinned as
-          // `under` rows in ENGINE_DIVERGENCES (`secret\u00e9 api_key credential hunter2`): put
-          // an affix on the first keyword with a space separator and the leak direction
-          // appears here, so extending this line means teaching this test to expect a pinned
-          // leak per shape rather than zero leaks. See the `under` rows for what is known.
+          // The first keyword carries no affix here. The two-sweep leak an affix used to expose
+          // (`secret\u00e9 api_key credential hunter2`) is closed by issue #173's value
+          // backstop, so widening this template should now produce zero leaks; any it finds
+          // is a new defect, not a known shape.
           corpus.push(`${wordOf(rand)}${pick(rand, separators)}${pick(rand, values)}${tail} ${pick(rand, keywords)}${pick(rand, separators)}${pick(rand, values)}`);
           break;
         case 3:
