@@ -32,65 +32,17 @@ jobs:
       - name: Install shellcheck (Linux)
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y shellcheck
-      - name: Lint hooks and tests (Linux)
+      - name: Lint shell scripts (Linux)
         if: runner.os == 'Linux'
-        run: shellcheck -s sh hooks/*.sh tests/*.sh
-      - name: Validate JSON manifests (Linux)
+        run: shellcheck -s sh hooks/*.sh tests/*.sh scripts/*.sh
+      # The manifest and typography gates live in scripts/ so CI and
+      # .local-ci.json call the same code (issues #205-#207).
+      - name: Manifests and versions (Linux)
         if: runner.os == 'Linux'
-        run: |
-          jq -e '.hooks | keys' hooks/hooks.json >/dev/null
-          jq -e '.name and .version' .claude-plugin/plugin.json >/dev/null
-          jq -e '.plugins' .claude-plugin/marketplace.json >/dev/null
-          jq -e '.name and .version' .codex-plugin/plugin.json >/dev/null
-          jq -e '.plugins' .agents/plugins/marketplace.json >/dev/null
-          jq -e '.name and .version and .omp' package.json >/dev/null
-          grep -q '^version: ' plugin.yaml
-      - name: Check plugin version agreement (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          c=$(jq -r .version .claude-plugin/plugin.json)
-          x=$(jq -r .version .codex-plugin/plugin.json)
-          o=$(jq -r .version .opencode-plugin/package.json)
-          m=$(jq -r .version package.json)
-          h=$(jq -r .version .omp-plugin/package.json)
-          y=$(sed -n 's/^version: //p' plugin.yaml)
-          if [ "$c" != "$x" ] || [ "$c" != "$o" ] || [ "$c" != "$m" ] || [ "$c" != "$h" ] || [ "$c" != "$y" ]; then
-            echo "version drift: .claude-plugin/plugin.json=$c .codex-plugin/plugin.json=$x .opencode-plugin/package.json=$o package.json=$m .omp-plugin/package.json=$h plugin.yaml=$y" >&2
-            exit 1
-          fi
+        run: sh scripts/check-manifests.sh
       - name: Typography (Linux)
         if: runner.os == 'Linux'
-        # Mechanizes Jason's writing-style rule (no em/en-dashes or curly
-        # quotes in outward-facing content) so it can't regress silently -
-        # scoped to files a reader/user actually opens (README, promo site,
-        # per-harness docs, the plugin marketplace description), not the
-        # whole tree: internal docs (CHANGELOG, HANDOFF, this project's own
-        # memory files, code comments) are explicitly exempt per the style
-        # guide. The pattern is written as escape sequences on purpose - a
-        # literal em-dash pasted into this step would make it match itself.
-        #
-        # LC_ALL pinned to a UTF-8 locale: git grep -P only enables PCRE2's
-        # UTF mode under a UTF-8 locale codeset, and \x{2013} exceeds PCRE2's
-        # 8-bit max outside it - under e.g. LC_ALL=C the pattern fails to
-        # COMPILE (rc=128), and a bare `if git grep ...; then FAIL; fi` reads
-        # that failure as "no match found" and passes clean. A gate whose
-        # whole point is "can't regress silently" must not itself have a
-        # silent-pass failure mode, so the exit code is checked explicitly
-        # instead of trusting the if/then branch alone.
-        run: |
-          set +e
-          hits=$(LC_ALL=C.UTF-8 git grep -I -n -P '[\x{2013}\x{2014}\x{2018}\x{2019}\x{201C}\x{201D}]' -- \
-                   README.md docs/*.md docs/index.html .claude-plugin/marketplace.json)
-          rc=$?
-          set -e
-          if [ "$rc" -eq 0 ]; then
-            printf '%s\n' "$hits"
-            echo "non-ASCII em/en-dash or curly quote in outward-facing files (see above) - use ASCII punctuation instead ( - , straight quotes)" >&2
-            exit 1
-          elif [ "$rc" -ne 1 ]; then
-            echo "typography check failed to run (git grep rc=$rc) - this must not read as a clean pass" >&2
-            exit 1
-          fi
+        run: sh scripts/check-typography.sh
       - name: Run hook tests
         run: sh tests/run.sh
 

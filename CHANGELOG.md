@@ -7,6 +7,9 @@ All notable changes to throughline are documented here. Format loosely follows
 
 ### Added
 - `docs/ROADMAP.md` (epics #166-#172) and `docs/AUDIT-v0.17.0.md`, the audit behind it.
+- `scripts/check-manifests.sh` (manifest validity, version agreement, CHANGELOG top heading)
+  and `scripts/check-typography.sh` (outward-docs typography gate). CI and `.local-ci.json`
+  both call them, and `.local-ci.json` gained CI's shellcheck step. #205, #206, #207.
 
 ### Changed
 - REFERENCE.md documents `THROUGHLINE_HERMES_SURFACES` in Configuration; README describes
