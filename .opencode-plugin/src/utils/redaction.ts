@@ -515,7 +515,9 @@ function redactBearerScheme(str: string, minLen: number): string {
  * Basic scheme redaction (command path, min length 8).
  */
 function redactBasicScheme(str: string, minLen: number): string {
-  const regex = new RegExp(`\\b${foldSpelled("basic")}${JS_WS}+[${FOLD_ALNUM}+/=]{${minLen},}`, "gi");
+  // `.`-joined segments too, as in jq: a JWT pasted after `basic` was masked only up to
+  // its first `.` (issue #220).
+  const regex = new RegExp(`\\b${foldSpelled("basic")}${JS_WS}+[${FOLD_ALNUM}+/=]{${minLen},}(?:\\.[${FOLD_ALNUM}_+/=-]+)*`, "gi");
   return str.replace(regex, "Basic ***");
 }
 
@@ -1206,6 +1208,8 @@ const BACKSTOP_KEYWORD = new RegExp("(?:" + KEYWORD_ALTERNATION + ")", "i");
 const BACKSTOP_SCHEME = new RegExp("(?:" + foldSpelled("bearer") + "|" + foldSpelled("basic") + ")", "i");
 // A bare space before a quoted value also makes a scheme word a head (jq: `[ \t]+(?=["'])`).
 const BACKSTOP_QUOTED = /[ \t]+(?=["'])/y;
+const BACKSTOP_SCHEME_PAIR = new RegExp(
+  "[ \\t]+[" + FOLD_ALNUM + "_]*(?:" + foldSpelled("bearer") + "|" + foldSpelled("basic") + ")[" + FOLD_ALNUM + "_]*[ \\t]+(?![:=]|(?:" + SEPARATOR_ALTERNATION + ")" + JS_WS + ")", "iy");
 const BACKSTOP_EXPLICIT = new RegExp(JS_WS + "*[:=]" + JS_WS + "*|" + JS_WS + "+(?:" + SEPARATOR_ALTERNATION + ")" + JS_WS + "+", "iy");
 const BACKSTOP_WORD = new RegExp("[" + FOLD_ALNUM + "_]+", "g");
 const BACKSTOP_HYPHEN_RUN = new RegExp("-[" + FOLD_ALNUM + "_]+", "y");
@@ -1244,8 +1248,15 @@ function backstopValues(original: string): string[] {
         valueStart = BACKSTOP_EXPLICIT.lastIndex;
       } else {
         BACKSTOP_QUOTED.lastIndex = end;
-        if (BACKSTOP_QUOTED.exec(original) === null) continue;
-        valueStart = BACKSTOP_QUOTED.lastIndex;
+        BACKSTOP_SCHEME_PAIR.lastIndex = end;
+        if (BACKSTOP_QUOTED.exec(original) !== null) {
+          valueStart = BACKSTOP_QUOTED.lastIndex;
+        } else if (BACKSTOP_SCHEME_PAIR.exec(original) !== null) {
+          // jq: two scheme words in a row form one head (issue #220).
+          valueStart = BACKSTOP_SCHEME_PAIR.lastIndex;
+        } else {
+          continue;
+        }
       }
     } else {
       continue;

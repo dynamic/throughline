@@ -18,8 +18,8 @@
 set -eu
 
 # Pinned leak counts. Lower them when a fix lands; never raise them to make CI pass.
-BASELINE_JQ=162
-BASELINE_PORT=82
+BASELINE_JQ=106
+BASELINE_PORT=10
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 PORT=""

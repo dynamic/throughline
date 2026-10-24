@@ -738,6 +738,16 @@ hasnt "kwhscheme: secret not stored (issue #173)" "$(cap_line kwhscheme)" 'S3cre
 #      under `_auth_scheme`'s 8-character floor) is left alone.
 cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwhbasicshort","command":"echo Basic test"}}'
 has   "kwhbasicshort: a short word after a bare scheme word is not masked (issue #173)" "$(cap_line kwhbasicshort)" 'Basic test'
+#      Issue #220: a JWT after `basic` is masked past its first `.`, and two scheme
+#      words in a row (`bearer basic X`) form one backstop head.
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwhjwtbasic","command":"echo password basic ey''JhbGciOiJIUzI1NiJ9.ey''JzdWIiOiJ4In0.S3cretPw"}}'
+hasnt "kwhjwtbasic: secret not stored (issue #220)" "$(cap_line kwhjwtbasic)" 'S3cretPw'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwhschemepair","command":"echo auth: bearer basic S3cretPw"}}'
+hasnt "kwhschemepair: secret not stored (issue #220)" "$(cap_line kwhschemepair)" 'S3cretPw'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwhschemedup","command":"echo --Bearer Bearer S3cretPw=="}}'
+hasnt "kwhschemedup: secret not stored (issue #220)" "$(cap_line kwhschemedup)" 'S3cretPw'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwhbasicsetup","command":"echo basic setup"}}'
+has   "kwhbasicsetup: a word after a lone scheme word is still left alone (issue #220)" "$(cap_line kwhbasicsetup)" 'basic setup'
 #      Whole-token replacement: a value that also occurs inside a longer word is not
 #      masked there (`PASSWORD` must not eat the tail of `DB_PASSWORD`), and a closing
 #      quote is never read as a value.
