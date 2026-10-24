@@ -1850,6 +1850,53 @@ eq "root package.json carries the omp manifest name" "$(jq -r '.omp.name // empt
 eq "skills/ beside the OMP manifest holds 4 skills" "$(find "$ROOT/skills" -name SKILL.md | wc -l | tr -d ' ')" "4"
 present "OMP hook shim beside the OMP manifest" "$ROOT/hooks/post/throughline.ts"
 
+# --- shared check scripts (issues #205, #206) -----------------------------------
+# CI and local-ci both call scripts/check-*.sh, so these prove each gate can fail.
+# The manifest fixture copies only what check-manifests.sh reads.
+mf_fixture() {
+  mf_root="$WORK/manifests/$1"
+  mkdir -p "$mf_root/hooks" "$mf_root/.claude-plugin" "$mf_root/.codex-plugin" \
+    "$mf_root/.agents/plugins" "$mf_root/.opencode-plugin" "$mf_root/.omp-plugin"
+  for f in hooks/hooks.json .claude-plugin/plugin.json .claude-plugin/marketplace.json \
+    .codex-plugin/plugin.json .agents/plugins/marketplace.json .opencode-plugin/package.json \
+    package.json .omp-plugin/package.json plugin.yaml CHANGELOG.md; do
+    cp "$ROOT/$f" "$mf_root/$f" || bad "manifest fixture copy failed: $f"
+  done
+}
+mf_run() { sh "$ROOT/scripts/check-manifests.sh" "$1" 2>&1; }
+
+mf_fixture intact
+MF_OUT=$(mf_run "$WORK/manifests/intact"); MF_RC=$?
+eq "check-manifests: an intact copy passes" "$MF_RC" "0"
+
+mf_fixture drift
+jq '.version = "0.0.1"' "$ROOT/.codex-plugin/plugin.json" > "$WORK/manifests/drift/.codex-plugin/plugin.json"
+MF_OUT=$(mf_run "$WORK/manifests/drift"); MF_RC=$?
+eq "check-manifests: a version mismatch exits non-zero" "$MF_RC" "1"
+has "check-manifests: the mismatch names the drifting manifest" "$MF_OUT" ".codex-plugin/plugin.json=0.0.1"
+
+mf_fixture changelog
+sed 's/^## \[Unreleased\]/## [0.0.1]/' "$ROOT/CHANGELOG.md" > "$WORK/manifests/changelog/CHANGELOG.md"
+MF_OUT=$(mf_run "$WORK/manifests/changelog"); MF_RC=$?
+eq "check-manifests: a CHANGELOG top heading ahead of the manifests exits non-zero" "$MF_RC" "1"
+has "check-manifests: the CHANGELOG failure says which heading" "$MF_OUT" "first heading is [0.0.1]"
+
+mf_fixture badjson
+printf '{' > "$WORK/manifests/badjson/.claude-plugin/plugin.json"
+MF_OUT=$(mf_run "$WORK/manifests/badjson"); MF_RC=$?
+eq "check-manifests: an unparseable manifest exits non-zero" "$MF_RC" "1"
+
+mkdir -p "$WORK/typo"
+printf 'a \342\200\224 b\n' > "$WORK/typo/dash.md"
+printf 'plain ASCII - fine\n' > "$WORK/typo/clean.md"
+TY_OUT=$(sh "$ROOT/scripts/check-typography.sh" "$WORK/typo/dash.md" 2>&1); TY_RC=$?
+eq "check-typography: an em dash fixture exits non-zero" "$TY_RC" "1"
+has "check-typography: the hit names the file" "$TY_OUT" "dash.md:1:"
+TY_OUT=$(sh "$ROOT/scripts/check-typography.sh" "$WORK/typo/clean.md" 2>&1); TY_RC=$?
+eq "check-typography: an ASCII fixture passes" "$TY_RC" "0"
+TY_OUT=$(sh "$ROOT/scripts/check-typography.sh" "$WORK/typo/missing.md" 2>&1); TY_RC=$?
+eq "check-typography: a missing file is an error, not a clean pass" "$TY_RC" "1"
+
 # --- no credential-shaped literals in tracked files ---------------------------
 # The Claude plugin directory ships the whole repo and rejects any file holding
 # something that looks like a live vendor key. Fixtures keep the prefix, and the
