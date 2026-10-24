@@ -19,6 +19,11 @@ All notable changes to throughline are documented here. Format loosely follows
 - `--doctor` lists the installed throughline version per harness (Claude Code, Codex,
   OpenCode, OMP, Hermes) from each harness's own install record, and marks the ones
   older than the copy running it. #181.
+- INSTALL.md has update commands for all five harnesses, checked against each CLI
+  (Claude Code and Codex marketplace refresh plus update, OpenCode pin or cache clear,
+  OMP marketplace upgrade, Hermes), and the OMP uninstall lines name what
+  `omp plugin uninstall` keys on: the npm package for a link, the marketplace id for a
+  marketplace install. #182.
 - REFERENCE.md documents `THROUGHLINE_HERMES_SURFACES` in Configuration; README describes
   consolidate as on demand or when HANDOFF.md is bloated, matching the skill. #208.
 
