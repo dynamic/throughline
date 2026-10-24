@@ -744,8 +744,10 @@ tl_jq_redact_defs() {
   # duplicated literals were consolidated.
   def _bearer_scheme($min):
     gsub("(?i)bearer\\s+(?<t>[A-Za-z0-9._\\-]{\($min),})"; "Bearer ***");
+  # The value may continue in `.`-joined segments: a JWT pasted after `basic` was
+  # masked only up to its first `.`, leaving the rest of the token visible (#220).
   def _basic_scheme($min):
-    gsub("(?i)\\bbasic\\s+[A-Za-z0-9+/=]{\($min),}"; "Basic ***");
+    gsub("(?i)\\bbasic\\s+[A-Za-z0-9+/=]{\($min),}(?:\\.[A-Za-z0-9_+/=-]+)*"; "Basic ***");
   # Authorization SCHEME rules (Bearer/Basic) - COMMAND-PATH version, used only
   # by `redact`. No length minimum on the bearer value and only an 8-char floor
   # on Basic's base64 run: commands aren't natural language, so "bearer X" /
@@ -894,12 +896,19 @@ tl_jq_redact_defs() {
   # scheme words with an EXPLICIT separator or a bare space before a QUOTED value
   # (which `_auth_scheme`'s value classes cannot take), so `--token=Bearer: X` and
   # `bearer "X"` are found while `Basic test` or `basic setup` (bare space, left to
-  # `_auth_scheme`'s own floors) is not.
+  # `_auth_scheme`'s own floors) is not - except a second plain scheme word, see the
+  # pair head on `_kw_head_rx`.
   def _kw_word_rx:
     "(?<!\\w)(?>\\w*(?:token|secret|password|passwd|api[_-]?key|access[_-]?key|credential|auth(?:orization)?|client[_-]?id)\\w*)";
   def _kw_scheme_rx: "(?<!\\w)(?>\\w*(?:bearer|basic)\\w*)";
   def _kw_xsep_rx: "(?:\\s*[:=]\\s*|\\s+(?:is|was|are)\\s+)";
-  def _kw_head_rx: "(?:" + _kw_word_rx + "(?:" + _kw_xsep_rx + "|[ \\t]+)|" + _kw_scheme_rx + "(?:" + _kw_xsep_rx + "|[ \\t]+(?=[\"']))" + ")";
+  # Two plain scheme words in a row (`bearer basic X`, not `basically basic`) form one
+  # head with bare spaces:
+  # `_auth_scheme` takes the second word as the first one's value, so the token after
+  # it would otherwise go unmasked (issue #220). Not when the second word has its own
+  # explicit separator (`basic Basic = X`): that is the second word's head, and the
+  # pair would swallow it.
+  def _kw_head_rx: "(?:" + _kw_word_rx + "(?:" + _kw_xsep_rx + "|[ \\t]+)|" + _kw_scheme_rx + "(?:" + _kw_xsep_rx + "|[ \\t]+(?=[\"']))|(?<!\\w)(?:bearer|basic)[ \\t]+(?:bearer|basic)(?!\\w)[ \\t]+(?![:=]|(?:is|was|are)\\s))";
   def _kw_val_rx: "(?<v>\"[^\"]*\"|'[^']*'|[^\\s\"']+)";
   # Three alignments, because a global regex cannot overlap and a value can itself
   # be a head: A takes each value as it comes; B refuses a value that heads an

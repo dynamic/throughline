@@ -46,6 +46,9 @@ All notable changes to throughline are documented here. Format loosely follows
   `(session logs)` and reads only tagged entries as its last-pass marker, so a memory sweep
   can no longer move that marker forward and hide unread logs. A legacy section with no
   tagged entry is not read as a marker: every log is in scope. #136.
+- Capture redaction masks a JWT pasted after `basic` past its first `.`, and the value
+  after two scheme words in a row (`bearer basic X`). The redaction sweep's leak
+  baselines drop from 162 to 106 (jq) and from 82 to 10 (OpenCode port). #220.
 - The handoff skill checks that the project root is a git work tree before its commit/push
   offer and skips the offer silently when it is not, instead of running git commands that
   fail with `fatal: not a git repository`. #193.
