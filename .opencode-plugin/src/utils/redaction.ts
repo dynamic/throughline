@@ -1203,13 +1203,17 @@ export function redact(str: string): string {
  * own, which covers both of jq's passes (its pass B exists only because a global regex
  * cannot overlap). Values of 3+ characters, no unterminated-quote alternative, as in jq.
  */
-// jq `_kw_word_rx` (any separator) and `_kw_scheme_rx` (explicit separator only).
+// jq `_kw_word_rx` (any separator) and `_kw_scheme_rx` (explicit separator, a bare space
+// before a quoted value, or a plain scheme-word pair).
 const BACKSTOP_KEYWORD = new RegExp("(?:" + KEYWORD_ALTERNATION + ")", "i");
 const BACKSTOP_SCHEME = new RegExp("(?:" + foldSpelled("bearer") + "|" + foldSpelled("basic") + ")", "i");
 // A bare space before a quoted value also makes a scheme word a head (jq: `[ \t]+(?=["'])`).
 const BACKSTOP_QUOTED = /[ \t]+(?=["'])/y;
+// jq's pair head: two PLAIN scheme words (not `basically basic`), then bare space, and
+// not before an explicit separator (that is the second word's own head).
 const BACKSTOP_SCHEME_PAIR = new RegExp(
-  "[ \\t]+[" + FOLD_ALNUM + "_]*(?:" + foldSpelled("bearer") + "|" + foldSpelled("basic") + ")[" + FOLD_ALNUM + "_]*[ \\t]+(?![:=]|(?:" + SEPARATOR_ALTERNATION + ")" + JS_WS + ")", "iy");
+  "[ \\t]+(?:" + foldSpelled("bearer") + "|" + foldSpelled("basic") + ")(?![" + FOLD_ALNUM + "_])[ \\t]+(?![:=]|(?:" + SEPARATOR_ALTERNATION + ")" + JS_WS + ")", "iy");
+const BACKSTOP_PLAIN_SCHEME = new RegExp("^(?:" + foldSpelled("bearer") + "|" + foldSpelled("basic") + ")$", "i");
 const BACKSTOP_EXPLICIT = new RegExp(JS_WS + "*[:=]" + JS_WS + "*|" + JS_WS + "+(?:" + SEPARATOR_ALTERNATION + ")" + JS_WS + "+", "iy");
 const BACKSTOP_WORD = new RegExp("[" + FOLD_ALNUM + "_]+", "g");
 const BACKSTOP_HYPHEN_RUN = new RegExp("-[" + FOLD_ALNUM + "_]+", "y");
@@ -1251,7 +1255,7 @@ function backstopValues(original: string): string[] {
         BACKSTOP_SCHEME_PAIR.lastIndex = end;
         if (BACKSTOP_QUOTED.exec(original) !== null) {
           valueStart = BACKSTOP_QUOTED.lastIndex;
-        } else if (BACKSTOP_SCHEME_PAIR.exec(original) !== null) {
+        } else if (BACKSTOP_PLAIN_SCHEME.test(run) && BACKSTOP_SCHEME_PAIR.exec(original) !== null) {
           // jq: two scheme words in a row form one head (issue #220).
           valueStart = BACKSTOP_SCHEME_PAIR.lastIndex;
         } else {

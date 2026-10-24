@@ -896,17 +896,19 @@ tl_jq_redact_defs() {
   # scheme words with an EXPLICIT separator or a bare space before a QUOTED value
   # (which `_auth_scheme`'s value classes cannot take), so `--token=Bearer: X` and
   # `bearer "X"` are found while `Basic test` or `basic setup` (bare space, left to
-  # `_auth_scheme`'s own floors) is not.
+  # `_auth_scheme`'s own floors) is not - except a second plain scheme word, see the
+  # pair head on `_kw_head_rx`.
   def _kw_word_rx:
     "(?<!\\w)(?>\\w*(?:token|secret|password|passwd|api[_-]?key|access[_-]?key|credential|auth(?:orization)?|client[_-]?id)\\w*)";
   def _kw_scheme_rx: "(?<!\\w)(?>\\w*(?:bearer|basic)\\w*)";
   def _kw_xsep_rx: "(?:\\s*[:=]\\s*|\\s+(?:is|was|are)\\s+)";
-  # Two scheme words in a row (`bearer basic X`) form one head with bare spaces:
+  # Two plain scheme words in a row (`bearer basic X`, not `basically basic`) form one
+  # head with bare spaces:
   # `_auth_scheme` takes the second word as the first one's value, so the token after
   # it would otherwise go unmasked (issue #220). Not when the second word has its own
   # explicit separator (`basic Basic = X`): that is the second word's head, and the
   # pair would swallow it.
-  def _kw_head_rx: "(?:" + _kw_word_rx + "(?:" + _kw_xsep_rx + "|[ \\t]+)|" + _kw_scheme_rx + "(?:" + _kw_xsep_rx + "|[ \\t]+(?=[\"']))|" + _kw_scheme_rx + "[ \\t]+" + _kw_scheme_rx + "[ \\t]+(?![:=]|(?:is|was|are)\\s))";
+  def _kw_head_rx: "(?:" + _kw_word_rx + "(?:" + _kw_xsep_rx + "|[ \\t]+)|" + _kw_scheme_rx + "(?:" + _kw_xsep_rx + "|[ \\t]+(?=[\"']))|(?<!\\w)(?:bearer|basic)[ \\t]+(?:bearer|basic)(?!\\w)[ \\t]+(?![:=]|(?:is|was|are)\\s))";
   def _kw_val_rx: "(?<v>\"[^\"]*\"|'[^']*'|[^\\s\"']+)";
   # Three alignments, because a global regex cannot overlap and a value can itself
   # be a head: A takes each value as it comes; B refuses a value that heads an
