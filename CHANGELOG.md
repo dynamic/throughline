@@ -8,6 +8,10 @@ All notable changes to throughline are documented here. Format loosely follows
 ### Added
 - `docs/ROADMAP.md` (epics #166-#172) and `docs/AUDIT-v0.17.0.md`, the audit behind it.
 
+### Changed
+- REFERENCE.md documents `THROUGHLINE_HERMES_SURFACES` in Configuration; README describes
+  consolidate as on demand or when HANDOFF.md is bloated, matching the skill. #208.
+
 ## [0.17.0] - 2026-10-23
 
 ### Added

@@ -76,6 +76,21 @@ SessionStart block (not even about existing data), no end-stamps. This is strict
 than `.throughlineignore`, which keeps orienting toward already-existing content.
 Unset it (or set `0`) to re-enable; existing data is untouched either way.
 
+### Hermes capture surfaces
+
+The Hermes plugin captures only interactive local sessions by default. Messaging-platform
+and cron sessions often run in shared checkouts on a gateway host, so they are skipped:
+
+```sh
+export THROUGHLINE_HERMES_SURFACES=cli,tui,desktop,acp,local   # the default
+export THROUGHLINE_HERMES_SURFACES=all                         # capture every surface
+```
+
+The value is a comma-separated list of Hermes surface names (case-insensitive), matched
+against the session's `ctx.session_surface()`. Unset or empty means the default list. It
+gates the whole plugin for a session: a skipped surface gets no capture, no orientation
+block and no end-stamp. Other harnesses ignore it.
+
 **Cross-harness handoffs.** The data dir is the one knob that makes throughline
 portable. Point it at `.agent/handoff` (or any other path) and the durable
 `HANDOFF.md` it produces lives in a harness-neutral location any agent can read,
