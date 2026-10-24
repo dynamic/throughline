@@ -197,11 +197,24 @@ having to carry it. Omit the line entirely for a session that starts something n
      originSessionId: <current session id>
    ---
    ```
-5. **Consume the buffers:** move distilled `DATA/buffer/session-*.md` into
-   `DATA/buffer/archive/` so they aren't re-processed next session. Archive only,
-   never delete: an archived buffer is the recovery path if a distillation later
-   turns out to have missed something. See "Housekeeping" in `docs/REFERENCE.md` for when an
-   archived buffer is old enough to actually delete.
+5. **Consume the buffers:** archive each distilled `DATA/buffer/session-*.md` into
+   `DATA/buffer/archive/` so it isn't re-processed next session, with the plugin's
+   script:
+   ```sh
+   sh <plugin-root>/hooks/archive-buffer.sh DATA/buffer/session-<id>.md [...]
+   ```
+   `<plugin-root>` is two directories above this `SKILL.md` (`skills/handoff/` sits
+   beside `hooks/`). The script never overwrites: a second handoff in the same session
+   archives a buffer with the same name as the first run's, and the script appends it
+   to the archived file instead of replacing it. A non-zero exit leaves that buffer in
+   place; say so in the report rather than retrying by hand.
+   If the script is not there (a skills-only install, or an older plugin), archive by
+   hand with a collision check, never a bare move onto an existing path: when
+   `DATA/buffer/archive/session-<id>.md` does not exist, move the buffer there;
+   when it does, append the buffer to it and then delete the live buffer.
+   Archive only, never delete: an archived buffer is the recovery path if a
+   distillation later turns out to have missed something. See "Housekeeping" in
+   `docs/REFERENCE.md` for when an archived buffer is old enough to actually delete.
 6. **Clear resolved breadcrumbs:** if `DATA/.capture-errors` exists and its contents
    were surfaced above (as a Phase 2 "Resolved Issues" entry or in the session log),
    clear the file now that it has been distilled - it exists to make a swallowed

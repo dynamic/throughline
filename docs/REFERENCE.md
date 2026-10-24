@@ -256,6 +256,7 @@ throughline/
 │  ├─ session-capture.sh     # PostToolUse: structured action buffer (outcome + redaction)
 │  ├─ session-precompact.sh  # PreCompact: stamp the compaction-boundary marker
 │  ├─ session-flush.sh       # SessionEnd: safety-net stamp
+│  ├─ archive-buffer.sh      # not a hook: handoff's collision-safe buffer archive
 │  └─ post/
 │     ├─ throughline.ts      # OMP shim: OMP events onto the hooks above
 │     └─ hermes.py           # Hermes bridge: Hermes hooks onto the hooks above
