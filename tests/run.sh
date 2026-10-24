@@ -1246,8 +1246,47 @@ has   "a new no-end-stamp buffer is reported once (issue #191)" "$O3g" 'no end-s
 hasnt "the already-reported ended buffers stay quiet (issue #191)" "$O3g" 'unconsumed session buffer'
 O3h=$(printf '%s' '{"source":"startup","session_id":"T"}' | sh "$H/session-onboard.sh")
 hasnt "the no-end-stamp buffer is not reported again (issue #191)" "$O3h" 'no end-stamp'
-O3i=$(printf '%s' '{"source":"startup","session_id":"T"}' | THROUGHLINE_UNCONSUMED_MIN=nonsense sh "$H/session-onboard.sh" 2>&1)
-hasnt "a malformed threshold falls back to the default without a diagnostic (issue #191)" "$O3i" 'integer expression'
+# A buffer first reported as possibly live is reported again once it has ended.
+printf -- '<!-- session-ended 2024-01-01 00:00:00 (end) -->\n' >> "$BUF/session-OPEN.md"
+O3j=$(printf '%s' '{"source":"startup","session_id":"T"}' | sh "$H/session-onboard.sh")
+has   "a reported no-end-stamp buffer is reported again once it has ended (issue #191)" "$O3j" '1 new since last reported'
+# A bridge that may discard the block (THROUGHLINE_ONBOARD_READONLY=1) records nothing.
+printf -- '- `t` **bash** a - `x`\n- `t` **bash** b - `x`\n- `t` **bash** c - `x`\n<!-- session-ended 2024-01-01 00:00:00 (end) -->\n' > "$BUF/session-FIVE.md"
+O3k=$(printf '%s' '{"source":"startup","session_id":"T"}' | THROUGHLINE_ONBOARD_READONLY=1 sh "$H/session-onboard.sh")
+has   "read-only mode still prints the warning (issue #191)" "$O3k" '1 new since last reported'
+O3l=$(printf '%s' '{"source":"startup","session_id":"T"}' | sh "$H/session-onboard.sh")
+has   "read-only mode did not mark the buffer as reported (issue #191)" "$O3l" '1 new since last reported'
+# A malformed or oversized threshold falls back to 3, silently.
+reset_buf
+printf -- '- x\n' > "$BUF/session-T.md"
+printf -- '- `t` **bash** a - `x`\n- `t` **bash** b - `x`\n<!-- session-ended 2024-01-01 00:00:00 (end) -->\n' > "$BUF/session-TWO.md"
+for tl_min in nonsense 99999999999999999999; do
+  O3i_err=$(printf '%s' '{"source":"startup","session_id":"T"}' | THROUGHLINE_UNCONSUMED_MIN=$tl_min sh "$H/session-onboard.sh" 2>&1 >/dev/null)
+  eq "threshold '$tl_min' prints no diagnostic (issue #191)" "$O3i_err" ""
+  O3i=$(printf '%s' '{"source":"startup","session_id":"T"}' | THROUGHLINE_UNCONSUMED_MIN=$tl_min sh "$H/session-onboard.sh" 2>/dev/null)
+  hasnt "threshold '$tl_min' falls back to 3: a 2-action buffer is not reported (issue #191)" "$O3i" 'unconsumed session buffer'
+done
+# An opted-out project (.throughlineignore) still gets the warning but no seen file.
+reset_buf
+printf -- '- x\n' > "$BUF/session-T.md"
+printf -- '- `t` **bash** a - `x`\n- `t` **bash** b - `x`\n- `t` **bash** c - `x`\n<!-- session-ended 2024-01-01 00:00:00 (end) -->\n' > "$BUF/session-IGN.md"
+: > "$WORK/proj/.throughlineignore"
+O3n=$(printf '%s' '{"source":"startup","session_id":"T"}' | sh "$H/session-onboard.sh")
+rm -f "$WORK/proj/.throughlineignore"
+has   "an opted-out project still gets the warning (issue #191)" "$O3n" 'unconsumed session buffer'
+if [ -f "$BUF/.unconsumed-reported" ]; then bad "an opted-out project got a seen file written (issue #191)"; else ok "an opted-out project gets no seen file (issue #191)"; fi
+# An unwritable seen file only means the warning repeats; nothing reaches stderr.
+if is_windows; then
+  skip_win "unwritable seen-file stderr test"
+elif [ "$(id -u)" != "0" ]; then
+  printf -- '- `t` **bash** a - `x`\n- `t` **bash** b - `x`\n- `t` **bash** c - `x`\n<!-- session-ended 2024-01-01 00:00:00 (end) -->\n' > "$BUF/session-SIX.md"
+  : > "$BUF/.unconsumed-reported"; chmod 000 "$BUF/.unconsumed-reported"
+  O3m_err=$(printf '%s' '{"source":"startup","session_id":"T"}' | sh "$H/session-onboard.sh" 2>&1 >/dev/null)
+  eq "an unwritable seen file prints no diagnostic (issue #191)" "$O3m_err" ""
+  chmod 644 "$BUF/.unconsumed-reported" 2>/dev/null
+else
+  ok "unwritable seen-file test skipped (running as root)"
+fi
 
 # 11. missing jq surfaces a visible warning in onboard (curated PATH without jq)
 # A tiny exec wrapper script per tool, not `ln -sf` or `cp`: a symlink needs

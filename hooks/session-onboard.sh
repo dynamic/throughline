@@ -516,7 +516,9 @@ if [ -d "$bufdir" ]; then
   new_unsure=0
   largest=0
   _tl_min=${THROUGHLINE_UNCONSUMED_MIN:-3}
-  case "$_tl_min" in ''|*[!0-9]*) _tl_min=3 ;; esac
+  # Digits only, at most 9 of them (a longer value would overflow the shell's integer
+  # test and print a diagnostic); anything else falls back to the default.
+  case "$_tl_min" in ''|*[!0-9]*|??????????*) _tl_min=3 ;; esac
   _tl_seen="$bufdir/.unconsumed-reported"
   _tl_now_seen=""
   for f in "$bufdir"/session-*.md; do
@@ -582,11 +584,13 @@ if [ -d "$bufdir" ]; then
     # Below the size threshold: too little to distill. A buffer with zero conforming
     # lines (total 0) is still counted - see the fail-safe note above.
     [ "$total" -gt 0 ] && [ "$actions" -lt "$_tl_min" ] && continue
-    _tl_name=${f##*/}
-    _tl_now_seen="$_tl_now_seen$_tl_name
+    # Keyed by class: a buffer first reported as "no end-stamp" (possibly live) must
+    # be reported again once it has ended, so `unsure:` and `ended:` are separate.
+    if [ "$is_ended" -eq 1 ]; then _tl_key="ended:${f##*/}"; else _tl_key="unsure:${f##*/}"; fi
+    _tl_now_seen="$_tl_now_seen$_tl_key
 "
     _tl_is_new=1
-    [ -f "$_tl_seen" ] && grep -Fxq "$_tl_name" "$_tl_seen" 2>/dev/null && _tl_is_new=0
+    [ -f "$_tl_seen" ] && grep -Fxq "$_tl_key" "$_tl_seen" 2>/dev/null && _tl_is_new=0
     if [ "$is_ended" -eq 1 ]; then
       ended=$((ended + 1))
       new_ended=$((new_ended + _tl_is_new))
@@ -598,7 +602,15 @@ if [ -d "$bufdir" ]; then
   done
   # Remember what was reported. Best-effort: an unwritable buffer dir only means the
   # warning repeats next session, which is the old behaviour.
-  printf '%s' "$_tl_now_seen" > "$_tl_seen" 2>/dev/null || true
+  # THROUGHLINE_ONBOARD_READONLY=1 is set by a bridge that computes this block ahead
+  # of time and may throw it away (Hermes precomputes at on_session_start); it must
+  # not mark buffers as reported that nobody saw. The braces make a failed open of
+  # the file silent too - a bare `> file 2>/dev/null` reports the open error first.
+  # A project opted out with .throughlineignore still gets the warning about what
+  # exists, but nothing new is written into its data dir.
+  if [ "${THROUGHLINE_ONBOARD_READONLY:-}" != "1" ] && [ ! -f "$droot/.throughlineignore" ] && [ ! -f "$root/.throughlineignore" ]; then
+    { printf '%s' "$_tl_now_seen" > "$_tl_seen"; } 2>/dev/null || true
+  fi
   if [ "$new_ended" -ne 0 ]; then
     echo
     echo "⚠️ $ended unconsumed session buffer(s) in \`${bufdir#"$droot"/}/\` ($new_ended new since last reported; largest $largest actions) from sessions that ended without being distilled into a handoff. Consider running the handoff to fold them in."

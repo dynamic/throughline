@@ -448,3 +448,18 @@ def test_ending_parent_drops_child_aliases(bridge, repo):
     assert bridge._load()["alias"] == {"child": "parent"}
     ctx.hooks["on_session_finalize"](session_id="parent")
     assert bridge._load() == {"pending": {}, "alias": {}, "root": {}}
+
+
+@needs_tools
+def test_session_start_precompute_records_no_warning_state(bridge, repo):
+    """The precomputed startup block can be discarded (prompt rebuild, delegate child), so
+    computing it must not mark unconsumed buffers as reported (issue #191)."""
+    buf = repo / ".claude" / "throughline" / "buffer"
+    buf.mkdir(parents=True)
+    (buf / "session-old.md").write_text(
+        "- `t` **bash** a - `x`\n- `t` **bash** b - `x`\n- `t` **bash** c - `x`\n"
+        "<!-- session-ended 2024-01-01 00:00:00 (end) -->\n")
+    ctx = registered(bridge, repo)
+    ctx.hooks["on_session_start"](session_id="s1")
+    assert "unconsumed session buffer" in bridge._load()["pending"]["s1"]["text"]
+    assert not (buf / ".unconsumed-reported").exists()

@@ -33,6 +33,12 @@ import {
 
 interface SessionCreatedInput {
   sessionID: string;
+  /**
+   * True for a child session (a task-tool subagent, `info.parentID` set): compute the
+   * block but do not record the unconsumed-buffer warning as reported (issue #191), so
+   * a subagent cannot use up a report the main session needs.
+   */
+  readonly?: boolean;
 }
 
 // Mirrors session-onboard.sh's `git status -s | head -20` — bounded so a
@@ -122,7 +128,7 @@ const ENDED_MARKER = /^<!-- session-ended /;
  * of session-onboard.sh's awk pass). Returns the warning lines to append, or
  * an empty array when there is nothing to report.
  */
-function sweepUnconsumedBuffers(bufDir: string, dataRoot: string, dataDir: string, currentSid: string): string[] {
+function sweepUnconsumedBuffers(bufDir: string, dataRoot: string, dataDir: string, currentSid: string, readonly = false): string[] {
   let files: string[];
   try {
     files = readdirSync(bufDir).filter((f) => f.startsWith("session-") && f.endsWith(".md"));
@@ -135,7 +141,7 @@ function sweepUnconsumedBuffers(bufDir: string, dataRoot: string, dataDir: strin
   // (names kept in buffer/.unconsumed-reported); a class stays quiet until a buffer not
   // on that list appears.
   const minRaw = process.env.THROUGHLINE_UNCONSUMED_MIN ?? "";
-  const min = /^[0-9]+$/.test(minRaw) ? Number(minRaw) : 3;
+  const min = /^[0-9]{1,9}$/.test(minRaw) ? Number(minRaw) : 3; // same 9-digit cap as the shell
   const seenPath = join(bufDir, ".unconsumed-reported");
   let seen = new Set<string>();
   try {
@@ -165,8 +171,8 @@ function sweepUnconsumedBuffers(bufDir: string, dataRoot: string, dataDir: strin
       // must not silently vanish from the count the way "prompt-only" does.
       tlErr(dataDir, `sweepUnconsumedBuffers: read failed for buffer/${f}: ${err}`);
       unsure++;
-      nowSeen.push(f);
-      if (!seen.has(f)) newUnsure++;
+      nowSeen.push(`unsure:${f}`);
+      if (!seen.has(`unsure:${f}`)) newUnsure++;
       continue;
     }
 
@@ -187,8 +193,11 @@ function sweepUnconsumedBuffers(bufDir: string, dataRoot: string, dataDir: strin
     const actions = total - promptOnly;
     if (total > 0 && actions < min) continue; // too little to distill
 
-    nowSeen.push(f);
-    const isNew = !seen.has(f);
+    // Keyed by class, as in the shell: a buffer first reported as possibly live must be
+    // reported again once it has ended.
+    const key = `${isEnded ? "ended" : "unsure"}:${f}`;
+    nowSeen.push(key);
+    const isNew = !seen.has(key);
     if (isEnded) {
       ended++;
       if (isNew) newEnded++;
@@ -199,10 +208,12 @@ function sweepUnconsumedBuffers(bufDir: string, dataRoot: string, dataDir: strin
     }
   }
 
-  try {
-    writeFileSync(seenPath, nowSeen.map((n) => n + "\n").join(""));
-  } catch {
-    // Best-effort: an unwritable buffer dir only means the warning repeats.
+  if (!readonly) {
+    try {
+      writeFileSync(seenPath, nowSeen.map((n) => n + "\n").join(""));
+    } catch {
+      // Best-effort: an unwritable buffer dir only means the warning repeats.
+    }
   }
 
   const lines: string[] = [];
@@ -345,7 +356,10 @@ export async function sessionCreated(
 
   // Unconsumed-buffer sweep (issue #56, P2)
   if (existsSync(bufDir)) {
-    lines.push(...sweepUnconsumedBuffers(bufDir, dataRoot, dataDir, tlSafeSid(input.sessionID)));
+    // An opted-out project (.throughlineignore) still gets the warning, but nothing new is
+    // written into its data dir - same as the shell.
+    const optedOut = state.activeReason === "ignored";
+    lines.push(...sweepUnconsumedBuffers(bufDir, dataRoot, dataDir, tlSafeSid(input.sessionID), input.readonly === true || optedOut));
   }
 
   // Git state (if in worktree)

@@ -398,6 +398,23 @@ describe('Throughline Plugin Integration Tests', () => {
       );
       const again = await sessionCreated(ctx, { sessionID: 'test-session-current' });
       assert.ok(!again!.includes('unconsumed session buffer'), `expected no repeat warning, got: ${again}`);
+
+      // A read-only run (a subagent session) still shows a NEW buffer but records nothing,
+      // and a buffer first seen as possibly live is reported again once it has ended.
+      writeFileSync(
+        join(bufDir, 'session-other-live.md'),
+        '- `2026-01-01 00:00:00` **bash** `a`\n- `2026-01-01 00:00:00` **bash** `b`\n- `2026-01-01 00:00:00` **bash** `c`\n',
+      );
+      const child = await sessionCreated(ctx, { sessionID: 'test-session-child', readonly: true });
+      assert.ok(child!.includes('no end-stamp'), `expected the live buffer in the child, got: ${child}`);
+      const main = await sessionCreated(ctx, { sessionID: 'test-session-current' });
+      assert.ok(main!.includes('no end-stamp'), `expected the read-only run to record nothing, got: ${main}`);
+      writeFileSync(
+        join(bufDir, 'session-other-live.md'),
+        '- `2026-01-01 00:00:00` **bash** `a`\n- `2026-01-01 00:00:00` **bash** `b`\n- `2026-01-01 00:00:00` **bash** `c`\n\n<!-- session-ended 2026-01-01 00:00:01 (idle) -->\n',
+      );
+      const ended = await sessionCreated(ctx, { sessionID: 'test-session-current' });
+      assert.ok(ended!.includes('1 new since last reported'), `expected the now-ended buffer again, got: ${ended}`);
     });
   });
 
