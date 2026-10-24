@@ -852,10 +852,10 @@ describe('jq parity with hooks/_lib.sh (issue #90)', () => {
     // empty list would turn them all into vacuous passes.
     const prefixes = jqPrefixRules();
     const mysql = jqMysqlRules();
-    assert.ok(prefixes.length >= 12, `expected at least 12 _prefix_tokens rules, parsed ${prefixes.length}`);
+    assert.ok(prefixes.length >= 13, `expected at least 13 _prefix_tokens rules, parsed ${prefixes.length}`);
     assert.strictEqual(mysql.length, 5, 'expected 4 quoted + 1 span MySQL rules');
     const patterns = prefixes.map((r) => r.pattern).join('\n');
-    for (const marker of ['ghp_', 'github_pat_', 'gh[oprsu]_', 'xox[baprs]-', 'xapp-', 'sk-[', 'sk|rk', 'AKIA', 'AIza', 'glpat-', 'npm_', 'SG\\.']) {
+    for (const marker of ['ghp_', 'github_pat_', 'gh[oprsu]_', 'xox[baprs]-', 'xapp-', 'sk-[', 'sk|rk', 'AKIA', 'AIza', 'gl(?:pat|', '_gitlab_session=', 'npm_', 'SG\\.']) {
       assert.ok(patterns.includes(marker), `the parsed _prefix_tokens rules do not mention ${marker}`);
     }
   });
@@ -1049,6 +1049,11 @@ describe('issue #81 rules, ported to the OpenCode plugin', () => {
 
   const prefixes = [
     ['glab api -H "X: glpat-' + 'xxxxxxxxxxxxxxxxxxxx"', 'glab api -H "X: glpat-***"'],
+    // issue #175: the rest of GitLab's prefix table, a routable tail, the session cookie.
+    ['gitlab-runner register -r glrt-' + 'xxxxxxxxxxxxxxxxxxxx', 'gitlab-runner register -r glrt-***'],
+    ['curl -H X:glagent-' + 'xxxxxxxxxxxxxxxxxxxx', 'curl -H X:glagent-***'],
+    ['echo glpat-' + 'xxxxxxxxxxxxxxxxxxxx.00.0x0000000. done', 'echo glpat-***. done'],
+    ['curl -b _gitlab_session=' + '0000xxxx0000xxxx0000', 'curl -b _gitlab_session=***'],
     ['deploy --key sk_live_' + 'xxxxxxxxxxxxxxxxxx', 'deploy --key sk_live_***'],
     ['deploy --key rk_test_' + 'xxxxxxxxxxxxxxxxxx', 'deploy --key rk_test_***'],
     ['echo xapp-' + '1-xxxxxxxxxxxx-xxxxxxxxxxxxxxxx-xxxxxxxxxx', 'echo xapp-***'],
@@ -1066,6 +1071,10 @@ describe('issue #81 rules, ported to the OpenCode plugin', () => {
   const prefixFalsePositives = [
     'echo glpat-' + 'xxxxxxxxxxxxxxxxxxx',
     'echo glpat-abc',
+    'echo gldt-' + 'xxxxxxxxxxxxxxxxxxx',
+    'echo bigglft-' + 'xxxxxxxxxxxxxxxxxxxx',
+    'read the glft- prefix docs',
+    'echo my_gitlab_session=' + '0000xxxx0000xxxx0000',
     'cat MSG.errorMessageTemplate.userNotFoundError',
     'ls xapp-config-generator',
     'echo disk_test_' + 'xxxxxxxxxxxxxxxxxx',

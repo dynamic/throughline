@@ -528,6 +528,19 @@ tl_jq_redact_defs() {
   # or an underscore" lookbehind on each. `SG.` is the one that can use `\b`,
   # since it starts with letters and a dot: that is what stops
   # `MSG.errorMessageTemplate.userNotFoundError` from reading as a key.
+  # GitLab (issue #175): every prefix in GitLab's own table at
+  # https://docs.gitlab.com/security/tokens/ ("Token prefixes"), one rule so the
+  # set cannot drift prefix by prefix. `glrtr` is listed before `glrt` so the
+  # alternation never stops short of it. The optional dot segments are a
+  # routable token's `.<version>.<length+crc32>` tail (GitLab's routable tokens
+  # design: <prefix><base64-payload>.<version>.<base64-length><crc32>); a dot
+  # must be followed by a token character, so a sentence-ending period stays.
+  # Known over-match, same as the glpat- rule always had: a prefix followed by a
+  # hyphenated phrase of 20+ word characters (a kebab-case page name that starts
+  # with `glrt-`, say) is masked. Requiring a digit or capital in the body would avoid that, at the
+  # cost of missing a token that happens to have neither.
+  # The `_gitlab_session` cookie value is a session credential with no prefix of
+  # its own, so it is keyed on the cookie name instead.
   def _prefix_tokens:
     gsub("ghp_[A-Za-z0-9]{10,}"; "ghp_***")
     | gsub("github_pat_[A-Za-z0-9_]{10,}"; "github_pat_***")
@@ -538,7 +551,8 @@ tl_jq_redact_defs() {
     | gsub("(?<t>(?<![A-Za-z0-9_])(?:sk|rk)_(?:live|test)_)[A-Za-z0-9]{16,}"; "\(.t)***")
     | gsub("AKIA[0-9A-Z]{12,}"; "AKIA***")
     | gsub("AIza[0-9A-Za-z_\\-]{35}"; "AIza***")
-    | gsub("(?<![A-Za-z0-9_])glpat-[A-Za-z0-9_-]{20,}"; "glpat-***")
+    | gsub("(?<g>(?<![A-Za-z0-9_])gl(?:pat|oas|dt|rtr|rt|cbt|ptt|ft|imt|agent|wt|soat|ffct)-)[A-Za-z0-9_-]{20,}(?:\\.[A-Za-z0-9_-]+)*"; "\(.g)***")
+    | gsub("(?<![A-Za-z0-9_])_gitlab_session=[A-Za-z0-9_-]{16,}"; "_gitlab_session=***")
     | gsub("(?<![A-Za-z0-9_])npm_[A-Za-z0-9]{30,}"; "npm_***")
     | gsub("\\bSG\\.[A-Za-z0-9_-]{16,}\\.[A-Za-z0-9_-]{16,}"; "SG.***");
   # MySQL/MariaDB client-anchored `-p<password>` (issue #81). The flag itself is

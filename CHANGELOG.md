@@ -40,6 +40,10 @@ All notable changes to throughline are documented here. Format loosely follows
   visible as a whole token. It only adds masks; the rule pipeline is unchanged. The
   OpenCode plugin also stops leaking the three non-ASCII inputs it had pinned as known
   leaks. #173.
+- GitLab tokens beyond `glpat-` are masked: every prefix in GitLab's token table
+  (`gloas-`, `gldt-`, `glrt-`/`glrtr-`, `glcbt-`, `glptt-`, `glft-`, `glimt-`, `glagent-`,
+  `glwt-`, `glsoat-`, `glffct-`), a routable token's `.<version>.<length+crc32>` tail,
+  and the `_gitlab_session` cookie. Same rules in the OpenCode port. #175.
 
 ## [0.17.0] - 2026-10-23
 
