@@ -374,7 +374,7 @@ describe('Throughline Plugin Integration Tests', () => {
       // An ended session with a real captured action: should count.
       writeFileSync(
         join(bufDir, 'session-other-ended.md'),
-        '- `2026-01-01 00:00:00` **bash** `echo hi`\n\n<!-- session-ended 2026-01-01 00:00:01 (idle) -->\n',
+        '- `2026-01-01 00:00:00` **bash** `echo hi`\n- `2026-01-01 00:00:00` **bash** `echo two`\n- `2026-01-01 00:00:00` **bash** `echo three`\n\n<!-- session-ended 2026-01-01 00:00:01 (idle) -->\n',
       );
       // A prompt-only buffer: nothing to distill, should NOT count.
       writeFileSync(bufDir + '/session-other-promptonly.md', '- `2026-01-01 00:00:00` **prompt** "hi"\n');
@@ -387,7 +387,17 @@ describe('Throughline Plugin Integration Tests', () => {
       const result = await sessionCreated(ctx, { sessionID: 'test-session-current' });
       assert.ok(result, 'expected a context block');
       assert.ok(result!.includes('1 unconsumed session buffer'), `expected exactly 1 unconsumed buffer, got: ${result}`);
+      assert.ok(result!.includes('1 new since last reported; largest 3 actions'), `expected the new/largest note, got: ${result}`);
       assert.ok(!result!.includes('promptonly'));
+
+      // Issue #191: the same buffer is not reported again, and a buffer below the
+      // 3-action threshold is never reported.
+      writeFileSync(
+        join(bufDir, 'session-other-small.md'),
+        '- `2026-01-01 00:00:00` **bash** `echo one`\n\n<!-- session-ended 2026-01-01 00:00:01 (idle) -->\n',
+      );
+      const again = await sessionCreated(ctx, { sessionID: 'test-session-current' });
+      assert.ok(!again!.includes('unconsumed session buffer'), `expected no repeat warning, got: ${again}`);
     });
   });
 

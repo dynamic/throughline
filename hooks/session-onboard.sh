@@ -500,9 +500,25 @@ fi
 # (the process was killed and SessionEnd never fired), but it could just as
 # easily be a session still running live in another terminal, so it gets hedged
 # wording instead of being asserted as "ended" when that isn't actually known.
+# Issue #191: the warning used to appear in 86% of sessions, because most sessions end
+# without a handoff and every later session re-reported the same pile, so it stopped
+# telling the agent anything. Two filters keep it meaningful:
+#   - a buffer counts only with at least THROUGHLINE_UNCONSUMED_MIN (default 3) action
+#     records - a one-command session has little to distill;
+#   - a buffer is reported once: the names reported are kept in
+#     `buffer/.unconsumed-reported`, and a class of warning stays quiet until a buffer
+#     not on that list appears (the counts then cover the whole pile, with how many
+#     are new and how large the largest is, so the reader can judge what is at stake).
 if [ -d "$bufdir" ]; then
   ended=0
   unsure=0
+  new_ended=0
+  new_unsure=0
+  largest=0
+  _tl_min=${THROUGHLINE_UNCONSUMED_MIN:-3}
+  case "$_tl_min" in ''|*[!0-9]*) _tl_min=3 ;; esac
+  _tl_seen="$bufdir/.unconsumed-reported"
+  _tl_now_seen=""
   for f in "$bufdir"/session-*.md; do
     [ -f "$f" ] || continue
     [ -n "$sid" ] && [ "$f" = "$bufdir/session-$sid.md" ] && continue
@@ -562,17 +578,32 @@ if [ -d "$bufdir" ]; then
     set -- $_tl_counts
     total=${1:-0}; promptonly=${2:-0}; is_ended=${3:-0}
     [ "$total" -gt 0 ] && [ "$total" -eq "$promptonly" ] && continue
+    actions=$((total - promptonly))
+    # Below the size threshold: too little to distill. A buffer with zero conforming
+    # lines (total 0) is still counted - see the fail-safe note above.
+    [ "$total" -gt 0 ] && [ "$actions" -lt "$_tl_min" ] && continue
+    _tl_name=${f##*/}
+    _tl_now_seen="$_tl_now_seen$_tl_name
+"
+    _tl_is_new=1
+    [ -f "$_tl_seen" ] && grep -Fxq "$_tl_name" "$_tl_seen" 2>/dev/null && _tl_is_new=0
     if [ "$is_ended" -eq 1 ]; then
       ended=$((ended + 1))
+      new_ended=$((new_ended + _tl_is_new))
+      [ "$actions" -gt "$largest" ] && largest=$actions
     else
       unsure=$((unsure + 1))
+      new_unsure=$((new_unsure + _tl_is_new))
     fi
   done
-  if [ "$ended" -ne 0 ]; then
+  # Remember what was reported. Best-effort: an unwritable buffer dir only means the
+  # warning repeats next session, which is the old behaviour.
+  printf '%s' "$_tl_now_seen" > "$_tl_seen" 2>/dev/null || true
+  if [ "$new_ended" -ne 0 ]; then
     echo
-    echo "⚠️ $ended unconsumed session buffer(s) in \`${bufdir#"$droot"/}/\` from sessions that ended without being distilled into a handoff. Consider running the handoff to fold them in."
+    echo "⚠️ $ended unconsumed session buffer(s) in \`${bufdir#"$droot"/}/\` ($new_ended new since last reported; largest $largest actions) from sessions that ended without being distilled into a handoff. Consider running the handoff to fold them in."
   fi
-  if [ "$unsure" -ne 0 ]; then
+  if [ "$new_unsure" -ne 0 ]; then
     echo
     echo "ℹ️ $unsure other session buffer(s) in \`${bufdir#"$droot"/}/\` with no end-stamp - could be live in another terminal, or could have exited without a clean shutdown. If none are still running, consider running the handoff."
   fi
