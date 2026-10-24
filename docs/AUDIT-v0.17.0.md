@@ -7,8 +7,8 @@ are tracked as epics #166-#172; sequencing is in [ROADMAP.md](ROADMAP.md). This 
 dated snapshot and is not kept up to date.
 
 Measurements come from one maintainer machine (macOS) running Claude Code, Codex CLI,
-OpenCode and OMP; Hermes runs on a separate host and was not inspected. Project names
-are omitted.
+OpenCode and OMP, plus a read-only log check of the production Hermes gateway host.
+Project names are omitted.
 
 ## What works
 
@@ -145,6 +145,28 @@ ship skills, though OpenCode discovers skills installed for other harnesses).
 - Codex capture of shell and MCP calls was confirmed by hand on Codex Desktop
   (2026-08-25); whether its edit tool names match the `Bash|Edit|Write|...`
   PostToolUse matcher is unverified. #199.
+
+### Hermes on a gateway host
+
+Checked read-only on the production Hermes host (Hermes v0.22.4, throughline v0.17.0
+pinned, `jq` and `git` present) for the first day after install:
+
+- **Loads cleanly.** No throughline error in the agent, error or gateway logs.
+- **Captures nothing.** Inbound traffic was 24 webhook messages, 4 local messages
+  and a steady stream of cron runs. The bridge's default surfaces (`cli`, `tui`,
+  `desktop`, `acp`, `local`) skip webhook and cron sessions by design, and the 4
+  local sessions ran in the default `terminal.cwd`, which is not a git repo. No
+  `.claude/throughline/` directory exists on the host outside the plugin's own
+  install directory. Deciding what gateway sessions should capture: #216.
+- **Log noise, not a fault.** About 250-330 lines a day read `capability_check
+  plugin=throughline capability=tools.override decision=deny`. Hermes logs that
+  line for every non-bundled plugin each time plugins load; three other plugins log
+  it at the same rate, and throughline overrides no tool.
+- **Install payload.** The repo's `demo/` directory, including its sample
+  `.claude/throughline/` data, ships inside every plugin install.
+- **Test implication.** The Hermes live leg (#202) has to run in a git-repo
+  workspace and assert that a buffer was written; checking for errors alone would
+  pass on a host that captures nothing.
 
 ### Repo hygiene
 

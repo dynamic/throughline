@@ -47,8 +47,9 @@ Security fixes, operator visibility, and the guards later work depends on.
   update commands in INSTALL.md.
 - **Shared checks.** #205 and #206, then #207. Goal: CI and local-ci call the same
   scripts. #208 fixes two doc gaps.
-- **Investigations.** #183, #184, #187, #188 and #190. Each ends in a finding, and
-  a fix issue where one is needed.
+- **Investigations.** #183, #184, #187, #188, #190, and #216 (what Hermes should
+  capture on a gateway host). Each ends in a finding, and a fix issue where one is
+  needed.
 
 ## Next
 
