@@ -236,6 +236,46 @@ function sweepUnconsumedBuffers(bufDir: string, dataRoot: string, dataDir: strin
 }
 
 /**
+ * Consolidate trigger (issue #192), mirroring session-onboard.sh: count session logs
+ * whose filename sorts after the consolidate marker - the greatest
+ * `through handoff-....md` on a `(session logs)` line under HANDOFF.md's
+ * "Consolidation passes" (issue #136) - and suggest the skill once
+ * THROUGHLINE_CONSOLIDATE_AFTER (default 8) have piled up. No marker: every log counts.
+ */
+function consolidateNudge(dataDir: string, handoffPath: string): string[] {
+  const raw = process.env.THROUGHLINE_CONSOLIDATE_AFTER ?? "";
+  const after = /^[0-9]{1,9}$/.test(raw) ? Number(raw) : 8;
+  let logs: string[];
+  try {
+    logs = readdirSync(join(dataDir, "logs")).filter((f) => /^handoff-.*\.md$/.test(f));
+  } catch {
+    return [];
+  }
+  let marker = "";
+  try {
+    let inside = false;
+    for (const line of readFileSync(handoffPath, "utf-8").split("\n")) {
+      if (/^#+\s*Consolidation passes/.test(line)) { inside = true; continue; }
+      if (/^#+\s/.test(line)) { inside = false; continue; }
+      if (!inside || !line.includes("(session logs)")) continue;
+      for (const m of line.matchAll(/through (handoff-[0-9-]*\.md)/g)) {
+        if (m[1] > marker) marker = m[1];
+      }
+    }
+  } catch {
+    // No HANDOFF.md: no marker, every log counts.
+  }
+  const unread = logs.filter((f) => f > marker).length;
+  if (after <= 0 || unread < after) return [];
+  return [
+    "",
+    marker
+      ? `💡 ${unread} session logs since the last consolidate pass (through \`${marker}\`). Consider running the consolidate skill to promote lessons that recur across them.`
+      : `💡 ${unread} session logs and no recorded consolidate pass. Consider running the consolidate skill to promote lessons that recur across them.`,
+  ];
+}
+
+/**
  * Session created hook implementation.
  */
 export async function sessionCreated(
@@ -356,6 +396,9 @@ export async function sessionCreated(
       );
     }
   }
+
+  // Consolidate trigger (issue #192), mirroring session-onboard.sh.
+  lines.push(...consolidateNudge(dataDir, handoffPath));
 
   // Unconsumed-buffer sweep (issue #56, P2)
   if (existsSync(bufDir)) {

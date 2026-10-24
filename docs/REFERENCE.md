@@ -117,6 +117,17 @@ the largest. To change the size threshold:
 export THROUGHLINE_UNCONSUMED_MIN=3   # the default; 1 reports any buffer with an action
 ```
 
+### Consolidate suggestion
+
+On a fresh session start, throughline counts the session logs written since the
+`consolidate` skill's last pass (the newest `through handoff-....md` it recorded under
+HANDOFF.md's "Consolidation passes") and suggests running it once enough have piled up.
+With no recorded pass, every log counts. To change the threshold:
+
+```sh
+export THROUGHLINE_CONSOLIDATE_AFTER=8   # the default; 0 turns the suggestion off
+```
+
 ### Local by default
 
 throughline's data - `HANDOFF.md`, `logs/`, `buffer/`, everything under the data

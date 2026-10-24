@@ -10,6 +10,9 @@ All notable changes to throughline are documented here. Format loosely follows
   or draft written before them, record-aware (prose-safe rules on prompt, websearch and
   agent records), and prints one line per changed file with counts by class, never a
   value. #176.
+- SessionStart suggests the `consolidate` skill once `THROUGHLINE_CONSOLIDATE_AFTER`
+  (default 8) session logs have been written since its last pass, read from the
+  `through handoff-....md` marker #136 introduced. Same in the OpenCode plugin. #192.
 - `tests/skill-lint.sh`, run by `tests/run.sh`: every SKILL.md's frontmatter (`name`
   matches its directory, a description of at most 300 characters), a per-skill byte
   budget that only ratchets down, and that every repo path a skill names exists. #195.
