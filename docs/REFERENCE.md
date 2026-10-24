@@ -185,8 +185,12 @@ sh "$CLAUDE_PLUGIN_ROOT/hooks/session-onboard.sh" --doctor
 It reports the resolved root and data root (and whether they differ, i.e.
 worktree-sharing applies), the activation state and why (`disabled` /
 `ignored` / `active` / `would-bootstrap`), whether `jq` is on `PATH`, live vs.
-archived buffer counts, and the three env vars' current values. It is
-read-only: unlike a real hook run, it never bootstraps a data directory as a
+archived buffer counts, and the three env vars' current values. It also lists
+the throughline version each harness on the machine has installed (Claude Code,
+Codex, OpenCode per plugin spec, OMP link and marketplace installs, Hermes), read from
+each harness's own install record, and marks any older than the copy running the
+doctor. Run it from the newest copy you have: an old copy cannot flag a newer one.
+It is read-only and offline: unlike a real hook run, it never bootstraps a data directory as a
 side effect, so it's safe to run out of curiosity on a project that has never
 activated throughline.
 

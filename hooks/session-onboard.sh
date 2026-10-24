@@ -106,6 +106,133 @@ if [ "${1:-}" = "--doctor" ]; then
   echo "activation:        $state ($reason)"
   echo "jq:                $jq_state"
   echo "buffers:           $live live, $archived archived"
+  # Installed versions per harness (issue #181). Read-only and offline: each
+  # harness's own install record on disk, nothing fetched. A harness with no
+  # throughline install prints nothing. "older" compares against the version of
+  # the scripts running this doctor, so a doctor from an old install cannot flag
+  # a newer one; run it from the newest copy for a full picture.
+  #
+  # _tl_json_ver FILE: the top-level "version" of a package.json-shaped file,
+  # through jq when present and a first-match sed otherwise, so the doctor still
+  # reads versions in the jq-missing environment it exists to diagnose.
+  _tl_json_ver() {
+    [ -r "$1" ] || return 0
+    if tl_have_jq; then
+      jq -r '.version // empty' "$1" 2>/dev/null
+    else
+      sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$1" 2>/dev/null | head -n 1
+    fi
+  }
+  # _tl_yaml_ver FILE: the `version:` line of a plugin.yaml, quotes and CR stripped.
+  _tl_yaml_ver() {
+    sed -n 's/^version:[[:space:]]*//p' "$1" 2>/dev/null | tr -d '\r"'"'" | head -n 1
+  }
+  _tl_self=$(_tl_yaml_ver "$DIR/../plugin.yaml")
+  [ -n "$_tl_self" ] || _tl_self=$(_tl_json_ver "$DIR/../.claude-plugin/plugin.json")
+  # _tl_older A B: true when version A sorts before B (numeric x.y.z; a
+  # pre-release or build suffix is ignored).
+  _tl_older() {
+    _tl_a=${1%%[-+]*}; _tl_b=${2%%[-+]*}
+    for _tl_i in 1 2 3; do
+      _tl_x=${_tl_a%%.*}; _tl_y=${_tl_b%%.*}
+      case "$_tl_x" in ''|*[!0-9]*) _tl_x=0 ;; esac
+      case "$_tl_y" in ''|*[!0-9]*) _tl_y=0 ;; esac
+      [ "$_tl_x" -lt "$_tl_y" ] && return 0
+      [ "$_tl_x" -gt "$_tl_y" ] && return 1
+      case "$_tl_a" in *.*) _tl_a=${_tl_a#*.} ;; *) _tl_a=0 ;; esac
+      case "$_tl_b" in *.*) _tl_b=${_tl_b#*.} ;; *) _tl_b=0 ;; esac
+    done
+    return 1
+  }
+  _tl_vers=""
+  # _tl_note LABEL TEXT: append a report line that carries no version to compare.
+  _tl_note() {
+    _tl_vers="$_tl_vers$(printf '  %-13s %s' "$1:" "$2")
+"
+  }
+  # _tl_ver LABEL VERSION [DETAIL]: append one report line.
+  _tl_ver() {
+    [ -n "$2" ] || return 0
+    _tl_line=$(printf '  %-13s %s' "$1:" "$2")
+    [ -n "${3:-}" ] && _tl_line="$_tl_line ($3)"
+    if [ -n "$_tl_self" ] && _tl_older "$2" "$_tl_self"; then
+      _tl_line="$_tl_line  OLDER than $_tl_self"
+    fi
+    _tl_vers="$_tl_vers$_tl_line
+"
+  }
+  # _tl_registry LABEL FILE DETAIL: every throughline@* entry of an
+  # installed_plugins.json (Claude Code's, and OMP's marketplace installs, which
+  # use the same shape). DETAIL replaces an entry's scope when given.
+  _tl_registry() {
+    [ -f "$2" ] || return 0
+    if ! tl_have_jq; then
+      _tl_note "$1" "installed, version not read (jq missing)"
+      return 0
+    fi
+    _tl_rows=$(jq -r '.plugins // {} | to_entries[] | select(.key | startswith("throughline@")) | .value[]? | "\(.version // "?")|\(.scope // "")"' "$2" 2>/dev/null)
+    while IFS='|' read -r _tl_v _tl_s; do
+      [ -n "$_tl_v" ] || continue
+      _tl_ver "$1" "$_tl_v" "${3:-$_tl_s}"
+    done <<EOF
+$_tl_rows
+EOF
+  }
+  _tl_registry "claude code" "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/installed_plugins.json"
+  # Codex keeps one cache directory per installed version; the newest is reported.
+  _tl_cx=""
+  for _tl_d in "${CODEX_HOME:-$HOME/.codex}"/plugins/cache/throughline/throughline/*/; do
+    [ -d "$_tl_d" ] || continue
+    _tl_d=${_tl_d%/}; _tl_d=${_tl_d##*/}
+    if [ -z "$_tl_cx" ] || _tl_older "$_tl_cx" "$_tl_d"; then _tl_cx=$_tl_d; fi
+  done
+  _tl_ver "codex" "$_tl_cx"
+  # OpenCode caches one install per plugin spec (`@dynamicagency/throughline-opencode`,
+  # `...@latest`, a pinned version); each spec resolves on its own, so each is listed.
+  for _tl_d in "${XDG_CACHE_HOME:-$HOME/.cache}"/opencode/packages/@dynamicagency/throughline-opencode*; do
+    _tl_p="$_tl_d/node_modules/@dynamicagency/throughline-opencode/package.json"
+    [ -f "$_tl_p" ] || continue
+    _tl_ver "opencode" "$(_tl_json_ver "$_tl_p")" "@dynamicagency/${_tl_d##*/}"
+  done
+  # OMP has two install paths, and both can be present at once (which fires every
+  # capture twice; INSTALL.md warns against it), so each is reported. A link
+  # install tracks a checkout, so the linked package.json is the truth and the
+  # lock file's version, recorded at link time, is not; the lock is read only for
+  # an npm install with no link. A marketplace install records itself in OMP's
+  # own installed_plugins.json instead.
+  _tl_om="$HOME/.omp/plugins"
+  _tl_omv="" _tl_omd="" _tl_oml=""
+  for _tl_n in throughline throughline-omp; do
+    _tl_l="$_tl_om/node_modules/@dynamicagency/$_tl_n"
+    [ -L "$_tl_l" ] || continue
+    _tl_oml=$_tl_l
+    if [ -r "$_tl_l/package.json" ]; then
+      _tl_omv=$(_tl_json_ver "$_tl_l/package.json")
+      _tl_omd="link -> $(cd -P -- "$_tl_l" 2>/dev/null && pwd)"
+    fi
+    break
+  done
+  if [ -n "$_tl_oml" ] && [ -z "$_tl_omd" ]; then
+    _tl_note "omp" "link broken: $_tl_oml points at a checkout that is gone"
+  elif [ -n "$_tl_omd" ]; then
+    _tl_ver "omp" "$_tl_omv" "$_tl_omd"
+  elif [ -f "$_tl_om/omp-plugins.lock.json" ]; then
+    if tl_have_jq; then
+      _tl_ver "omp" "$(jq -r '(.plugins["@dynamicagency/throughline"] // .plugins["@dynamicagency/throughline-omp"] // {}).version // empty' "$_tl_om/omp-plugins.lock.json" 2>/dev/null)" "npm"
+    elif grep -q '"@dynamicagency/throughline' "$_tl_om/omp-plugins.lock.json" 2>/dev/null; then
+      _tl_note "omp" "installed, version not read (jq missing)"
+    fi
+  fi
+  _tl_registry "omp" "$_tl_om/installed_plugins.json" "marketplace"
+  _tl_ver "hermes" "$(_tl_yaml_ver "${HERMES_HOME:-$HOME/.hermes}/plugins/throughline/plugin.yaml")"
+
+  echo
+  echo "installed versions (this doctor: ${_tl_self:-unknown}):"
+  if [ -n "$_tl_vers" ]; then
+    printf '%s' "$_tl_vers"
+  else
+    echo "  none found"
+  fi
   echo
   echo "env vars:"
   echo "  THROUGHLINE_DATA_DIR=${THROUGHLINE_DATA_DIR:-<unset>}"

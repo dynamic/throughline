@@ -12,6 +12,9 @@ All notable changes to throughline are documented here. Format loosely follows
   both call them, and `.local-ci.json` gained CI's shellcheck step. #205, #206, #207.
 
 ### Changed
+- `--doctor` lists the installed throughline version per harness (Claude Code, Codex,
+  OpenCode, OMP, Hermes) from each harness's own install record, and marks the ones
+  older than the copy running it. #181.
 - REFERENCE.md documents `THROUGHLINE_HERMES_SURFACES` in Configuration; README describes
   consolidate as on demand or when HANDOFF.md is bloated, matching the skill. #208.
 
