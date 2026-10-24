@@ -246,6 +246,13 @@ having to carry it. Omit the line entirely for a session that starts something n
    un-ignoring `HANDOFF.md`/`logs/`, so on an unmodified default layout it will
    correctly find nothing to stage and skip silently. Do not treat "nothing
    offered" as a bug; it's the expected outcome unless the project opted in.
+   - **Check for a repo first.** Run `git -C <the directory that contains DATA>
+     rev-parse --is-inside-work-tree` before any other git command in this step.
+     If it fails, the project is not a git repository (throughline also captures
+     in plain directories): skip the offer and say so in one line ("not a git
+     repository, so there is nothing to commit"). Do not run `git check-ignore`,
+     `git add` or `git status` there - each fails with `fatal: not a git
+     repository`.
    - If `DATA` lives outside the current project's git tree (an absolute
      `THROUGHLINE_DATA_DIR` pointed at a shared, cross-harness location - a
      documented, supported config), skip the offer entirely: those files aren't

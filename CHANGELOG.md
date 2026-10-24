@@ -32,6 +32,9 @@ All notable changes to throughline are documented here. Format loosely follows
   consolidate as on demand or when HANDOFF.md is bloated, matching the skill. #208.
 
 ### Fixed
+- The handoff skill checks for a git repository before its commit/push offer and skips
+  the offer with one line outside one, instead of running git commands that fail with
+  `fatal: not a git repository` (15 times in local transcripts). #193.
 - A second handoff in the same session no longer overwrites the first run's archived
   buffer. `hooks/archive-buffer.sh` appends to an existing archive under an
   `<!-- archive-append -->` marker, and the handoff skill archives through it (with a
