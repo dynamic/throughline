@@ -27,10 +27,20 @@ today (OMP has its own native memory tools, but throughline doesn't integrate wi
 them yet).
 
 **Updating.** Installed plugins are snapshots - they do not track this repo. An old
-copy keeps running (without newer redaction and activation fixes) until you update it
-from the `/plugin` manager (or uninstall and reinstall), then `/reload-plugins`. The
-SessionStart block prints the running version (`## throughline vX.Y.Z`) - if it lags
-this repo's releases, your install is stale.
+copy keeps running (without newer redaction and activation fixes) until you update it.
+Refresh the marketplace first, so the update sees the new release, then update the
+plugin:
+
+```sh
+claude plugin marketplace update throughline
+claude plugin update throughline@throughline
+```
+
+Restart Claude Code to load the new copy (`claude plugin update` says a restart is
+required). Inside a session, the `/plugin` manager does the same. The SessionStart block
+prints the running version (`## throughline vX.Y.Z`), and `session-onboard.sh --doctor`
+(see REFERENCE.md "Troubleshooting") lists the version every harness on the machine has
+installed - if either lags this repo's releases, that install is stale.
 
 ## Codex CLI
 
@@ -66,10 +76,17 @@ with an Installed/Active count, and pressing Enter on a row shows that hook's
 hook reads `Source: Plugin - throughline@throughline`, `Trust: Trusted`.
 
 **Updating.** Same story as Claude Code: an installed plugin is a snapshot, not a
-live checkout. Update from `codex plugin add throughline@throughline` again (or the
-Codex plugin manager) to pick up the latest release - a throughline update also
-changes the hook scripts' content hash, so the trust dialog reappears once on Codex
-CLI.
+live checkout. Refresh the marketplace snapshot, then add the plugin again, which
+replaces the cached copy with the latest release:
+
+```sh
+codex plugin marketplace upgrade throughline
+codex plugin add throughline@throughline
+```
+
+Trust is granted by content hash, so if the update changes the hooks, Codex CLI shows
+the "Hooks need review" dialog once more: choose "Trust all and continue" again.
+`codex plugin remove throughline@throughline` uninstalls.
 
 ## OpenCode
 
@@ -113,12 +130,25 @@ machine are frequently already visible to OpenCode with no extra step.
 By default the OpenCode plugin uses the same `.claude/throughline/` data directory
 as Claude Code and Codex, so a project's history stays continuous across harnesses.
 
-**Updating.** An installed plugin is a versioned snapshot, same as Claude Code and
-Codex - bumping the version in `opencode.json` (or letting Bun resolve a new
-range) is what picks up a release, not a `git pull`. The running version is
-printed in the injected session-start block (`## throughline vX.Y.Z`) the same way
-it is on Claude Code and Codex - if it lags this repo's releases, your install is
-stale.
+**Updating.** OpenCode installs each plugin spec once and caches it under
+`~/.cache/opencode/packages/`, one directory per spec. An unpinned entry
+(`@dynamicagency/throughline-opencode`, or `...@latest`) stays on the version it first
+resolved; a newer release does not replace it on restart. Two ways to move to a
+release:
+
+- Pin it. This installs that version right away and rewrites the entry in your global
+  config (drop `-g` for the project config):
+  ```sh
+  opencode plugin @dynamicagency/throughline-opencode@<version> -g -f
+  ```
+- Keep the unpinned entry and clear its cache, then restart OpenCode:
+  ```sh
+  rm -rf ~/.cache/opencode/packages/@dynamicagency/throughline-opencode*
+  ```
+
+The running version is printed in the injected session-start block
+(`## throughline vX.Y.Z`) the same way it is on Claude Code and Codex - if it lags
+this repo's releases, your install is stale.
 
 Publishing to npm is tag-triggered: pushing a `vX.Y.Z` tag runs a GitHub Actions
 workflow that publishes `@dynamicagency/throughline-opencode` via npm Trusted
@@ -179,9 +209,15 @@ install), `git pull` is the update step - no separate reinstall needed. The runn
 version is printed in the injected session-start block (`## throughline vX.Y.Z`),
 same as every other harness.
 
-**Upgrading from an earlier link.** Older checkouts were linked from `.omp-plugin`. That
-directory no longer carries `skills/` or `hooks/`, so remove the old link and relink from
-the repo root: `omp plugin uninstall @dynamicagency/throughline-omp && omp plugin link .`
+**Uninstalling a link.** `omp plugin uninstall` takes the npm package name that
+`omp plugin list` shows for a link install, not the manifest's `throughline`:
+`omp plugin uninstall @dynamicagency/throughline`.
+
+**Upgrading from an earlier link.** Before v0.17.0, checkouts were linked from
+`.omp-plugin`, whose package was `@dynamicagency/throughline-omp`. That directory no
+longer carries `skills/` or `hooks/`, so remove the old link by that package name and
+relink from the repo root:
+`omp plugin uninstall @dynamicagency/throughline-omp && omp plugin link .`
 
 **Marketplace install (alternative).** If you don't want a local checkout to
 manage:
@@ -196,8 +232,15 @@ when there's no OMP-native marketplace file, so this works against the same
 repo without any extra OMP-specific manifest. Unlike `omp plugin link`, this
 installs a versioned snapshot into `~/.omp/plugins/cache/` (discovered through a
 different code path - OMP's `claude-plugins` provider, not the `omp-plugins` one
-`omp plugin link` uses) - updating means re-running `omp plugin install
-throughline@throughline` for a new version, not `git pull`.
+`omp plugin link` uses). Update it from the marketplace, not with `git pull`:
+
+```sh
+omp plugin marketplace update throughline
+omp plugin upgrade throughline@throughline
+```
+
+A marketplace install is addressed by its marketplace id, so it uninstalls with
+`omp plugin uninstall throughline@throughline`.
 
 **Do not use both install methods on the same machine.** The link and the
 marketplace snapshot are different files on disk, so OMP would register the hook
@@ -243,7 +286,11 @@ that.
 Plugin-internal state (pending injections) is kept in
 `<hermes home>/plugin-data/throughline/`, never in the install directory.
 
-**Updating.** `hermes plugins update throughline`.
+**Updating.** `hermes plugins update throughline` pulls the latest release;
+`hermes plugins check-updates` reports first without changing anything. An update
+re-runs Hermes's security scan, and a caution verdict asks before applying (`--force`
+applies it without asking). Restart the gateway or open a new session afterward.
+`hermes plugins remove throughline` uninstalls.
 
 ## npx skills
 
