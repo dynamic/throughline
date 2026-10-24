@@ -1881,6 +1881,13 @@ MF_OUT=$(mf_run "$WORK/manifests/changelog"); MF_RC=$?
 eq "check-manifests: a CHANGELOG top heading ahead of the manifests exits non-zero" "$MF_RC" "1"
 has "check-manifests: the CHANGELOG failure says which heading" "$MF_OUT" "first heading is [0.0.1]"
 
+mf_fixture released
+# A synthetic CHANGELOG, so the case does not depend on the live file's top.
+printf '# Changelog\n\n## [Unreleased]\n\n- x\n\n## [0.0.2] - 2026-01-01\n\n- y\n' > "$WORK/manifests/released/CHANGELOG.md"
+MF_OUT=$(mf_run "$WORK/manifests/released"); MF_RC=$?
+eq "check-manifests: [Unreleased] on top but no heading for the manifest version exits non-zero" "$MF_RC" "1"
+has "check-manifests: the released-heading failure says which heading" "$MF_OUT" "first released heading is [0.0.2]"
+
 mf_fixture badjson
 printf '{' > "$WORK/manifests/badjson/.claude-plugin/plugin.json"
 MF_OUT=$(mf_run "$WORK/manifests/badjson"); MF_RC=$?
@@ -1896,6 +1903,22 @@ TY_OUT=$(sh "$ROOT/scripts/check-typography.sh" "$WORK/typo/clean.md" 2>&1); TY_
 eq "check-typography: an ASCII fixture passes" "$TY_RC" "0"
 TY_OUT=$(sh "$ROOT/scripts/check-typography.sh" "$WORK/typo/missing.md" 2>&1); TY_RC=$?
 eq "check-typography: a missing file is an error, not a clean pass" "$TY_RC" "1"
+# The default mode CI runs, pointed at a fixture checkout with --root.
+TYR="$WORK/typo/repo"
+mkdir -p "$TYR/docs" "$TYR/.claude-plugin"
+printf 'plain\n' > "$TYR/README.md"; printf 'plain\n' > "$TYR/docs/INSTALL.md"
+printf '<p>plain</p>\n' > "$TYR/docs/index.html"; printf '{}\n' > "$TYR/.claude-plugin/marketplace.json"
+( cd "$TYR" && git init -q && git add -A && git commit -q -m init ) 2>/dev/null || bad "typography fixture repo setup failed"
+TY_OUT=$(sh "$ROOT/scripts/check-typography.sh" --root "$TYR" 2>&1); TY_RC=$?
+eq "check-typography: default mode passes a clean checkout" "$TY_RC" "0"
+printf 'a \342\200\234quoted\342\200\235 b\n' > "$TYR/docs/INSTALL.md"
+( cd "$TYR" && git commit -qam dash ) 2>/dev/null
+TY_OUT=$(sh "$ROOT/scripts/check-typography.sh" --root "$TYR" 2>&1); TY_RC=$?
+eq "check-typography: default mode fails on a curly quote in docs/" "$TY_RC" "1"
+( cd "$TYR" && git rm -q README.md && git commit -qm gone ) 2>/dev/null
+TY_OUT=$(sh "$ROOT/scripts/check-typography.sh" --root "$TYR" 2>&1); TY_RC=$?
+eq "check-typography: default mode with README.md gone is an error, not a clean pass" "$TY_RC" "1"
+has "check-typography: the missing-path error says so" "$TY_OUT" "missing or untracked"
 
 # --- no credential-shaped literals in tracked files ---------------------------
 # The Claude plugin directory ships the whole repo and rejects any file holding

@@ -30,7 +30,7 @@ x=$(jq -r .version .codex-plugin/plugin.json 2>/dev/null)
 o=$(jq -r .version .opencode-plugin/package.json 2>/dev/null)
 m=$(jq -r .version package.json 2>/dev/null)
 h=$(jq -r .version .omp-plugin/package.json 2>/dev/null)
-y=$(sed -n 's/^version: //p' plugin.yaml)
+y=$(sed -n 's/^version: //p' plugin.yaml | tr -d '\r')
 if [ -z "$c" ] || [ "$c" != "$x" ] || [ "$c" != "$o" ] || [ "$c" != "$m" ] || [ "$c" != "$h" ] || [ "$c" != "$y" ]; then
   bad "version drift: .claude-plugin/plugin.json=$c .codex-plugin/plugin.json=$x .opencode-plugin/package.json=$o package.json=$m .omp-plugin/package.json=$h plugin.yaml=$y"
 fi
