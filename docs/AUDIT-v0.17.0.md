@@ -7,8 +7,8 @@ are tracked as epics #166-#172; sequencing is in [ROADMAP.md](ROADMAP.md). This 
 dated snapshot and is not kept up to date.
 
 Measurements come from one maintainer machine (macOS) running Claude Code, Codex CLI,
-OpenCode and OMP, plus a read-only log check of the production Hermes gateway host.
-Project names are omitted.
+OpenCode and OMP, plus a read-only check (logs and filesystem) of the production
+Hermes gateway host. Project names are omitted.
 
 ## What works
 
@@ -163,7 +163,9 @@ pinned, `jq` and `git` present) for the first day after install:
   line for every non-bundled plugin each time plugins load; three other plugins log
   it at the same rate, and throughline overrides no tool.
 - **Install payload.** The repo's `demo/` directory, including its sample
-  `.claude/throughline/` data, ships inside every plugin install.
+  `.claude/throughline/` data, ships inside every plugin install, so a scan for
+  throughline data dirs finds a fake one in each install directory. Tracked in
+  epic #172 (Later).
 - **Test implication.** The Hermes live leg (#202) has to run in a git-repo
   workspace and assert that a buffer was written; checking for errors alone would
   pass on a host that captures nothing.
