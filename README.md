@@ -202,7 +202,8 @@ machine-wide. It shares one data dir across a repo's git worktrees.
 
 Git worktrees, the opt-out marker, the kill switch, committing `HANDOFF.md` to
 a team repo (and the trust boundary that implies), and cleanup guidance are all
-in [docs/REFERENCE.md](docs/REFERENCE.md).
+in [docs/REFERENCE.md](docs/REFERENCE.md). What's planned next is in
+[docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Auto-handoff at wrap-up (optional reinforcement)
 
