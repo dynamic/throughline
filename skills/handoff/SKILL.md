@@ -251,8 +251,8 @@ having to carry it. Omit the line entirely for a session that starts something n
      --is-inside-work-tree` before any other git command here (the project root,
      not DATA; in a linked worktree, the main working tree). Unless it prints
      `true`, skip the offer silently and run no other git command - throughline
-     also captures in plain directories, where each fails with `fatal: not a git
-     repository`.
+     also captures in plain directories, where those commands fail with `fatal:
+     not a git repository`.
    - If `DATA` lives outside the current project's git tree (an absolute
      `THROUGHLINE_DATA_DIR` pointed at a shared, cross-harness location - a
      documented, supported config), skip the offer entirely: those files aren't
@@ -311,10 +311,9 @@ Those are durable facts; they go to native memory (Phase 4 step 4), not here:
 1. [Title](logs/handoff-YYYY-MM-DD-HHMM.md) — YYYY-MM-DD
 ```
 
-Do not pre-seed a **"Consolidation passes"** section (note the exact casing — matches
-Phase 2 and `consolidate`'s own lookup, which is case-sensitive). Leave it absent until
-`consolidate`'s own Phase 4 creates it on its first pass; adding an empty one here just
-gives `consolidate` a stray, differently-worded header to reconcile against.
+Do not pre-seed a **"Consolidation passes"** or **"Memory hygiene passes"** section: each
+is created by its own skill (`consolidate`, `consolidate-memory`) on its first run, and an
+empty one here only gives that skill a stray header to reconcile against.
 
 A project migrating from the old template: at the next handoff, sort its existing
 Architecture/Environment/Tools/Auth/Key-Files content into memory topic files (Phase 4
