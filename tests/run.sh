@@ -2010,6 +2010,32 @@ else
   bad "jq defs: emitted text is $(cat "$WORK/defs-len.txt") chars, over the 20000 budget"
 fi
 
+# --- re-scan (issue #176) ---------------------------------------------------------
+# hooks/rescan.sh re-applies the current rules to a file written before them, in
+# place, and reports per-class counts without ever printing a value.
+rs_dir="$WORK/rescan"
+mkdir -p "$rs_dir"
+printf -- '- `t` **prompt** fix the token refresh flow\n- `t` **bash** set it - `export password=S3cretPw`\n- `t` **bash** token here - `echo token password: S3cretPw`\n- `t` **webfetch** https://user:S3cretPw@example.com/x\n- `t` **edit** src/app.js\n' > "$rs_dir/b.md"
+rs_out=$(sh "$H/rescan.sh" "$rs_dir/b.md" 2>&1) && rs_rc=0 || rs_rc=$?
+eq "rescan: exits 0 (issue #176)" "$rs_rc" "0"
+eq "rescan: one summary line naming lines and classes (issue #176)" "$rs_out" "rescan: 3 line(s) masked in $rs_dir/b.md (keyword 2, url 1)"
+hasnt "rescan: no secret in the file afterwards (issue #176)" "$(cat "$rs_dir/b.md")" 'S3cretPw'
+hasnt "rescan: no secret in its own output (issue #176)" "$rs_out" 'S3cretPw'
+has   "rescan: a prose prompt line is left alone (issue #176)" "$(cat "$rs_dir/b.md")" 'fix the token refresh flow'
+has   "rescan: a bash record keeps its description/command shape (issue #176)" "$(cat "$rs_dir/b.md")" '**bash** set it - `export password=***`'
+rs_out=$(sh "$H/rescan.sh" "$rs_dir/b.md" 2>&1)
+eq "rescan: a second run finds nothing and prints nothing (issue #176)" "$rs_out" ""
+# Existing masks, case changes, truncation and outcome markers are not leaks: a
+# line that only changes cosmetically is neither rewritten nor counted.
+printf -- '- `t` **bash** set it - `export GH_TOKEN=***; gh pr list`\n- `t` **bash** look - `grep -i token *** tail -3`\n- `t` **edit** src/credentials_local.js `[failed]`\n- `t` **bash** x - `curl -H "Authorization: …[truncated]`\n' > "$rs_dir/c.md"
+cp "$rs_dir/c.md" "$rs_dir/c.orig"
+rs_out=$(sh "$H/rescan.sh" "$rs_dir/c.md" 2>&1)
+eq "rescan: cosmetic-only changes are not reported (issue #176)" "$rs_out" ""
+eq "rescan: and the file is left byte-identical (issue #176)" "$(cmp -s "$rs_dir/c.md" "$rs_dir/c.orig" && echo same)" "same"
+rs_err=$(sh "$H/rescan.sh" "$rs_dir/missing.md" 2>&1 >/dev/null) && rs_rc=0 || rs_rc=$?
+eq "rescan: an unreadable file exits non-zero (issue #176)" "$rs_rc" "1"
+has "rescan: and says which file (issue #176)" "$rs_err" 'cannot read'
+
 # --- SKILL.md lint (issue #195) ---------------------------------------------------
 # tests/skill-lint.sh checks every skill's frontmatter, its byte budget and that each
 # repo path it names exists. Run against this repo (must be clean) and against a
