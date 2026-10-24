@@ -661,6 +661,43 @@ hasnt "a keyword glued to a hyphen flag: value not stored (issue #130)" "$(cap_l
 cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwsentinel","command":"password=TLREDACTSENTINELtoken=x"}}'
 has   "a keyword glued to a masked sentinel value is still masked (issue #130)" "$(cap_line kwsentinel)" 'token=***'
 hasnt "a keyword glued to a masked sentinel: value not stored" "$(cap_line kwsentinel)" 'token=x'
+# 2i1b3. issue #173: a rule whose value is a whitespace-separated word must not take a
+#      word that is itself a credential keyword heading its own triple. Taking it
+#      masks the keyword and leaves the secret after it in cleartext (`token password:
+#      X` stored as `Token *** X`). `_kw_head` makes every word-consuming rule (Token,
+#      Bearer, Basic, the generic rule's whitespace separators) stand down there, and
+#      `_kw_pair` masks a bare `keyword word` pair whole. Each row checks the masked
+#      shape and that the marker never reaches the buffer.
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwhtokcolon","command":"echo token password: S3cretPw"}}'
+has   "a Token-scheme word followed by a keyword triple keeps the keyword, masks the value (issue #173)" "$(cap_line kwhtokcolon)" 'token password: ***'
+hasnt "kwhtokcolon: secret marker not stored (issue #173)" "$(cap_line kwhtokcolon)" 'S3cretPw'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwhtokcop","command":"echo token password is S3cretPw"}}'
+has   "Token word + keyword + copula: the value is masked (issue #173)" "$(cap_line kwhtokcop)" 'token password is ***'
+hasnt "kwhtokcop: secret marker not stored (issue #173)" "$(cap_line kwhtokcop)" 'S3cretPw'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwhtokbare","command":"echo TOKEN password S3cretPw ok"}}'
+has   "Token word + bare keyword pair: both words masked as one value (issue #173)" "$(cap_line kwhtokbare)" 'Token *** ok'
+hasnt "kwhtokbare: secret marker not stored (issue #173)" "$(cap_line kwhtokbare)" 'S3cretPw'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwhbearer","command":"echo Bearer password: S3cretPw"}}'
+has   "Bearer word followed by a keyword triple: the value is masked (issue #173)" "$(cap_line kwhbearer)" 'Bearer password: ***'
+hasnt "kwhbearer: secret marker not stored (issue #173)" "$(cap_line kwhbearer)" 'S3cretPw'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwhbeareq","command":"echo bearer secret=S3cretPw"}}'
+has   "Bearer word followed by keyword=value: the value is masked (issue #173)" "$(cap_line kwhbeareq)" 'bearer secret=***'
+hasnt "kwhbeareq: secret marker not stored (issue #173)" "$(cap_line kwhbeareq)" 'S3cretPw'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwhbasic","command":"echo basic password: S3cretPw"}}'
+has   "Basic word followed by a keyword triple: the value is masked (issue #173)" "$(cap_line kwhbasic)" 'basic password: ***'
+hasnt "kwhbasic: secret marker not stored (issue #173)" "$(cap_line kwhbasic)" 'S3cretPw'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwhgeneric","command":"echo auth password: S3cretPw"}}'
+has   "generic keyword followed by a keyword triple: the inner value is masked (issue #173)" "$(cap_line kwhgeneric)" 'auth password: ***'
+hasnt "kwhgeneric: secret marker not stored (issue #173)" "$(cap_line kwhgeneric)" 'S3cretPw'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwhgenbare","command":"echo password token S3cretPw ok"}}'
+has   "generic keyword + bare keyword pair: both words masked (issue #173)" "$(cap_line kwhgenbare)" 'password *** ok'
+hasnt "kwhgenbare: secret marker not stored (issue #173)" "$(cap_line kwhgenbare)" 'S3cretPw'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwhchain","command":"export DB_PASSWORD SECRET PASSWORD S3cretPw"}}'
+has   "a three-keyword chain is masked link by link, not swallowed (issue #173)" "$(cap_line kwhchain)" 'PASSWORD ***'
+hasnt "kwhchain: secret marker not stored (issue #173)" "$(cap_line kwhchain)" 'S3cretPw'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwhsecretword","command":"echo password mysecretpw ok"}}'
+has   "a keyword-shaped word after a bare keyword is still masked (it can be the secret) (issue #173)" "$(cap_line kwhsecretword)" 'password ***'
+hasnt "kwhsecretword: keyword-shaped secret not stored (issue #173)" "$(cap_line kwhsecretword)" 'mysecretpw'
 # 2i1c. quoted -p<value> inside double quotes (the container-entrypoint shape
 #      mysql -uroot "-p$PW" db): the span group consumes the full quoted run
 #      including the -p. The pre-rule _mysql_pw_pre catches this shape.

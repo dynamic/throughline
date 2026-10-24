@@ -32,6 +32,11 @@ All notable changes to throughline are documented here. Format loosely follows
   buffer. `hooks/archive-buffer.sh` appends to an existing archive under an
   `<!-- archive-append -->` marker, and the handoff skill archives through it (with a
   collision-checked manual fallback). #79, #185, #186.
+- Capture redaction no longer leaves a secret in cleartext when the word after a keyword
+  is itself a keyword with its own value: `token password: X`, `Bearer secret=X` and
+  `auth password: X` used to store `X`. Token, Bearer, Basic and the generic rule's
+  whitespace separators stand down on such a word (`_kw_head`), and a bare
+  `keyword word` pair is masked whole (`_kw_pair`). Same defect as #116, on ASCII. #173.
 
 ## [0.17.0] - 2026-10-23
 
