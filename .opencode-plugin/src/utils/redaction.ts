@@ -282,7 +282,14 @@ export const TOKEN_PREFIX_RULES: readonly RedactionRule[] = [
   },
   { name: "akia", pattern: /AKIA[0-9A-Z]{12,}/g, replacement: "AKIA***" },
   { name: "aiza", pattern: /AIza[0-9A-Za-z_\-]{35}/g, replacement: "AIza***" },
-  { name: "glpat", pattern: /(?<![A-Za-z0-9_])glpat-[A-Za-z0-9_-]{20,}/g, replacement: "glpat-***" },
+  {
+    // jq: "\(.g)***" - every GitLab prefix (issue #175), plus a routable token's
+    // `.<version>.<length+crc32>` tail.
+    name: "gitlab",
+    pattern: /(?<g>(?<![A-Za-z0-9_])gl(?:pat|oas|dt|rtr|rt|cbt|ptt|ft|imt|agent|wt|soat|ffct)-)[A-Za-z0-9_-]{20,}(?:\.[A-Za-z0-9_-]+)*/g,
+    replacement: "$<g>***",
+  },
+  { name: "gitlab_session", pattern: /(?<![A-Za-z0-9_])_gitlab_session=[A-Za-z0-9_-]{16,}/g, replacement: "_gitlab_session=***" },
   { name: "npm", pattern: /(?<![A-Za-z0-9_])npm_[A-Za-z0-9]{30,}/g, replacement: "npm_***" },
   {
     // jq's own text, kept verbatim. Note what that does NOT buy: Oniguruma reads

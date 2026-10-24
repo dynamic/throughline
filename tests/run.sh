@@ -482,6 +482,31 @@ cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"shortglpa
 has   "a 19-character glpat body is NOT masked (the 20 floor is real)" "$(cap_line shortglpat)" 'glpat-''xxxxxxxxxxxxxxxxxxx'
 cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"shortglpat2","command":"echo glpat-abc"}}'
 has   "a too-short glpat- sample is NOT masked" "$(cap_line shortglpat2)" 'glpat-abc'
+
+# 2i-b. issue #175: every prefix in GitLab's token table
+#       (https://docs.gitlab.com/security/tokens/), each with a positive row and
+#       two negatives: a 19-character body (under the 20 floor) and the prefix
+#       glued onto a longer identifier. Values are assembled at run time so this
+#       file carries no token-shaped literal.
+GL_BODY=xxxxxxxxxxxxxxxxxxxx
+GL_SHORT=xxxxxxxxxxxxxxxxxxx
+for gp in glpat gloas gldt glrt glrtr glcbt glptt glft glimt glagent glwt glsoat glffct; do
+  cap "{\"session_id\":\"T\",\"tool_name\":\"Bash\",\"tool_input\":{\"description\":\"glprefix-$gp\",\"command\":\"curl -H X:$gp-$GL_BODY\"}}"
+  hasnt "gitlab $gp- token not stored" "$(cap_line "glprefix-$gp")" "$gp-$GL_BODY"
+  has   "gitlab $gp- token: mask keeps the prefix" "$(cap_line "glprefix-$gp")" "X:$gp-***"
+  cap "{\"session_id\":\"T\",\"tool_name\":\"Bash\",\"tool_input\":{\"description\":\"glshort-$gp\",\"command\":\"echo $gp-$GL_SHORT big$gp-$GL_BODY\"}}"
+  has   "gitlab $gp-: a 19-character body and a glued identifier are NOT masked" "$(cap_line "glshort-$gp")" "$gp-$GL_SHORT big$gp-$GL_BODY"
+done
+# Routable tokens carry a `.<version>.<length+crc32>` tail; the whole token is
+# masked, and a sentence-ending period after it survives.
+cap "{\"session_id\":\"T\",\"tool_name\":\"Bash\",\"tool_input\":{\"description\":\"glroutable\",\"command\":\"echo glpat-$GL_BODY.00.0x0000000. done\"}}"
+hasnt "routable glpat- tail not stored" "$(cap_line glroutable)" '.00.0x0000000'
+has   "routable glpat- token masked whole; the trailing period survives" "$(cap_line glroutable)" 'echo glpat-***. done'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"glsession","command":"curl -b _gitlab_session=0000xxxx0000xxxx0000xxxx0000xxxx https://gitlab.example"}}'
+hasnt "_gitlab_session cookie value not stored" "$(cap_line glsession)" '0000xxxx0000xxxx'
+has   "_gitlab_session cookie: mask keeps the cookie name" "$(cap_line glsession)" '_gitlab_session=*** https://gitlab.example'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"glsessionneg","command":"echo my_gitlab_session=0000xxxx0000xxxx0000 _gitlab_session=short"}}'
+has   "a longer name ending in _gitlab_session and a short value are NOT masked" "$(cap_line glsessionneg)" 'my_gitlab_session=0000xxxx0000xxxx0000 _gitlab_session=short'
 # Prefix rules are LEFT-ANCHORED as well as length-floored: an identifier that
 # merely CONTAINS one of these prefixes is not a credential. The anchor is a
 # lookbehind and not \b on purpose - underscore is a word character, so \b gives
@@ -1682,6 +1707,12 @@ has   "prompt: gh token masked"     "$PS" '***'
 prompt '{"session_id":"P","prompt":"rotate the gitlab glpat-''xxxxxxxxxxxxxxxxxxxx before it expires"}'
 hasnt "prompt: glpat- not stored" "$(grep 'rotate the gitlab' "$BUF/session-P.md")" 'glpat-''xxxxxxxxxxxxxxxxxxxx'
 has   "prompt: glpat- mask sentinel is present" "$(grep 'rotate the gitlab' "$BUF/session-P.md")" 'glpat-***'
+# issue #175 on the prose path: a new prefix masks, and prose that names a prefix
+# without a token body stays word for word.
+prompt '{"session_id":"P","prompt":"rotate the runner glrt-''xxxxxxxxxxxxxxxxxxxx and read the glft- prefix docs for gldt-short9"}'
+GL_P=$(grep 'rotate the runner' "$BUF/session-P.md")
+hasnt "prompt: glrt- not stored" "$GL_P" 'glrt-''xxxxxxxxxxxxxxxxxxxx'
+has   "prompt: glrt- masked, prose naming a prefix left intact" "$GL_P" 'glrt-*** and read the glft- prefix docs for gldt-short9'
 prompt '{"session_id":"P","prompt":"the stripe key sk_live_''xxxxxxxxxxxxxxxxxx leaked, rotate it"}'
 hasnt "prompt: sk_live_ key not stored" "$(grep 'the stripe key' "$BUF/session-P.md")" 'sk_live_''xxxxxxxxxxxxxxxxxx'
 has   "prompt: sk_live_ mask sentinel is present" "$(grep 'the stripe key' "$BUF/session-P.md")" 'sk_live_***'
@@ -2142,7 +2173,7 @@ has "check-typography: the missing-path error says so" "$TY_OUT" "missing or unt
 # placeholder body of E/X/A/M/P/L, x, 0 and separators only; PEM bodies start EXAMPLE. The
 # prefixes are assembled from pieces so this block does not match itself.
 _B='(^|[^A-Za-z0-9_]|\\[nrt])'
-_P="gh""[oprsu]_|github""_pat_|sk""_live_|sk""_test_|rk""_test_|xo""x[baprs]-|xa""pp-|sk""-|AK""IA|AI""za|glp""at-|np""m_"
+_P="gh""[oprsu]_|github""_pat_|sk""_live_|sk""_test_|rk""_test_|xo""x[baprs]-|xa""pp-|sk""-|AK""IA|AI""za|g""l(pat|oas|dt|rtr|rt|cbt|ptt|ft|imt|agent|wt|soat|ffct)-|np""m_"
 _TOK="${_B}(${_P})[A-Za-z0-9_-]{10,}|${_B}S""G\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}"
 _STRIP="^(${_P})([0-9]{1,2}-)?((ant|proj)-)?(api03-)?"
 _BAD=$(cd "$ROOT" || exit 1; git ls-files -z | xargs -0 /usr/bin/grep -IhoE "$_TOK" 2>/dev/null \
