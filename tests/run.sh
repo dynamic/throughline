@@ -1907,7 +1907,6 @@ else
   bad "jq defs: emitted text is $(cat "$WORK/defs-len.txt") chars, over the 20000 budget"
 fi
 
-# --- Codex plugin manifest (issue #112) ----------------------------------------
 # --- SKILL.md lint (issue #195) ---------------------------------------------------
 # tests/skill-lint.sh checks every skill's frontmatter, its byte budget and that each
 # repo path it names exists. Run against this repo (must be clean) and against a
@@ -1926,7 +1925,24 @@ mkdir -p "$sl_root/skills/onboard"
 { printf -- '---\nname: onboard\ndescription: x\n---\n'; i=0; while [ $i -lt 400 ]; do printf 'padding line\n'; i=$((i+1)); done; } > "$sl_root/skills/onboard/SKILL.md"
 sl_err=$(sh "$ROOT/tests/skill-lint.sh" "$sl_root" 2>&1) || true
 has "skill-lint: names a skill over its byte budget (issue #195)" "$sl_err" 'onboard: SKILL.md is'
+rm -rf "$sl_root/skills/onboard"
+mkdir -p "$sl_root/skills/longdesc" "$sl_root/skills/unclosed" "$sl_root/skills/folded"
+{ printf -- '---\nname: longdesc\ndescription: '; i=0; while [ $i -lt 301 ]; do printf 'x'; i=$((i+1)); done; printf '\n---\nbody\n'; } > "$sl_root/skills/longdesc/SKILL.md"
+printf -- '---\nname: unclosed\ndescription: x\nbody without a closing line\n' > "$sl_root/skills/unclosed/SKILL.md"
+printf -- '---\nname: folded\ndescription: >\n  a long folded description\n---\nbody\n' > "$sl_root/skills/folded/SKILL.md"
+sl_err=$(sh "$ROOT/tests/skill-lint.sh" "$sl_root" 2>&1) || true
+has "skill-lint: names a description over 300 characters (issue #195)" "$sl_err" 'longdesc: description is 301 characters, over 300'
+has "skill-lint: names frontmatter that never closes (issue #195)" "$sl_err" 'unclosed: frontmatter never closes'
+has "skill-lint: rejects a multi-line YAML description (issue #195)" "$sl_err" 'folded: description is a multi-line YAML block'
+# A CRLF copy of a clean skill still passes: the lint parses a CR-stripped copy.
+sl_crlf="$WORK/skill-lint-crlf"
+mkdir -p "$sl_crlf/skills/onboard" "$sl_crlf/docs"
+: > "$sl_crlf/docs/REFERENCE.md"
+sed 's/$/\r/' "$ROOT/skills/onboard/SKILL.md" > "$sl_crlf/skills/onboard/SKILL.md"
+sl_err=$(sh "$ROOT/tests/skill-lint.sh" "$sl_crlf" 2>&1) && sl_rc=0 || sl_rc=$?
+eq "skill-lint: a CRLF checkout of a clean skill passes (issue #195)" "$sl_rc:$sl_err" "0:"
 
+# --- Codex plugin manifest (issue #112) ----------------------------------------
 # tests/codex-plugin.sh checks .codex-plugin/plugin.json against
 # .agents/plugins/marketplace.json - the two files Codex installs the plugin
 # from. Routing it through this file is what enforces it: .local-ci.json's "hook

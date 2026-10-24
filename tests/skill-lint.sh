@@ -32,11 +32,15 @@ for f in "$ROOT"/skills/*/SKILL.md; do
   [ -f "$f" ] || continue
   found=1
   dir=$(basename "$(dirname "$f")")
+  # .gitattributes keeps SKILL.md LF, but a contributor's checkout may not honour it;
+  # parse a CR-stripped copy so a CRLF file is judged on its content.
+  text=$(tr -d '\r' < "$f")
 
-  [ "$(sed -n 1p "$f")" = "---" ] || bad "$dir: SKILL.md does not open with a --- frontmatter line"
-  # Frontmatter is the block between the first two --- lines.
-  fm=$(awk 'NR == 1 && $0 == "---" { inside = 1; next } inside && $0 == "---" { exit } inside { print }' "$f")
-  [ -n "$fm" ] || { bad "$dir: frontmatter is empty or never closes"; continue; }
+  [ "$(printf '%s\n' "$text" | sed -n 1p)" = "---" ] || bad "$dir: SKILL.md does not open with a --- frontmatter line"
+  # Frontmatter is the block between the first two --- lines; it must close.
+  fm=$(printf '%s\n' "$text" | awk 'NR == 1 && $0 == "---" { inside = 1; next } inside && $0 == "---" { closed = 1; exit } inside { print } END { if (!closed) print "TL_UNCLOSED" }')
+  case "$fm" in *TL_UNCLOSED*) bad "$dir: frontmatter never closes"; continue ;; esac
+  [ -n "$fm" ] || { bad "$dir: frontmatter is empty"; continue; }
 
   name=$(printf '%s\n' "$fm" | sed -n 's/^name:[[:space:]]*//p' | head -n 1)
   [ "$name" = "$dir" ] || bad "$dir: frontmatter name is '$name', expected '$dir'"
@@ -44,6 +48,10 @@ for f in "$ROOT"/skills/*/SKILL.md; do
   desc=$(printf '%s\n' "$fm" | sed -n 's/^description:[[:space:]]*//p' | head -n 1)
   if [ -z "$desc" ]; then
     bad "$dir: frontmatter has no description"
+  elif case "$desc" in '>'|'|'|'>-'|'|-'|'>+'|'|+') true ;; *) false ;; esac; then
+    # A block-scalar description continues on later lines, which this line-based
+    # check cannot measure; require the single-line form every skill uses.
+    bad "$dir: description is a multi-line YAML block; use a single line"
   else
     dlen=$(printf '%s' "$desc" | wc -m | tr -d ' ')
     [ "$dlen" -le 300 ] || bad "$dir: description is $dlen characters, over 300"
