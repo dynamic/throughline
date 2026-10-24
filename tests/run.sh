@@ -1311,6 +1311,20 @@ printf -- '<!-- session-ended 2024-01-01 00:05:00 (idle) -->\n' >> "$BUF/session
 O5b=$(printf '%s' '{"source":"startup","session_id":"T"}' | sh "$H/session-onboard.sh")
 has   "a final stamp after the last record: reported as ended (issue #180)" "$O5b" 'ended without'
 
+#      A resumed session (same id, records after an earlier stamp) that ends cleanly
+#      gets a new final stamp from session-flush.sh, so it is reported as ended.
+reset_buf
+printf -- '- x\n' > "$BUF/session-T.md"
+for c in r1 r2 r3; do cap "{\"session_id\":\"RES\",\"tool_name\":\"Bash\",\"tool_input\":{\"description\":\"$c\",\"command\":\"true\"}}"; done
+printf '%s' '{"session_id":"RES","reason":"other"}' | sh "$H/session-flush.sh"
+for c in r4 r5 r6; do cap "{\"session_id\":\"RES\",\"tool_name\":\"Bash\",\"tool_input\":{\"description\":\"$c\",\"command\":\"true\"}}"; done
+printf '%s' '{"session_id":"RES","reason":"other"}' | sh "$H/session-flush.sh"
+eq "a resumed session that ends again gets a second, final stamp (issue #180)" "$(grep -c '^<!-- session-ended' "$BUF/session-RES.md")" "2"
+O5c=$(printf '%s' '{"source":"startup","session_id":"T"}' | sh "$H/session-onboard.sh")
+has   "a resumed session that ended cleanly is reported as ended (issue #180)" "$O5c" 'ended without'
+printf '%s' '{"session_id":"RES","reason":"other"}' | sh "$H/session-flush.sh"
+eq "a repeated SessionEnd with nothing new adds no stamp (issue #180)" "$(grep -c '^<!-- session-ended' "$BUF/session-RES.md")" "2"
+
 # 11. missing jq surfaces a visible warning in onboard (curated PATH without jq)
 # A tiny exec wrapper script per tool, not `ln -sf` or `cp`: a symlink needs
 # an elevated privilege Windows doesn't grant by default (issue #67), and a

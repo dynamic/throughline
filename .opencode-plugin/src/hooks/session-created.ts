@@ -229,7 +229,7 @@ function sweepUnconsumedBuffers(bufDir: string, dataRoot: string, dataDir: strin
   if (newUnsure !== 0) {
     lines.push("");
     lines.push(
-      `ℹ️ ${unsure} other session buffer(s) in \`${relative(dataRoot, bufDir)}/\` with no end-stamp - could be live in another terminal, or could have exited without a clean shutdown. If none are still running, consider running the handoff.`,
+      `ℹ️ ${unsure} other session buffer(s) in \`${relative(dataRoot, bufDir)}/\` with no end-stamp after their last activity - could be live in another terminal, or could have exited without a clean shutdown. If none are still running, consider running the handoff.`,
     );
   }
   return lines;

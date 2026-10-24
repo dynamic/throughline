@@ -43,10 +43,19 @@ reason=$(tl_clean_ctrl "$reason")
 buf="$bufdir/session-$sid.md"
 
 if [ -n "$sid" ] && [ -f "$buf" ]; then
-  # Stamp once. Anchor the guard to the start of a line so a captured command or
-  # description containing the marker text cannot suppress a real stamp (capture
-  # lines all begin with "- `", so they never match this anchor).
-  grep -q '^<!-- session-ended' "$buf" 2>/dev/null || \
+  # Stamp unless the buffer already ENDS with a stamp - no record after the last
+  # one. A repeated SessionEnd for the same stretch adds nothing, but a resumed
+  # session (same id, new records after an earlier stamp) gets a new final stamp,
+  # which is what onboard reads as "ended" (issue #180). Both patterns are anchored
+  # to the start of a line, so captured text containing the marker cannot match
+  # (capture lines all begin with "- `").
+  # shellcheck disable=SC2016
+  if ! awk '
+      /^- `[^`]*` \*\*[^*]+\*\*/ { rec = 1 }
+      /^<!-- session-ended/ { rec = 0; stamped = 1 }
+      END { exit (stamped && !rec) ? 0 : 1 }
+    ' "$buf" 2>/dev/null; then
     printf -- '\n<!-- session-ended %s (%s) -->\n' "$(tl_now)" "$reason" >> "$buf" 2>/dev/null
+  fi
 fi
 exit 0

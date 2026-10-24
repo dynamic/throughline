@@ -494,9 +494,10 @@ fi
 
 # Surface unconsumed buffers from OTHER sessions. Exclude the current session's
 # own live buffer so a mid-session compaction is never mislabeled as "a prior
-# session." Among the rest: a buffer carrying the session-ended stamp (written
-# by session-flush.sh on SessionEnd) is a confirmed-ended session that was never
-# distilled — report those plainly. A buffer with NO stamp could be the same
+# session." Among the rest: a buffer whose last session-ended stamp (written by
+# session-flush.sh on SessionEnd) has no record after it is a confirmed-ended
+# session that was never distilled — report those plainly. A buffer with no
+# stamp after its last record could be the same
 # (the process was killed and SessionEnd never fired), but it could just as
 # easily be a session still running live in another terminal, so it gets hedged
 # wording instead of being asserted as "ended" when that isn't actually known.
@@ -588,7 +589,7 @@ if [ -d "$bufdir" ]; then
     # Below the size threshold: too little to distill. A buffer with zero conforming
     # lines (total 0) is still counted - see the fail-safe note above.
     [ "$total" -gt 0 ] && [ "$actions" -lt "$_tl_min" ] && continue
-    # Keyed by class: a buffer first reported as "no end-stamp" (possibly live) must
+    # Keyed by class: a buffer first reported as possibly live (no final stamp) must
     # be reported again once it has ended, so `unsure:` and `ended:` are separate.
     if [ "$is_ended" -eq 1 ]; then _tl_key="ended:${f##*/}"; else _tl_key="unsure:${f##*/}"; fi
     _tl_now_seen="$_tl_now_seen$_tl_key
@@ -621,7 +622,7 @@ if [ -d "$bufdir" ]; then
   fi
   if [ "$new_unsure" -ne 0 ]; then
     echo
-    echo "ℹ️ $unsure other session buffer(s) in \`${bufdir#"$droot"/}/\` with no end-stamp - could be live in another terminal, or could have exited without a clean shutdown. If none are still running, consider running the handoff."
+    echo "ℹ️ $unsure other session buffer(s) in \`${bufdir#"$droot"/}/\` with no end-stamp after their last activity - could be live in another terminal, or could have exited without a clean shutdown. If none are still running, consider running the handoff."
   fi
 fi
 

@@ -43,7 +43,9 @@ All notable changes to throughline are documented here. Format loosely follows
 ### Fixed
 - A buffer counts as "ended" for the SessionStart warning only if no record follows its
   last end-stamp. OpenCode stamps on every idle turn, so a session that kept going after
-  a stamp was reported as ended instead of possibly live. #180.
+  a stamp was reported as ended instead of possibly live. `session-flush.sh` stamps again
+  when a resumed session (same id, records after an earlier stamp) ends, so a cleanly
+  ended resumed session still reads as ended. #180.
 - `consolidate` and `consolidate-memory` no longer share a pass record. `consolidate-memory`
   writes "Memory hygiene passes"; `consolidate` tags its "Consolidation passes" entries
   `(session logs)` and reads only tagged entries as its last-pass marker, so a memory sweep
