@@ -68,6 +68,15 @@ defs=$(sh -c ". \"$ROOT/hooks/_lib.sh\" && tl_jq_redact_defs")
 jq -R -r "$defs fromjson | redact | tojson" "$tmp/corpus.jsonl" > "$tmp/jq.out"
 
 status=0
+# A broken engine must fail, not read as "0 leaks": every output line has to be a JSON
+# string, one per corpus line. An engine that returns nothing, null, undefined or a
+# Promise would otherwise count as leaking nothing.
+check_shape() { # engine outfile
+  if [ "$(wc -l < "$2" | tr -d ' ')" -ne "$total" ] || grep -qv '^"' "$2"; then
+    echo "redaction-sweep: $1 returned malformed output (expected $total JSON strings)" >&2
+    exit 2
+  fi
+}
 report() { # engine outfile baseline
   leaks=$(paste "$tmp/corpus.jsonl" "$2" | grep -c 'zzSWEEPMARKzz[^	]*	.*zzSWEEPMARKzz' || true)
   echo "redaction-sweep: $1: $leaks of $total inputs leak the seeded marker (baseline $3)"
@@ -81,6 +90,7 @@ report() { # engine outfile baseline
     echo "redaction-sweep: $1 leaks less than its baseline - lower BASELINE_$(echo "$1" | tr '[:lower:]' '[:upper:]') to $leaks"
   fi
 }
+check_shape jq "$tmp/jq.out"
 report jq "$tmp/jq.out" "$BASELINE_JQ"
 
 if [ -n "$PORT" ]; then
@@ -93,6 +103,7 @@ if [ -n "$PORT" ]; then
       fs.writeFileSync(process.argv[3], out.join("\n") + "\n");
     });
   ' "$PORT" "$tmp/corpus.jsonl" "$tmp/port.out"
+  check_shape port "$tmp/port.out"
   report port "$tmp/port.out" "$BASELINE_PORT"
 fi
 
