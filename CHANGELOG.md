@@ -41,6 +41,9 @@ All notable changes to throughline are documented here. Format loosely follows
   consolidate as on demand or when HANDOFF.md is bloated, matching the skill. #208.
 
 ### Fixed
+- A buffer counts as "ended" for the SessionStart warning only if no record follows its
+  last end-stamp. OpenCode stamps on every idle turn, so a session that kept going after
+  a stamp was reported as ended instead of possibly live. #180.
 - `consolidate` and `consolidate-memory` no longer share a pass record. `consolidate-memory`
   writes "Memory hygiene passes"; `consolidate` tags its "Consolidation passes" entries
   `(session logs)` and reads only tagged entries as its last-pass marker, so a memory sweep

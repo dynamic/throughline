@@ -563,12 +563,16 @@ if [ -d "$bufdir" ]; then
     # which falls through to the unsure branch below - the same fail-safe
     # behavior the prior three-grep version had on an unreadable file.
     #
+    # A buffer is "ended" only if no record follows its LAST end-stamp (issue #180):
+    # OpenCode stamps on every idle turn, so a stamp with records after it marks a
+    # pause in a session that kept going, not its end.
+    #
     # Single awk pass replaces three separate grep forks/reads over the same
     # file (issue #16) - total, prompt-only, and session-ended were each their
     # own full read of $f; awk computes all three in one pass.
     # shellcheck disable=SC2016
     _tl_counts=$(awk '
-      /^- `[^`]*` \*\*[^*]+\*\*/ { total++ }
+      /^- `[^`]*` \*\*[^*]+\*\*/ { total++; is_ended=0 }
       /^- `[^`]*` \*\*prompt\*\*/ { promptonly++ }
       /^<!-- session-ended/ { is_ended=1 }
       END { printf "%d %d %d", total+0, promptonly+0, is_ended+0 }

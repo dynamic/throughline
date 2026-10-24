@@ -183,6 +183,9 @@ function sweepUnconsumedBuffers(bufDir: string, dataRoot: string, dataDir: strin
     for (const line of lines) {
       if (RECORD_MARKER.test(line)) {
         total++;
+        // Ended only if no record follows the last end-stamp (issue #180): session.idle
+        // stamps every turn, so an earlier stamp is a pause, not the end.
+        isEnded = false;
         if (PROMPT_MARKER.test(line)) promptOnly++;
       } else if (ENDED_MARKER.test(line)) {
         isEnded = true;
