@@ -2010,6 +2010,71 @@ else
   bad "jq defs: emitted text is $(cat "$WORK/defs-len.txt") chars, over the 20000 budget"
 fi
 
+# --- re-scan (issue #176) ---------------------------------------------------------
+# hooks/rescan.sh re-applies the current rules to a file written before them, in
+# place, and reports per-class counts without ever printing a value.
+rs_dir="$WORK/rescan"
+mkdir -p "$rs_dir"
+printf -- '- `t` **prompt** fix the token refresh flow\n- `t` **bash** set it - `export password=S3cretPw`\n- `t` **bash** token here - `echo token password: S3cretPw`\n- `t` **webfetch** https://user:S3cretPw@example.com/x\n- `t` **edit** src/app.js\n' > "$rs_dir/b.md"
+rs_out=$(sh "$H/rescan.sh" "$rs_dir/b.md" 2>&1) && rs_rc=0 || rs_rc=$?
+eq "rescan: exits 0 (issue #176)" "$rs_rc" "0"
+eq "rescan: one summary line naming lines and classes (issue #176)" "$rs_out" "rescan: 3 line(s) masked in $rs_dir/b.md (keyword 2, url 1)"
+hasnt "rescan: no secret in the file afterwards (issue #176)" "$(cat "$rs_dir/b.md")" 'S3cretPw'
+hasnt "rescan: no secret in its own output (issue #176)" "$rs_out" 'S3cretPw'
+has   "rescan: a prose prompt line is left alone (issue #176)" "$(cat "$rs_dir/b.md")" 'fix the token refresh flow'
+has   "rescan: a bash record keeps its description/command shape (issue #176)" "$(cat "$rs_dir/b.md")" '**bash** set it - `export password=***`'
+rs_out=$(sh "$H/rescan.sh" "$rs_dir/b.md" 2>&1)
+eq "rescan: a second run finds nothing and prints nothing (issue #176)" "$rs_out" ""
+# Existing masks, case changes, truncation and outcome markers are not leaks: a
+# line that only changes cosmetically is neither rewritten nor counted.
+printf -- '- `t` **bash** set it - `export GH_TOKEN=***; gh pr list`\n- `t` **bash** look - `grep -i token *** tail -3`\n- `t` **edit** src/credentials_local.js `[failed]`\n- `t` **bash** x - `curl -H "Authorization: …[truncated]`\n' > "$rs_dir/c.md"
+cp "$rs_dir/c.md" "$rs_dir/c.orig"
+rs_out=$(sh "$H/rescan.sh" "$rs_dir/c.md" 2>&1)
+eq "rescan: cosmetic-only changes are not reported (issue #176)" "$rs_out" ""
+eq "rescan: and the file is left byte-identical (issue #176)" "$(cmp -s "$rs_dir/c.md" "$rs_dir/c.orig" && echo same)" "same"
+# Real changes the review found a word-based gate would hide: a password equal to its
+# user name, a value repeated in its own description, one with no long run.
+printf -- '- `t` **webfetch** postgres://postgres:postgres@localhost/db\n- `t` **bash** set hunter9 - `export PASSWORD=hunter9`\n- `t` **bash** x - `export DB_PASSWORD=k9!Lp#x2`\n' > "$rs_dir/g.md"
+sh "$H/rescan.sh" "$rs_dir/g.md" >/dev/null 2>&1
+has "rescan: a password equal to its user name is masked (issue #176)" "$(cat "$rs_dir/g.md")" 'postgres:***@localhost'
+has "rescan: a value repeated in its description is masked in the command (issue #176)" "$(cat "$rs_dir/g.md")" 'export PASSWORD=***`'
+has "rescan: a value with no long alphanumeric run is masked (issue #176)" "$(cat "$rs_dir/g.md")" 'export DB_PASSWORD=***`'
+# A grep pattern keeps its closing backtick; a CRLF line keeps its shape and CR.
+printf -- '- `t` **grep** `password=foo`\n- `t` **bash** set password - `export PASSWORD=hunter9`\r\n' > "$rs_dir/h.md"
+sh "$H/rescan.sh" "$rs_dir/h.md" >/dev/null 2>&1
+has "rescan: a grep pattern is masked inside its backticks (issue #176)" "$(cat "$rs_dir/h.md")" '**grep** `password=***`'
+rs_crlf=$(sed -n 2p "$rs_dir/h.md" | od -An -c | tr -d ' \n')
+# Native jq on Windows normalizes CRLF to LF on its own, so there the CR may go; the
+# record's shape is what must survive everywhere.
+case "$rs_crlf" in
+  *'PASSWORD=***`\r\n') ok "rescan: a CRLF bash record keeps its shape and its CR (issue #176)" ;;
+  *'PASSWORD=***`\n') if is_windows; then ok "rescan: a CRLF bash record keeps its shape (CR normalized by jq on Windows) (issue #176)"; else bad "rescan: a CRLF bash record lost its CR (issue #176)"; fi ;;
+  *) bad "rescan: a CRLF bash record keeps its shape (issue #176) (got $rs_crlf)" ;;
+esac
+# A private key spanning lines in a draft is masked whole.
+printf '# Handoff\n-----BEGIN RSA PRIVATE'' KEY-----\nEXAMPLEKEYBODYONE\nEXAMPLEKEYBODYTWO\n-----END RSA PRIVATE'' KEY-----\nnext\n' > "$rs_dir/d.md"
+rs_out=$(sh "$H/rescan.sh" "$rs_dir/d.md" 2>&1)
+hasnt "rescan: a multi-line private key in a draft is masked whole (issue #176)" "$(cat "$rs_dir/d.md")" 'EXAMPLEKEYBODYTWO'
+has   "rescan: and reported as a pem mask (issue #176)" "$rs_out" '(pem 1)'
+# A symlink is refused rather than replaced; a file keeps its mode.
+printf -- '- `t` **bash** x - `export PASSWORD=hunter9`\n' > "$rs_dir/real.md"
+ln -s "$rs_dir/real.md" "$rs_dir/link.md" 2>/dev/null
+if [ -L "$rs_dir/link.md" ]; then
+  sh "$H/rescan.sh" "$rs_dir/link.md" >/dev/null 2>&1 && rs_rc=0 || rs_rc=$?
+  eq "rescan: a symlink is refused (issue #176)" "$rs_rc" "1"
+else
+  ok "rescan symlink test skipped (no symlink support)"
+fi
+if ! is_windows; then
+  chmod 600 "$rs_dir/real.md"
+  sh "$H/rescan.sh" "$rs_dir/real.md" >/dev/null 2>&1
+  # shellcheck disable=SC2012 # one known filename; ls -l is the portable mode read
+  eq "rescan: the rewritten file keeps its mode (issue #176)" "$(ls -l "$rs_dir/real.md" | cut -c1-10)" "-rw-------"
+fi
+rs_err=$(sh "$H/rescan.sh" "$rs_dir/missing.md" 2>&1 >/dev/null) && rs_rc=0 || rs_rc=$?
+eq "rescan: an unreadable file exits non-zero (issue #176)" "$rs_rc" "1"
+has "rescan: and says which file (issue #176)" "$rs_err" 'cannot read'
+
 # --- SKILL.md lint (issue #195) ---------------------------------------------------
 # tests/skill-lint.sh checks every skill's frontmatter, its byte budget and that each
 # repo path it names exists. Run against this repo (must be clean) and against a
