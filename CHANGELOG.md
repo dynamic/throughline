@@ -16,6 +16,9 @@ All notable changes to throughline are documented here. Format loosely follows
   for scripted headless runs. #189.
 
 ### Changed
+- `--doctor` lists the installed throughline version per harness (Claude Code, Codex,
+  OpenCode, OMP, Hermes) from each harness's own install record, and marks the ones
+  older than the copy running it. #181.
 - REFERENCE.md documents `THROUGHLINE_HERMES_SURFACES` in Configuration; README describes
   consolidate as on demand or when HANDOFF.md is bloated, matching the skill. #208.
 

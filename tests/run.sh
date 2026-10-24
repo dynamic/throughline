@@ -1138,7 +1138,7 @@ hasnt "no-end-stamp buffer NOT mislabeled as ended" "$O3b" 'ended without'
 # plain `#!/bin/sh -c 'exec <real> "$@"'` wrapper needs no privilege beyond
 # writing a text file and never touches the real binary's own location.
 STUB="$WORK/bin"; mkdir -p "$STUB"
-for c in sh dirname cat grep git tr head awk; do
+for c in sh dirname cat grep git tr head awk sed; do
   real=$(command -v "$c" 2>/dev/null) || continue
   printf '#!/bin/sh\nexec "%s" "$@"\n' "$real" > "$STUB/$c"
   chmod +x "$STUB/$c"
@@ -1499,6 +1499,62 @@ elif [ "$(id -u)" != "0" ]; then
 else
   ok "doctor LIKELY TO FAIL test skipped (running as root)"
 fi
+
+# 12b. --doctor lists the installed version per harness and flags only the ones
+#      older than the scripts running it (issue #181). A fake HOME holds a stale
+#      Claude Code and Codex install and a current OpenCode, OMP (link) and Hermes
+#      install, each in the shape that harness writes on disk.
+DV_SELF=$(sed -n 's/^version: //p' "$ROOT/plugin.yaml")
+DVH="$WORK/doctor-home"
+# Codex's two cache dirs differ only in numeric order (string order would pick 0.9.0).
+mkdir -p "$DVH/.claude/plugins" "$DVH/.codex/plugins/cache/throughline/throughline/0.9.0" \
+  "$DVH/.codex/plugins/cache/throughline/throughline/0.10.0" \
+  "$DVH/.cache/opencode/packages/@dynamicagency/throughline-opencode@latest/node_modules/@dynamicagency/throughline-opencode" \
+  "$DVH/.omp/plugins/node_modules/@dynamicagency" "$DVH/checkout" "$DVH/.hermes/plugins/throughline"
+printf '{"version":2,"plugins":{"throughline@throughline":[{"scope":"user","version":"0.0.9"}],"other@x":[{"version":"0.0.1"}]}}\n' > "$DVH/.claude/plugins/installed_plugins.json"
+printf '{"version":"%s"}\n' "$DV_SELF" > "$DVH/.cache/opencode/packages/@dynamicagency/throughline-opencode@latest/node_modules/@dynamicagency/throughline-opencode/package.json"
+printf '{"name":"@dynamicagency/throughline","version":"%s"}\n' "$DV_SELF" > "$DVH/checkout/package.json"
+# The lock records a stale version on purpose: the link's checkout must win. Git
+# Bash's ln -s can copy instead of linking, so Windows gets no lock and no link.
+if ! is_windows; then
+  printf '{"plugins":{"@dynamicagency/throughline":{"version":"0.0.3"}}}\n' > "$DVH/.omp/plugins/omp-plugins.lock.json"
+  ln -s "$DVH/checkout" "$DVH/.omp/plugins/node_modules/@dynamicagency/throughline" 2>/dev/null
+fi
+printf 'name: throughline\nversion: %s\n' "$DV_SELF" > "$DVH/.hermes/plugins/throughline/plugin.yaml"
+DV=$( (unset CODEX_HOME HERMES_HOME XDG_CACHE_HOME CLAUDE_CONFIG_DIR; HOME="$DVH" sh "$H/session-onboard.sh" --doctor) )
+has "doctor names its own version" "$DV" "installed versions (this doctor: $DV_SELF)"
+has "doctor flags the stale Claude Code install" "$(printf '%s\n' "$DV" | grep 'claude code:')" "0.0.9 (user)  OLDER than $DV_SELF"
+has "doctor reports the numerically newest Codex cache version, flagged stale" "$(printf '%s\n' "$DV" | grep 'codex:')" "0.10.0  OLDER than $DV_SELF"
+has "doctor reports the current OpenCode install by spec" "$(printf '%s\n' "$DV" | grep 'opencode:')" "$DV_SELF (@dynamicagency/throughline-opencode@latest)"
+has "doctor reports the current Hermes install" "$(printf '%s\n' "$DV" | grep 'hermes:')" "$DV_SELF"
+eq "doctor flags exactly the two stale installs" "$(printf '%s\n' "$DV" | grep -c 'OLDER than')" "2"
+eq "doctor ignores other plugins in installed_plugins.json" "$(printf '%s\n' "$DV" | grep -c 'claude code:')" "1"
+if is_windows; then
+  ok "doctor reads an OMP link install's version from the checkout (skipped: Git Bash ln -s may copy)"
+else
+  has "doctor reads an OMP link install's version from the checkout, not the lock" "$(printf '%s\n' "$DV" | grep 'omp:')" "$DV_SELF (link -> "
+fi
+# A second fake HOME: an OMP marketplace install (OMP's own installed_plugins.json)
+# beside a link whose checkout is gone, then the same HOME with jq off PATH.
+DVH2="$WORK/doctor-home-2"
+mkdir -p "$DVH2/.omp/plugins/node_modules/@dynamicagency" "$DVH2/.cache/opencode/packages/@dynamicagency/throughline-opencode/node_modules/@dynamicagency/throughline-opencode"
+printf '{"version":2,"plugins":{"throughline@throughline":[{"scope":"user","version":"0.0.4"}]}}\n' > "$DVH2/.omp/plugins/installed_plugins.json"
+printf '{"name":"@dynamicagency/throughline-opencode","version":"0.0.5"}\n' > "$DVH2/.cache/opencode/packages/@dynamicagency/throughline-opencode/node_modules/@dynamicagency/throughline-opencode/package.json"
+DV=$( (unset CODEX_HOME HERMES_HOME XDG_CACHE_HOME CLAUDE_CONFIG_DIR; HOME="$DVH2" sh "$H/session-onboard.sh" --doctor) )
+has "doctor reports an OMP marketplace install from OMP's installed_plugins.json" "$(printf '%s\n' "$DV" | grep 'omp:')" "0.0.4 (marketplace)  OLDER than $DV_SELF"
+if is_windows; then
+  ok "doctor reports a broken OMP link (skipped: Git Bash ln -s may copy)"
+else
+  ln -s "$DVH2/gone" "$DVH2/.omp/plugins/node_modules/@dynamicagency/throughline" 2>/dev/null
+  DV=$( (unset CODEX_HOME HERMES_HOME XDG_CACHE_HOME CLAUDE_CONFIG_DIR; HOME="$DVH2" sh "$H/session-onboard.sh" --doctor) )
+  has "doctor reports a broken OMP link as broken, not with a borrowed version" "$DV" "link broken: "
+fi
+DV=$( (unset CODEX_HOME HERMES_HOME XDG_CACHE_HOME CLAUDE_CONFIG_DIR; HOME="$DVH2" PATH="$STUB" sh "$H/session-onboard.sh" --doctor) )
+has "doctor without jq still reads a package.json version" "$(printf '%s\n' "$DV" | grep 'opencode:')" "0.0.5 (@dynamicagency/throughline-opencode)"
+has "doctor without jq says a registry install was not read" "$(printf '%s\n' "$DV" | grep 'omp:')" "version not read (jq missing)"
+mkdir -p "$WORK/doctor-empty-home"
+DV=$( (unset CODEX_HOME HERMES_HOME XDG_CACHE_HOME CLAUDE_CONFIG_DIR; HOME="$WORK/doctor-empty-home" sh "$H/session-onboard.sh" --doctor) )
+has "doctor with no harness installs says none found" "$DV" "  none found"
 
 # 13. capture breadcrumbs a swallowed write failure and onboard surfaces it.
 #     Chmod the SESSION FILE itself read-only (not the directory): appending to
