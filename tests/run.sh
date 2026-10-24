@@ -1637,6 +1637,49 @@ printf -- '- `t` **bash** third - `c`\n' >> "$BUF/session-C.md"
 precompact '{"session_id":"C","trigger":"auto"}'
 eq "precompact: boundary after a post-boundary action stamps again" "$(grep -c '^<!-- compaction-boundary' "$BUF/session-C.md")" "3"
 
+# --- archive-buffer.sh: never overwrite an archived buffer (issues #79, #185) ----
+# Two handoffs in one session archive two windows under one session id. The
+# second must append to the first run's archived file, not replace it.
+AB="$WORK/archive-test/buffer"
+mkdir -p "$AB"
+printf -- '- `2026-01-01 09:00:00` **bash** window-one-first\n- `2026-01-01 09:05:00` **bash** window-one-last\n' > "$AB/session-AB.md"
+sh "$H/archive-buffer.sh" "$AB/session-AB.md"; AB_RC=$?
+eq "archive-buffer: first archive exits 0" "$AB_RC" "0"
+absent "archive-buffer: first archive removes the live buffer" "$AB/session-AB.md"
+present "archive-buffer: first archive lands in archive/" "$AB/archive/session-AB.md"
+printf -- '- `2026-01-01 10:00:00` **bash** window-two-only\n' > "$AB/session-AB.md"
+sh "$H/archive-buffer.sh" "$AB/session-AB.md"; AB_RC=$?
+eq "archive-buffer: same-session second archive exits 0" "$AB_RC" "0"
+absent "archive-buffer: second archive removes the live buffer" "$AB/session-AB.md"
+AB_TXT=$(cat "$AB/archive/session-AB.md")
+has "archive-buffer: the first window survives the second archive" "$AB_TXT" "window-one-first"
+before "archive-buffer: both windows are kept in order" "$AB_TXT" "window-one-last" "window-two-only"
+has "archive-buffer: an append boundary marks the second window" "$AB_TXT" "<!-- archive-append "
+eq "archive-buffer: one archived file per session, no temp left behind" "$(find "$AB/archive" -type f | wc -l | tr -d ' ')" "1"
+printf -- '- x\n' > "$AB/session-OTHER.md"
+sh "$H/archive-buffer.sh" "$AB/session-OTHER.md" "$AB/session-MISSING.md" 2>/dev/null; AB_RC=$?
+eq "archive-buffer: a missing buffer exits non-zero" "$AB_RC" "1"
+present "archive-buffer: other buffers in the same call are still archived" "$AB/archive/session-OTHER.md"
+# A failed append puts the window back where the next handoff reads buffers.
+if is_windows; then
+  skip_win "archive-buffer: a failed append leaves the window at its live name"
+else
+  printf -- '- window-three\n' > "$AB/session-AB.md"
+  chmod 444 "$AB/archive/session-AB.md"
+  AB_ERR=$(sh "$H/archive-buffer.sh" "$AB/session-AB.md" 2>&1); AB_RC=$?
+  chmod 644 "$AB/archive/session-AB.md"
+  if [ "$(id -u)" = "0" ]; then
+    ok "archive-buffer: a failed append leaves the window at its live name (skipped: root bypasses 444)"
+  else
+    eq "archive-buffer: a failed append exits non-zero" "$AB_RC" "1"
+    has "archive-buffer: a failed append leaves the window at its live name" "$(cat "$AB/session-AB.md" 2>/dev/null)" "window-three"
+    has "archive-buffer: a failed append says where the window is" "$AB_ERR" "window kept at $AB/session-AB.md"
+    eq "archive-buffer: a failed append leaves no temp file in archive/" "$(find "$AB/archive" -name '.archiving.*' | wc -l | tr -d ' ')" "0"
+  fi
+fi
+# #186: the skill archives through the script, never a bare move onto the archive.
+has "handoff skill: the consume step calls hooks/archive-buffer.sh" "$(cat "$ROOT/skills/handoff/SKILL.md")" "hooks/archive-buffer.sh"
+
 # --- jq program size (Windows command-line cap) ---------------------------------
 # session-capture.sh hands jq ONE argument: the redaction defs plus the capture
 # filter. Windows caps a whole command line at 32,767 characters, and a jq call

@@ -15,6 +15,12 @@ All notable changes to throughline are documented here. Format loosely follows
 - REFERENCE.md documents `THROUGHLINE_HERMES_SURFACES` in Configuration; README describes
   consolidate as on demand or when HANDOFF.md is bloated, matching the skill. #208.
 
+### Fixed
+- A second handoff in the same session no longer overwrites the first run's archived
+  buffer. `hooks/archive-buffer.sh` appends to an existing archive under an
+  `<!-- archive-append -->` marker, and the handoff skill archives through it (with a
+  collision-checked manual fallback). #79, #185, #186.
+
 ## [0.17.0] - 2026-10-23
 
 ### Added
