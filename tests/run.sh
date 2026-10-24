@@ -2044,7 +2044,13 @@ printf -- '- `t` **grep** `password=foo`\n- `t` **bash** set password - `export 
 sh "$H/rescan.sh" "$rs_dir/h.md" >/dev/null 2>&1
 has "rescan: a grep pattern is masked inside its backticks (issue #176)" "$(cat "$rs_dir/h.md")" '**grep** `password=***`'
 rs_crlf=$(sed -n 2p "$rs_dir/h.md" | od -An -c | tr -d ' \n')
-case "$rs_crlf" in *'PASSWORD=***`\r\n') ok "rescan: a CRLF bash record keeps its shape and its CR (issue #176)" ;; *) bad "rescan: a CRLF bash record keeps its shape and its CR (issue #176) (got $rs_crlf)" ;; esac
+# Native jq on Windows normalizes CRLF to LF on its own, so there the CR may go; the
+# record's shape is what must survive everywhere.
+case "$rs_crlf" in
+  *'PASSWORD=***`\r\n') ok "rescan: a CRLF bash record keeps its shape and its CR (issue #176)" ;;
+  *'PASSWORD=***`\n') if is_windows; then ok "rescan: a CRLF bash record keeps its shape (CR normalized by jq on Windows) (issue #176)"; else bad "rescan: a CRLF bash record lost its CR (issue #176)"; fi ;;
+  *) bad "rescan: a CRLF bash record keeps its shape (issue #176) (got $rs_crlf)" ;;
+esac
 # A private key spanning lines in a draft is masked whole.
 printf '# Handoff\n-----BEGIN RSA PRIVATE'' KEY-----\nEXAMPLEKEYBODYONE\nEXAMPLEKEYBODYTWO\n-----END RSA PRIVATE'' KEY-----\nnext\n' > "$rs_dir/d.md"
 rs_out=$(sh "$H/rescan.sh" "$rs_dir/d.md" 2>&1)
