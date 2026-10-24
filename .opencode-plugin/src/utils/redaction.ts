@@ -556,8 +556,9 @@ function redactAuthSchemesProse(str: string): string {
  * 5b. Client-anchored MySQL/MariaDB -p<password>
  * 6. Generic keyword=value (catch-all)
  * 7. Unmask sentinel
+ * 8. Value backstop over the original text (issue #173)
  *
- * Steps 1-7 mirror jq's `redact` pipeline in order. The parity test asserts that
+ * Steps 1-8 mirror jq's `redact` pipeline in order. The parity test asserts that
  * order by reading jq's own def bodies: `runs the MySQL rules in the command chain
  * only, exactly as jq does` parses `redact` / `redact_prompt` out of `hooks/_lib.sh`
  * and pins that `_mysql_pw_all` runs after `_prefix_tokens` and that no `_mysql*`
@@ -627,10 +628,9 @@ export function redact(str: string): string {
   // KEYWORD rather than as a value, and then the secret behind it is unreachable to both
   // passes: `export DB_PASSWORD_\u00c9 SECRET PASSWORD S3cret` masks `PASSWORD` (6a, as `SECRET`'s
   // value) where jq masks `SECRET` (as `DB_PASSWORD_\u00c9`'s value) and still has `PASSWORD S3cret`
-  // left to mask. Those inputs are pinned as `under` rows in ENGINE_DIVERGENCES; both leak
-  // on `main` too, so they are not regressions, but "the second sweep can only over-mask"
-  // was false as written and the seeded corpus cannot generate the shape (its two-keyword
-  // template puts no affix on the first keyword). The `\\b` of the OTHER rules is a
+  // left to mask. Stage 8, the value backstop (issue #173), reads the original text and
+  // masks `S3cret` anyway, so those inputs no longer leak; the stage-6 ordering is still
+  // what decides which keyword the sweeps mask. The `\\b` of the OTHER rules is a
   // different class of difference: there even an over-approximation can land on the leaking
   // side, so those stay pinned as divergences too - see ENGINE_DIVERGENCES in
   // redaction.test.ts.
@@ -1172,6 +1172,57 @@ export function redact(str: string): string {
   // 7. Unmask sentinel
   result = unmaskSentinel(result);
 
+  // 8. Value backstop over the ORIGINAL text (jq: `_backstop($orig)`, issue #173)
+  result = backstop(str, result);
+
+  return result;
+}
+
+// --- Value backstop (issue #173) ---
+
+/**
+ * jq's `_kw_values` / `_backstop`. The sweeps above run in sequence over text an earlier
+ * sweep already rewrote, so a sweep whose value is a whitespace-separated word can swallow
+ * a keyword a later sweep needed (`token password: X` stored as `Token *** X`). The
+ * backstop reads the ORIGINAL string: every word run that contains a keyword and is
+ * followed by a separator is a head, the value after each head is taken on its own, and
+ * any value the pipeline left visible is masked as a whole token. It only adds masks.
+ *
+ * Linear by construction, which jq gets from an atomic group JS does not have: one scan
+ * of the word runs (jq's `(?<!\w)(?>\w*KW\w*)` matches a whole run), then a sticky
+ * separator and a sticky value match at the run's end. Every head's value is taken on its
+ * own, which covers both of jq's passes (its pass B exists only because a global regex
+ * cannot overlap). Values of 3+ characters, no unterminated-quote alternative, as in jq.
+ */
+const BACKSTOP_KEYWORD = new RegExp("(?:" + KEYWORD_ALTERNATION + ")", "i");
+const BACKSTOP_WORD = new RegExp("[" + FOLD_ALNUM + "_]+", "g");
+const BACKSTOP_SEPARATOR = new RegExp(
+  JS_WS + "*[:=]" + JS_WS + "*|" + JS_WS + "+(?:" + SEPARATOR_ALTERNATION + ")" + JS_WS + "+|[ \\t]+", "iy");
+const BACKSTOP_VALUE = new RegExp("\"[^\"]*\"|'[^']*'|[^" + JS_WS_CHARS + "\"']+", "y");
+
+function backstopValues(original: string): string[] {
+  const values = new Set<string>();
+  const words = BACKSTOP_WORD;
+  words.lastIndex = 0;
+  let word: RegExpExecArray | null;
+  while ((word = words.exec(original)) !== null) {
+    if (!BACKSTOP_KEYWORD.test(word[0])) continue;
+    BACKSTOP_SEPARATOR.lastIndex = word.index + word[0].length;
+    if (BACKSTOP_SEPARATOR.exec(original) === null) continue;
+    BACKSTOP_VALUE.lastIndex = BACKSTOP_SEPARATOR.lastIndex;
+    const value = BACKSTOP_VALUE.exec(original);
+    if (value !== null && value[0].length >= 3 && value[0] !== "***") values.add(value[0]);
+  }
+  return [...values].sort();
+}
+
+function backstop(original: string, redacted: string): string {
+  let result = redacted;
+  for (const value of backstopValues(original)) {
+    if (!result.includes(value)) continue;
+    const literal = value.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
+    result = result.replace(new RegExp("(?<![A-Za-z0-9_])" + literal + "(?![A-Za-z0-9_])", "g"), "***");
+  }
   return result;
 }
 

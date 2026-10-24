@@ -726,53 +726,10 @@ tl_jq_redact_defs() {
   # the command path's effectively-unbounded floor (a bare `+` is `{1,}`).
   # Order and behavior are unchanged from before this refactor; only the two
   # duplicated literals were consolidated.
-  # $g is the keyword-head guard text (`_kw_guard` on the command path, empty on
-  # the prose path - see `_kw_head`).
-  # Keyword-head guard (issue #173). A rule whose value is a whitespace-separated
-  # WORD must not take that word when it is itself a credential keyword heading
-  # its own keyword/separator/value triple: `token password: hunter2`, `Bearer
-  # secret=hunter2`, `auth password is hunter2`. Taking it masks the keyword and
-  # leaves the secret after it in cleartext, because gsub has already consumed the
-  # keyword the generic rule needed. With the guard the outer rule stands down at
-  # that position, gsub moves on, and the generic rule masks the inner triple's
-  # value from the original text. Every word-consuming rule uses this one def so
-  # the class is closed once, not row by row.
-  # The keyword must be a whole word SEGMENT (`password`, `DB_PASSWORD`,
-  # `client-secret`, `credentials`), not a substring inside an opaque run: a
-  # Bearer or Basic value that merely contains `auth` or `token` (`Basic
-  # zzauthzzzz=`) is the credential itself, and a guard that stood down on it would
-  # store the whole token in clear. The separator test is strict too: `:` or `=`
-  # followed by a value character that is not a closing quote (a quoted header
-  # ends `...=" host`), with `==` padding never read as a separator, or a copula
-  # with a word after it. Bare whitespace is NOT a trigger: in `password mysecretpw
-  # ok` the keyword-shaped word is the secret, and it must still be masked.
-  # Residuals, stated: a secret that IS a keyword segment followed by an explicit
-  # separator (`password token: x`) keeps that word visible while the value after
-  # it is masked; and `bearer secret= x` (a space after `=`) is not read as a
-  # separator, so the guard does not fire there and the old behaviour stands.
-  # Command path only: `redact_prompt` has no generic rule behind the scheme rules,
-  # so a guard there would unmask the value and mask nothing in its place.
-  def _kw_head:
-    "(?:(?:[A-Za-z0-9]+[_-])*(?:token|secret|password|passwd|api[_-]?key|access[_-]?key|credential|auth(?:orization)?|client[_-]?id)s?(?:[_-][A-Za-z0-9]+)*(?:\\s*:\\s*(?![\"']?(?:\\s|$))\\S|\\s*=(?=[^\\s=])(?![\"'](?:\\s|$))|\\s+(?:is|was|are)\\s+\\S))";
-  def _kw_guard: "(?!" + _kw_head + ")";
-  # The bare-whitespace half of the same defect: in `token password hunter2` the
-  # inner pair has no explicit separator, so the guard above cannot tell it from
-  # `password mysecretpw ok` (where the keyword-shaped word IS the secret). Both
-  # readings are covered by masking the keyword-shaped word AND the word after it
-  # as one value: over-masking a word of captured command text is the safe side
-  # this file already takes, and either reading's secret ends up masked.
-  # The second word must not itself head a bare pair (`SECRET PASSWORD S3cret`):
-  # swallowing it would hide the keyword the next match needs, the same defect one
-  # word further along, so the pair stands down and the chain is masked link by
-  # link instead.
-  def _kw_word:
-    "\\w*(?:token|secret|password|passwd|api[_-]?key|access[_-]?key|credential|auth(?:orization)?|client[_-]?id)\\w*";
-  def _kw_pair:
-    _kw_word + "[ \\t]+(?!" + _kw_word + "[ \\t]+\\S)[^\\s\"]+";
-  def _bearer_scheme($min; $g):
-    gsub("(?i)bearer\\s+" + $g + "(?<t>[A-Za-z0-9._\\-]{\($min),})"; "Bearer ***");
-  def _basic_scheme($min; $g):
-    gsub("(?i)\\bbasic\\s+" + $g + "[A-Za-z0-9+/=]{\($min),}"; "Basic ***");
+  def _bearer_scheme($min):
+    gsub("(?i)bearer\\s+(?<t>[A-Za-z0-9._\\-]{\($min),})"; "Bearer ***");
+  def _basic_scheme($min):
+    gsub("(?i)\\bbasic\\s+[A-Za-z0-9+/=]{\($min),}"; "Basic ***");
   # Authorization SCHEME rules (Bearer/Basic) - COMMAND-PATH version, used only
   # by `redact`. No length minimum on the bearer value and only an 8-char floor
   # on Basic's base64 run: commands aren't natural language, so "bearer X" /
@@ -782,8 +739,8 @@ tl_jq_redact_defs() {
   # constraint that makes one safe would either under-redact the other's real
   # shapes or false-positive on the other's ordinary text).
   def _auth_scheme:
-    _bearer_scheme(1; _kw_guard)
-    | _basic_scheme(8; _kw_guard);
+    _bearer_scheme(1)
+    | _basic_scheme(8);
   # Authorization SCHEME rules - PROSE-SAFE version, used only by
   # `redact_prompt`. A bare 8-char base64-alphabet floor or an unbounded bearer
   # value both false-positive constantly on ordinary English: "bearer of good
@@ -811,9 +768,9 @@ tl_jq_redact_defs() {
   # skill's human re-scan is the sole backstop for that case, same as for any
   # other bare/short secret with no recognizable long-token shape.
   def _auth_scheme_prose:
-    _bearer_scheme(16; "")
+    _bearer_scheme(16)
     | gsub("(?i)\\btoken\\s+(?<t>[A-Za-z0-9._\\-]{16,})"; "Token ***")
-    | _basic_scheme(16; "");
+    | _basic_scheme(16);
   # Full command-path redaction. Shape-specific patterns run BEFORE the generic
   # keyword=value catch-all, so e.g. "Authorization:Basic <base64>" is fully
   # consumed by the Basic-auth rule rather than the generic auth keyword rule
@@ -899,15 +856,47 @@ tl_jq_redact_defs() {
   # #130 block in tests/run.sh pins both halves: the glued-hyphen fixture goes red
   # under exactly the widening above, and the non-ASCII fixture stays green under
   # widening and narrowing alike.
+  # Value backstop (issue #173). The rules above run in sequence over text an
+  # earlier rule already rewrote, so a rule whose value is a whitespace-separated
+  # word can swallow a keyword a later rule needed: `token password: X` became
+  # `Token *** X`, `auth password: X` became `auth *** X`. Patching the order or
+  # guarding each rule moved the leak somewhere else every time (measured: a guard
+  # fixed ~36k generated inputs and newly leaked ~7k), so this does not touch the
+  # pipeline. It reads the ORIGINAL text instead, in two linear global passes of
+  # the generic rule's own head (keyword and separator, atomic and anchored the
+  # same way) followed by a value. Pass A takes each head's value as it comes; pass
+  # B refuses a value that is itself a head, so the regex moves on to that inner
+  # head and a chain like `token token token: X` resolves to its last link's value.
+  # Any value either pass finds that the pipeline left visible is masked. It only
+  # ever adds masks, so no input the pipeline masks can become visible.
+  # Values shorter than 3 characters are skipped: masking every `x` or `on` in a
+  # line would corrupt it, and the pipeline already masks the ordinary short-value
+  # cases. A value is masked wherever it appears in the line as a whole token
+  # (never inside a longer word, so `PASSWORD` does not eat the tail of
+  # `DB_PASSWORD`), which also covers the same secret echoed twice. The value
+  # grammar has no unterminated-quote alternative: a lone `"` here is usually a
+  # closing quote, not a value.
+  def _kw_head_rx:
+    "(?<!\\w)(?>\\w*(?:token|secret|password|passwd|api[_-]?key|access[_-]?key|credential|auth(?:orization)?|client[_-]?id)\\w*)(?:\\s*[:=]\\s*|\\s+(?:is|was|are)\\s+|[ \\t]+)";
+  def _kw_val_rx: "(?<v>\"[^\"]*\"|'[^']*'|[^\\s\"']+)";
+  def _kw_values:
+    [ capture(_kw_head_rx + _kw_val_rx; "gi"), capture(_kw_head_rx + "(?!" + _kw_head_rx + ")" + _kw_val_rx; "gi") | .v ]
+    | map(select(length >= 3 and . != "***")) | unique;
+  def _rx_lit: gsub("(?<c>[.*+?^${}()|\\[\\]\\\\/])"; "\\\(.c)");
+  def _backstop($orig):
+    reduce ($orig | _kw_values[]) as $v (.;
+      if index($v) then gsub("(?<![A-Za-z0-9_])" + ($v | _rx_lit) + "(?![A-Za-z0-9_])"; "***") else . end);
   def redact:
-    _pem
+    . as $orig
+    | _pem
     | _auth_scheme
-    | gsub("(?i)\\btoken\\s+" + _kw_guard + "(?<t>" + _kw_pair + "|[A-Za-z0-9._\\-]+)"; "Token ***")
+    | gsub("(?i)\\btoken\\s+(?<t>[A-Za-z0-9._\\-]+)"; "Token ***")
     | _url
     | _prefix_tokens
     | _mysql_pw_all
-    | gsub("(?i)(?:(?<!\\w)|(?<=\(M)))(?<k>(?>\\w*(?:token|secret|password|passwd|api[_-]?key|access[_-]?key|credential|auth(?:orization)?|client[_-]?id)\\w*))(?<s>\\s*[:=]\\s*|\\s+(?:is|was|are)\\s+" + _kw_guard + "|\\s+" + _kw_guard + ")(?<v>\"[^\"]*\"|\(M)|(?<=\\s)" + _kw_pair + "|\"[^\\r\\n]*|[^\\s\"]+)"; "\(.k)\(.s)***")
-    | _unmask;
+    | gsub("(?i)(?:(?<!\\w)|(?<=\(M)))(?<k>(?>\\w*(?:token|secret|password|passwd|api[_-]?key|access[_-]?key|credential|auth(?:orization)?|client[_-]?id)\\w*))(?<s>\\s*[:=]\\s*|\\s+(?:is|was|are)\\s+|\\s+)(?<v>\"[^\"]*\"|\(M)|\"[^\\r\\n]*|[^\\s\"]+)"; "\(.k)\(.s)***")
+    | _unmask
+    | _backstop($orig);
   # Prose-safe redaction for user prompts (issue #5), and for the WebSearch
   # query / Task description branches in session-capture.sh (also prose).
   # Prompts are natural language, not commands: running them through `redact`
