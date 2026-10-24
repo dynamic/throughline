@@ -34,7 +34,12 @@ refined by the next. Never run it more than once per unchanged state.
 
 ## Phase 1: Gather source
 
-1. Read **all** `DATA/buffer/session-*.md` — these are the continuously-captured
+1. If there are buffers, re-scan them first: `sh <plugin-root>/hooks/rescan.sh` with
+   each `DATA/buffer/session-*.md` path (`<plugin-root>` as in Phase 4). It rewrites
+   them in place with the current redaction rules and prints one line per buffer it
+   masked; quote those in the report. On a non-zero exit quote its stderr, and where
+   it failed or does not exist (OpenCode, skills-only installs) do the manual re-scan
+   in Reminders on those buffers. Then read **all** `DATA/buffer/session-*.md` — these are the continuously-captured
    actions (commands, file edits) for this and any unconsumed prior sessions.
    They survive context compaction, so trust them over fuzzy recollection. One
    session is one file (keyed by a session id stable across compaction).
@@ -327,23 +332,16 @@ the file is currently under the 150/200-line target (see Phase 1 step 4 above).
 ## Reminders
 - **Distillation needs judgment** — that's why this is a skill, not a hook. Be terse,
   preserve structure, don't duplicate existing entries.
-- **Re-scan for secrets before writing.** Capture masks obvious credential shapes,
-  but it is best-effort pattern matching, not a guarantee — it has no entropy
-  analysis, so a bare opaque token with no recognizable keyword or prefix passes
-  through unmasked. Before writing anything into `HANDOFF.md` or `logs/` - and
-  especially before any opt-in commit of them - scan your draft for token-shaped
-  strings (case-insensitive
-  `token|key|secret|password|credential|auth`, `Bearer`, `ghp_`/`github_pat_`/
-  `gh[oprsu]_`/`sk-`/`AKIA`, URL userinfo) **and** for any other long, opaque,
-  random-looking string regardless of keyword — reduce all of them to key names
-  only. Two shapes capture's own redaction structurally cannot catch, so they
-  need a human/model eye specifically: (1) a credential attached to a bare CLI
-  flag with no keyword (`mysql -p<password>`, `curl -u user:pass`) — flags like
-  `-u`/`-p` are too overloaded across tools (e.g. `docker run -u uid:gid`) to
-  redact mechanically without false positives; (2) a value that's only
-  *partially* masked — seeing a `***` in a captured line doesn't mean the whole
-  secret was caught, so check what's still readable around it, not just whether
-  a mask is present. This is defense in depth, not the sole barrier.
+- **Re-scan for secrets before writing.** Redaction is pattern matching with no entropy
+  analysis: a bare opaque token with no keyword or prefix passes through, and text you
+  bring from the conversation was never redacted. Before writing `HANDOFF.md` or
+  `logs/` - and before any opt-in commit of them - check your draft for token-shaped
+  strings (case-insensitive `token|key|secret|password|credential|auth`, `Bearer`,
+  `ghp_`/`github_pat_`/`gh[oprsu]_`/`sk-`/`AKIA`, URL userinfo) and any long,
+  random-looking string, and reduce them to key names. Two shapes need your eye: (1) a
+  credential on a bare CLI flag (`curl -u user:pass`, or `-p<pw>` anywhere but after
+  a mysql/mariadb client name); (2) a value only *partially* masked - a `***` does not
+  mean the whole secret was caught.
 - **Report, then let the user review.** After writing, show the HANDOFF.md diff +
   session-log path, then the copy-pasteable next-session briefing block, then -
   only if something is committable (step 8) - the commit/push offer; with both

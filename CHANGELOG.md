@@ -27,6 +27,11 @@ All notable changes to throughline are documented here. Format loosely follows
   for scripted headless runs. #189.
 
 ### Changed
+- The handoff skill runs `hooks/rescan.sh` over the capture buffers before reading them
+  and quotes its summary lines, so a secret captured before a redaction rule existed is
+  masked and reported. Where the script fails or is absent (OpenCode, skills-only
+  installs) it falls back to the manual re-scan, which also covers text brought from the
+  conversation. #177, #91.
 - The SessionStart unconsumed-buffer warning reports each buffer once and only counts
   buffers with at least 3 action records (`THROUGHLINE_UNCONSUMED_MIN`); it then says how
   many are new and how large the largest is. It used to appear in 86% of sessions,
