@@ -557,7 +557,7 @@ tl_jq_redact_defs() {
     | gsub("(?<g>(?<![A-Za-z0-9_])gl(?:pat|oas|dt|rtr|rt|cbt|ptt|ft|imt|agent|wt|soat|ffct)-)[A-Za-z0-9_-]{20,}(?:\\.[A-Za-z0-9_-]+)*"; "\(.g)***")
     | gsub("(?<![A-Za-z0-9_])_gitlab_session=[A-Za-z0-9_-]{16,}"; "_gitlab_session=***")
     | gsub("(?<![A-Za-z0-9_])npm_[A-Za-z0-9]{30,}"; "npm_***")
-    | gsub("\\bSG\\.[A-Za-z0-9_-]{16,}\\.[A-Za-z0-9_-]{16,}"; "SG.***");
+    | gsub("(?<![A-Za-z0-9_])SG\\.[A-Za-z0-9_-]{16,}\\.[A-Za-z0-9_-]{16,}"; "SG.***");
   # MySQL/MariaDB client-anchored `-p<password>` (issue #81). The flag itself is
   # far too overloaded to redact generically, so the anchor is the CLIENT NAME:
   # the rule only fires when a known client binary appears earlier on the same
@@ -747,8 +747,16 @@ tl_jq_redact_defs() {
     gsub("(?i)bearer\\s+(?<t>[A-Za-z0-9._\\-]{\($min),})"; "Bearer ***");
   # The value may continue in `.`-joined segments: a JWT pasted after `basic` was
   # masked only up to its first `.`, leaving the rest of the token visible (#220).
-  def _basic_scheme($min):
-    gsub("(?i)\\bbasic\\s+[A-Za-z0-9+/=]{\($min),}(?:\\.[A-Za-z0-9_+/=-]+)*"; "Basic ***");
+  # The anchor is an ASCII lookbehind, not `\b`, which counts a glued `é` as a
+  # word character and so never anchored `éBasic X` (#220, the #116 seam).
+  # $pad: `=` only as trailing padding, as in real base64. On the command path an
+  # `=` anywhere let `basic token=basic X` take `token=basic` as the value and leave
+  # X visible (#220); the value backstop there masks `basic secret=X` instead. The
+  # prompt path has no backstop and relies on the wide class to take `secret=X`
+  # whole, so it keeps `=` anywhere (narrowing it there leaked 908 sweep inputs).
+  def _basic_scheme($min; $pad):
+    (if $pad then "[A-Za-z0-9+/]{\($min),}={0,2}" else "[A-Za-z0-9+/=]{\($min),}" end) as $v
+    | gsub("(?i)(?<![A-Za-z0-9_])basic\\s+" + $v + "(?:\\.[A-Za-z0-9_+/=-]+)*"; "Basic ***");
   # Authorization SCHEME rules (Bearer/Basic) - COMMAND-PATH version, used only
   # by `redact`. No length minimum on the bearer value and only an 8-char floor
   # on Basic's base64 run: commands aren't natural language, so "bearer X" /
@@ -759,7 +767,7 @@ tl_jq_redact_defs() {
   # shapes or false-positive on the other's ordinary text).
   def _auth_scheme:
     _bearer_scheme(1)
-    | _basic_scheme(8);
+    | _basic_scheme(8; true);
   # Authorization SCHEME rules - PROSE-SAFE version, used only by
   # `redact_prompt`. A bare 8-char base64-alphabet floor or an unbounded bearer
   # value both false-positive constantly on ordinary English: "bearer of good
@@ -788,8 +796,8 @@ tl_jq_redact_defs() {
   # other bare/short secret with no recognizable long-token shape.
   def _auth_scheme_prose:
     _bearer_scheme(16)
-    | gsub("(?i)\\btoken\\s+(?<t>[A-Za-z0-9._\\-]{16,})"; "Token ***")
-    | _basic_scheme(16);
+    | gsub("(?i)(?<![A-Za-z0-9_])token\\s+(?<t>[A-Za-z0-9._\\-]{16,})"; "Token ***")
+    | _basic_scheme(16; false);
   # Full command-path redaction. Shape-specific patterns run BEFORE the generic
   # keyword=value catch-all, so e.g. "Authorization:Basic <base64>" is fully
   # consumed by the Basic-auth rule rather than the generic auth keyword rule
@@ -939,7 +947,7 @@ tl_jq_redact_defs() {
     . as $orig
     | _pem
     | _auth_scheme
-    | gsub("(?i)\\btoken\\s+(?<t>[A-Za-z0-9._\\-]+)"; "Token ***")
+    | gsub("(?i)(?<![A-Za-z0-9_])token\\s+(?<t>[A-Za-z0-9._\\-]+)"; "Token ***")
     | _url
     | _prefix_tokens
     | _mysql_pw_all
