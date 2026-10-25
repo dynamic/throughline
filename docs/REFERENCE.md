@@ -308,6 +308,7 @@ throughline/
 ├─ __init__.py               # Hermes entry point: registers hooks and skills
 ├─ package.json              # OMP manifest (omp field)
 ├─ tests/run.sh              # fixture-driven hook tests (shellcheck + CI)
+├─ tests/harness/run.sh      # live harness test: real install, one headless session
 ├─ tests/hermes/             # pytest suite for the Hermes bridge
 ├─ docs/                     # promo site + reference docs
 └─ CHANGELOG.md

@@ -6,6 +6,12 @@ All notable changes to throughline are documented here. Format loosely follows
 ## [Unreleased]
 
 ### Added
+- `tests/harness/run.sh claude|opencode`: installs throughline into the real harness
+  inside a throwaway HOME (the checkout as a Claude Code marketplace; a local-path
+  OpenCode plugin entry), runs one headless session in a fixture repo, and checks the
+  buffer for the prompt, the shell call and the end stamp, plus that nothing was written
+  outside the temp tree. `.github/workflows/harness.yml` runs it nightly and on dispatch;
+  a leg without credentials exits 2 and is reported as a warning. #196.
 - `hooks/rescan.sh`: re-applies the current redaction rules in place to a buffer, archive
   or draft written before them, record-aware (prose-safe rules on prompt, websearch and
   agent records), and prints one line per changed file with counts by class, never a
