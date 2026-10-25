@@ -1,18 +1,17 @@
 /**
  * throughline — shared helpers for OpenCode plugin hooks.
  *
- * Resolves the data directory where session state lives. Precedence:
- *   1. $THROUGHLINE_DATA_DIR (absolute, or relative to the project root)
- *   2. .claude/throughline/   (default — universal workspace dir)
- *
- * "Project root" is the data root, not necessarily the session's own
- * working tree: in a linked git worktree it resolves to the MAIN working
- * tree by default, so every worktree shares one data dir.
+ * The plugin is a thin bridge (issue #179): each OpenCode event becomes a
+ * Claude-shaped JSON payload on the stdin of one of the shared hooks/*.sh
+ * scripts, copied into this package at build time (scripts/copy-hooks.mjs).
+ * Capture, redaction, data-dir resolution and the session-start block all
+ * live in those scripts, the same ones Claude Code, Codex, OMP and Hermes
+ * run, so there is no second implementation here to drift.
  */
 
-import { execSync } from "node:child_process";
-import { existsSync, mkdirSync, appendFileSync, realpathSync, statSync } from "node:fs";
-import { dirname, join, isAbsolute } from "node:path";
+import { execFile, execFileSync } from "node:child_process";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 // --- Types ---
 
@@ -21,263 +20,127 @@ export interface ThroughlineContext {
   worktree?: string; // workspace root
 }
 
-export interface TlState {
-  dataRoot: string; // main working tree (for data dir)
-  dataDir: string; // resolved data directory
-  active: boolean; // whether throughline is active
-  activeReason?: "disabled" | "ignored" | "bootstrap-failed";
-}
+// --- Paths ---
+
+/** Package root: dist/.. in the built package, which holds hooks/ and package.json. */
+export const PLUGIN_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+const HOOKS_DIR = join(PLUGIN_ROOT, "hooks");
 
 // --- Kill switch ---
 
 /**
  * Machine-wide kill switch: THROUGHLINE_DISABLE set to anything but "0"
- * turns every hook into a no-op.
+ * turns every hook into a no-op. The scripts check it too; checking here
+ * as well skips the spawn.
  */
 export function tlDisabled(): boolean {
   const val = process.env.THROUGHLINE_DISABLE;
   return val !== undefined && val !== "0" && val !== "";
 }
 
-// --- Path resolution ---
+// --- Running a hook script ---
+
+const HOOK_TIMEOUT_MS = 5000;
 
 /**
- * Return the project root. In OpenCode, ctx.directory is the working dir.
- */
-export function tlRoot(ctx: ThroughlineContext): string {
-  return ctx.directory;
-}
-
-/**
- * Canonicalize a path (resolve symlinks), falling back to the raw path if
- * resolution fails (path doesn't exist yet, permissions, etc.) — mirrors
- * _tl_canonicalize_path in _lib.sh.
- */
-export function tlCanonicalize(path: string): string {
-  try {
-    return realpathSync(path);
-  } catch {
-    return path;
-  }
-}
-
-/**
- * Resolve the data root (main working tree for worktree sharing).
- * Memoized via a module-level cache keyed by ctx.directory — a single
- * plugin instance can field hooks for more than one directory (e.g. a
- * subagent/task run against a different worktree), so an unkeyed cache
- * would leak the first directory's data root onto every other one.
- */
-const _dataRootCache = new Map<string, string>();
-
-export function tlDataRoot(ctx: ThroughlineContext): string {
-  const key = tlRoot(ctx);
-  const cached = _dataRootCache.get(key);
-  if (cached !== undefined) return cached;
-  const computed = computeDataRoot(ctx);
-  _dataRootCache.set(key, computed);
-  return computed;
-}
-
-function computeDataRoot(ctx: ThroughlineContext): string {
-  // Canonicalized up front, like _tl_compute_data_root in _lib.sh, and used
-  // for every return path below — not just the linked-worktree one. A
-  // caller (session-created.ts's worktree-sharing note) compares this
-  // return value against a separately-canonicalized tl_root(); if this
-  // function only canonicalized SOME return paths (originally: just the
-  // linked-worktree one), the common "this IS the main worktree" case would
-  // return the raw, un-resolved directory, and a project sitting behind any
-  // symlink (macOS's /var -> /private/var, which os.tmpdir() itself resolves
-  // through, confirmed live) would wrongly compare as "different location"
-  // and falsely claim worktree-sharing on every single session.
-  const wt = tlCanonicalize(tlRoot(ctx));
-  const worktreeShared = process.env.THROUGHLINE_WORKTREE_SHARED ?? "1";
-
-  if (worktreeShared === "0" || worktreeShared === "false" || worktreeShared === "no" || worktreeShared === "off") {
-    return wt;
-  }
-
-  try {
-    const gd = execSync(`git -C "${wt}" rev-parse --path-format=absolute --git-dir`, {
-      encoding: "utf-8",
-      stdio: ["pipe", "pipe", "pipe"],
-    }).trim();
-
-    const cd = execSync(`git -C "${wt}" rev-parse --path-format=absolute --git-common-dir`, {
-      encoding: "utf-8",
-      stdio: ["pipe", "pipe", "pipe"],
-    }).trim();
-
-    // gd == cd means this IS the main worktree
-    if (gd === cd) return wt;
-
-    // Confirmed linked worktree. Get main worktree path.
-    const wtList = execSync(`git -C "${wt}" worktree list --porcelain`, {
-      encoding: "utf-8",
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-
-    const match = wtList.match(/^worktree (.+)$/m);
-    if (!match) return wt;
-
-    const mainWt = tlCanonicalize(match[1]);
-    if (!existsSync(mainWt)) return wt;
-
-    // Migration safety: keep a worktree's own pre-existing data dir only while the
-    // main checkout has no HANDOFF.md (issue #218, as in hooks/_lib.sh). Once it has
-    // one, the main tree wins - the own dir is usually a copy some tool made. A bare
-    // main dir does not count: any session bootstraps one empty.
-    const ownDir = dirUnder(wt);
-    const mainDir = dirUnder(mainWt);
-
-    if (ownDir !== mainDir && existsSync(ownDir) && !isFile(join(mainDir, "HANDOFF.md"))) {
-      return wt;
-    }
-
-    return mainWt;
-  } catch {
-    return wt;
-  }
-}
-
-function isFile(path: string): boolean {
-  try {
-    return statSync(path).isFile();
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Compute the data dir under a given root.
- */
-function dirUnder(root: string): string {
-  const envDir = process.env.THROUGHLINE_DATA_DIR;
-  if (envDir) {
-    return isAbsolute(envDir) ? envDir : join(root, envDir);
-  }
-  return join(root, ".claude", "throughline");
-}
-
-/**
- * Resolve the data directory for this project.
- */
-export function tlDataDir(ctx: ThroughlineContext): string {
-  const dataRoot = tlDataRoot(ctx);
-  return dirUnder(dataRoot);
-}
-
-// --- Activation ---
-
-/**
- * Check if a data dir already exists.
- */
-export function tlDataExists(ctx: ThroughlineContext): boolean {
-  const data = tlDataDir(ctx);
-  return existsSync(data) || existsSync(join(data, "HANDOFF.md"));
-}
-
-/**
- * Activation decision for this project.
- * Returns { active, reason? } where reason explains why inactive.
- */
-export function tlActive(ctx: ThroughlineContext): TlState {
-  const dataRoot = tlDataRoot(ctx);
-  const dataDir = dirUnder(dataRoot);
-
-  if (tlDisabled()) {
-    return { dataRoot, dataDir, active: false, activeReason: "disabled" };
-  }
-
-  // Check for .throughlineignore
-  if (existsSync(join(dataRoot, ".throughlineignore")) || existsSync(join(tlRoot(ctx), ".throughlineignore"))) {
-    return { dataRoot, dataDir, active: false, activeReason: "ignored" };
-  }
-
-  // Already active if data exists
-  if (tlDataExists(ctx)) {
-    return { dataRoot, dataDir, active: true };
-  }
-
-  // Auto-activate: bootstrap the data dir
-  try {
-    mkdirSync(dataDir, { recursive: true });
-    return { dataRoot, dataDir, active: true };
-  } catch {
-    return { dataRoot, dataDir, active: false, activeReason: "bootstrap-failed" };
-  }
-}
-
-// --- Session ID ---
-
-/**
- * Sanitize a session id for safe use as a filename.
- * Keep only [A-Za-z0-9._-], collapse everything else to '_'.
- */
-export function tlSafeSid(sid: string): string {
-  if (!sid) return "";
-  const sanitized = sid.replace(/[^A-Za-z0-9._-]/g, "_");
-  if (sanitized === "" || sanitized === "." || sanitized === "..") return "";
-  return sanitized;
-}
-
-// --- Timestamps ---
-
-/**
- * Format current timestamp for buffer lines.
- */
-export function tlNow(): string {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, "0");
-  const day = String(now.getDate()).padStart(2, "0");
-  const hours = String(now.getHours()).padStart(2, "0");
-  const minutes = String(now.getMinutes()).padStart(2, "0");
-  const seconds = String(now.getSeconds()).padStart(2, "0");
-  return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
-}
-
-// --- Buffer operations ---
-
-/**
- * Append one timestamped record line to a session buffer.
+ * Run hooks/<script> with `payload` as JSON on stdin; resolve with its stdout.
  *
- * `bufDir` is the resolved `<dataDir>/buffer` directory; the error
- * breadcrumb on a write failure goes to `<dataDir>/.capture-errors`
- * (dataDir's root, not under buffer/ — see tlErr), so it's derived here
- * rather than threading a separate dataDir param through every caller.
+ * Never rejects: hooks/*.sh exit 0 by contract, and a spawn failure, timeout
+ * or non-zero exit resolves with whatever stdout there was (usually empty),
+ * so a broken install degrades to "nothing captured" instead of breaking the
+ * OpenCode session.
  */
-export function tlAppendLine(bufDir: string, sid: string, content: string): void {
-  const ts = tlNow();
-  const bufPath = join(bufDir, `session-${sid}.md`);
-  const line = `- \`${ts}\` ${content}\n`;
-
-  try {
-    appendFileSync(bufPath, line, "utf-8");
-  } catch (err) {
-    tlErr(dirname(bufDir), `write failed for session-${sid}: ${err}`);
-  }
+export function runHook(
+  ctx: ThroughlineContext,
+  script: string,
+  payload: Record<string, unknown>,
+  extraEnv: Record<string, string> = {},
+): Promise<string> {
+  return new Promise((resolve) => {
+    let child;
+    try {
+      child = execFile(
+        "sh",
+        [join(HOOKS_DIR, script)],
+        {
+          cwd: ctx.directory,
+          env: {
+            ...process.env,
+            CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT,
+            CLAUDE_PROJECT_DIR: ctx.directory,
+            ...extraEnv,
+          },
+          timeout: HOOK_TIMEOUT_MS,
+          maxBuffer: 1024 * 1024,
+        },
+        (_error, stdout) => resolve(typeof stdout === "string" ? stdout : ""),
+      );
+    } catch {
+      resolve("");
+      return;
+    }
+    // A script whose guard clause exits before reading stdin (inactive,
+    // disabled, no jq) closes the pipe under the pending write. Without a
+    // listener that EPIPE is an uncaught 'error' event that kills the host.
+    child.stdin?.on("error", () => {});
+    child.stdin?.end(JSON.stringify(payload));
+  });
 }
 
 /**
- * Breadcrumb for swallowed failures. Takes the resolved data dir explicitly
- * — every caller already has it from tlActive()/tlDataDir(), and guessing
- * it from process.cwd() (as this used to) writes the breadcrumb into
- * whatever directory the OpenCode process happened to start in rather than
- * the project's actual data dir, where session-created.ts looks for it.
+ * runHook, blocking: for a step that must be on disk before a handler that
+ * OpenCode does not await can be cut off by process exit (see index.ts).
  */
-export function tlErr(dataDir: string, message: string): void {
+export function runHookSync(
+  ctx: ThroughlineContext,
+  script: string,
+  payload: Record<string, unknown>,
+): string {
   try {
-    const errPath = join(dataDir, ".capture-errors");
-    appendFileSync(errPath, `${tlNow()} ${message}\n`, "utf-8");
+    return execFileSync("sh", [join(HOOKS_DIR, script)], {
+      cwd: ctx.directory,
+      env: { ...process.env, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT, CLAUDE_PROJECT_DIR: ctx.directory },
+      input: JSON.stringify(payload),
+      timeout: HOOK_TIMEOUT_MS,
+      maxBuffer: 1024 * 1024,
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "ignore"],
+    });
   } catch {
-    // Silently fail - this is the error reporter itself
+    return "";
   }
 }
 
+// --- Per-session ordering ---
+
 /**
- * Clean control characters and backticks from a string.
+ * Records for one session must land in order, and before that session's
+ * compaction boundary or idle stamp, even when OpenCode runs tool calls in
+ * parallel. One promise chain per session gives both. A rejected job does not
+ * stop the jobs queued after it.
  */
-export function tlCleanCtrl(str: string): string {
-  return str.replace(/[\x00-\x1F\x7F`]/g, " ");
+const queues = new Map<string, Promise<unknown>>();
+
+export function enqueue(sessionID: string, job: () => Promise<unknown>): Promise<void> {
+  const prev = queues.get(sessionID) ?? Promise.resolve();
+  const next = prev.then(job).then(
+    () => undefined,
+    () => undefined,
+  );
+  queues.set(sessionID, next);
+  // Drop the entry once this tail settles, unless a later job extended it.
+  void next.then(() => {
+    if (queues.get(sessionID) === next) queues.delete(sessionID);
+  });
+  return next;
+}
+
+/** Whether any job for this session is still queued or running. */
+export function hasQueued(sessionID: string): boolean {
+  return queues.has(sessionID);
+}
+
+/** Wait for every job already queued for this session. */
+export function drain(sessionID: string): Promise<void> {
+  return (queues.get(sessionID) ?? Promise.resolve()).then(() => undefined);
 }

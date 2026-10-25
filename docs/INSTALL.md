@@ -106,18 +106,19 @@ installs the package automatically via Bun at startup. Check
 `~/.local/share/opencode/log/opencode.log` for a load error if session capture
 doesn't appear to be running.
 
-**Requirements:** Node.js 18+ (no `jq` required - TypeScript uses native JSON
-parsing).
+**Requirements:** `git` and `jq` on your `PATH`, and a POSIX `sh`. The plugin maps
+OpenCode's events onto the same `hooks/*.sh` scripts every other harness runs (they
+ship inside the npm package), so capture and redaction are identical everywhere.
+Without `jq`, capture does not run and the session-start block says so.
 
-**What you get:** all 5 hooks, ported to TypeScript against OpenCode's own plugin
-API - continuous prompt/action capture with redaction, session-start context
+**What you get:** all 5 hooks against OpenCode's own plugin API - continuous
+prompt/action capture with redaction, session-start context
 injection (HANDOFF.md pointer + live git state), and compaction survival (a boundary
 marker plus buffer-tail re-injection right after). One behavioral difference worth
 knowing: OpenCode's `session.idle` event fires after every turn, not once at process
-exit the way Claude Code's `SessionEnd` does, so the buffer's end-marker is a "last
-known idle point" that gets re-stamped each time the session goes idle, rather than
-a one-shot end-of-session stamp - `onboard` reads it the same way either way (has
-this buffer seen activity since the marker). This plugin ships **hooks only,
+exit the way Claude Code's `SessionEnd` does, so the buffer gets an end-stamp after each turn that recorded
+something, rather than one end-of-session stamp - `onboard` reads it the same way
+either way (has this buffer seen activity since the last stamp). This plugin ships **hooks only,
 no skills** - OpenCode's own plugin API has no supported way to ship a skill
 directory alongside a plugin today. Run `npx skills add dynamic/throughline`
 separately for `handoff`/`onboard`/`consolidate`/`consolidate-memory`. In practice

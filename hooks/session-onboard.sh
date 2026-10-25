@@ -308,6 +308,8 @@ sid=$(tl_resolve_sid "$input")
 ver=""
 if tl_have_jq; then
   ver=$(jq -r '.version // ""' "${CLAUDE_PLUGIN_ROOT:-$DIR/..}/.claude-plugin/plugin.json" 2>/dev/null)
+  # The OpenCode npm package ships hooks/ beside its package.json, not .claude-plugin/.
+  [ -n "$ver" ] || ver=$(jq -r '.version // ""' "${CLAUDE_PLUGIN_ROOT:-$DIR/..}/package.json" 2>/dev/null)
 fi
 if [ -n "$ver" ]; then
   echo "## throughline v$ver - project session context"

@@ -764,6 +764,15 @@ has   "kwhordinary: ordinary command keeps the pipeline's shape (issue #173)" "$
 tl_kwchain=$(i=0; while [ $i -lt 2000 ]; do printf 'token '; i=$((i+1)); done)
 cap "{\"session_id\":\"T\",\"tool_name\":\"Bash\",\"tool_input\":{\"description\":\"kwhlongchain\",\"command\":\"$tl_kwchain: S3cretPw\"}}"
 has   "kwhlongchain: a 2000-keyword chain is captured, not dropped (issue #173)" "$(cap_line kwhlongchain)" 'Token ***'
+#      A 63 KB run of keywords: redaction is superlinear on this shape (6 s unclamped,
+#      past a bridge's 5 s hook timeout), so capture clamps each field raw to 2000
+#      characters first, as session-prompt.sh does (issue #179 review).
+tl_dense=$(awk 'BEGIN { for (i = 0; i < 7000; i++) printf " password" }')
+_t0=$(date +%s)
+cap "{\"session_id\":\"T\",\"tool_name\":\"Bash\",\"tool_input\":{\"description\":\"kwhdense\",\"command\":\"echo$tl_dense\"}}"
+_t1=$(date +%s)
+has   "kwhdense: a 63 KB keyword run is captured (issue #179)" "$(cap_line kwhdense)" 'echo ***'
+if [ $((_t1 - _t0)) -le 2 ]; then ok "kwhdense: and within 2 s (issue #179)"; else bad "kwhdense: took $((_t1 - _t0)) s"; fi
 # 2i1c. quoted -p<value> inside double quotes (the container-entrypoint shape
 #      mysql -uroot "-p$PW" db): the span group consumes the full quoted run
 #      including the -p. The pre-rule _mysql_pw_pre catches this shape.

@@ -17,9 +17,8 @@ All notable changes to throughline are documented here. Format loosely follows
   matches its directory, a description of at most 300 characters), a per-skill byte
   budget that only ratchets down, and that every repo path a skill names exists. #195.
 - `tests/redaction-sweep.sh`: a generated sweep (about 42,000 prefix x keyword x separator
-  x value inputs plus keyword chains) that counts seeded secrets surviving each engine's
-  `redact`, and fails CI when either the jq hooks or the OpenCode port leaks more than its
-  pinned baseline. #174.
+  x value inputs plus keyword chains) that counts seeded secrets surviving `redact`, and
+  fails CI when it leaks more than its pinned baseline. #174.
 - `docs/ROADMAP.md` (epics #166-#172) and `docs/AUDIT-v0.17.0.md`, the audit behind it.
 - `scripts/check-manifests.sh` (manifest validity, version agreement, CHANGELOG top heading)
   and `scripts/check-typography.sh` (outward-docs typography gate). CI and `.local-ci.json`
@@ -30,6 +29,16 @@ All notable changes to throughline are documented here. Format loosely follows
   for scripted headless runs. #189.
 
 ### Changed
+- **The OpenCode plugin now runs the shared `hooks/*.sh` scripts** instead of its own
+  TypeScript port. Each OpenCode event becomes a Claude Code-shaped payload for the
+  matching script (bundled in the npm package), so capture, redaction, data-dir
+  resolution and the session-start block are one implementation across all five
+  harnesses. OpenCode now needs `jq` and a POSIX `sh`, like the others. Capture runs
+  through a per-session queue, so records keep their order and land before that
+  session's compaction boundary and idle stamp. The idle end-stamp is appended per active
+  turn (`session-flush.sh`) rather than rewritten in place. A failed or aborted bash
+  call is now marked from OpenCode's `exit` field. `src/utils/redaction.ts` and the
+  sweep's `--port` mode are gone. #179.
 - The handoff skill runs `hooks/rescan.sh` over the capture buffers before reading them
   and quotes its summary lines, so a secret captured before a redaction rule existed is
   masked and reported. Where the script fails or is absent (OpenCode, skills-only
@@ -53,6 +62,10 @@ All notable changes to throughline are documented here. Format loosely follows
   consolidate as on demand or when HANDOFF.md is bloated, matching the skill. #208.
 
 ### Fixed
+- Capture clamps each tool field raw to 2000 characters before redacting, as prompt
+  capture already did. Redaction is superlinear on keyword-dense text: a 63 KB command
+  took 6 s, past the OpenCode, OMP and Hermes bridges' 5 s hook timeout, so the record
+  was dropped. #179.
 - A linked worktree with its own `.claude/throughline/` uses the main working tree's data
   dir once that has a HANDOFF.md, instead of staying pinned to its own (usually a copy
   some tool made of the main tree's gitignored `.claude/`). The session-start block and

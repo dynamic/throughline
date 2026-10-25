@@ -1,197 +1,90 @@
 /**
  * throughline — tool-execute-after hook (maps to PostToolUse).
  *
- * Appends a structured one-line record of each captured action to the
- * per-session buffer. This is the continuous raw layer that a later
- * handoff distills from. Mechanical and cheap — no model call.
- * Always exits cleanly; never blocks a tool.
- *
- * Which tools land here is decided by the switch below: the mutating
- * tools (bash/edit/write) plus the high-signal read-side tools
- * (grep/webfetch/websearch/task) get their own dedicated case, each with a
- * type-specific redaction/formatting rule. Everything else NOT in
- * NOISY_TOOLS (below) falls through to a generic name-only capture (issue
- * #56, P0b) — this deliberately has no naming-convention gate: an earlier
- * version required "mcp__"/"__" in the tool id, copying Claude Code's
- * `mcp__server__tool` convention, and that was itself the bug — OpenCode's
- * real MCP tool ids use a single underscore (confirmed live as
- * `perplexity-ask_perplexity_ask`), so every MCP call was silently dropped.
- *
- * OpenCode's built-in tool ids are lowercase (`bash`, `edit`, `write`,
- * `grep`, `webfetch`, `websearch`, `task`, ...) — confirmed against
- * packages/opencode/src/tool/*.ts in anomalyco/opencode (the sst/opencode
- * successor) and against `permission=...` lines in this machine's
- * opencode.log. This does NOT match Claude Code's PascalCase tool names
- * (Bash/Edit/Write/Grep/WebFetch/WebSearch/Task), so the arg field names
- * below are OpenCode's own (`filePath`, not `file_path`; no NotebookEdit
- * or Agent alias; the bash tool has no `description` field, only
- * `command`/`timeout`/`workdir`).
- *
- * Port of hooks/session-capture.sh lines 71-147, adapted to the OpenCode
- * tool surface rather than Claude Code's.
+ * Maps an OpenCode tool call onto the Claude Code PostToolUse payload that
+ * hooks/session-capture.sh reads, so capture and redaction are the shared
+ * shell implementation (issue #179).
  */
 
-import { join } from "node:path";
-import { mkdirSync } from "node:fs";
 import type { Hooks } from "@opencode-ai/plugin";
-import {
-  type ThroughlineContext,
-  tlActive,
-  tlSafeSid,
-  tlAppendLine,
-  tlErr,
-} from "../lib.js";
-import { redact, redactPrompt, clean, clamp } from "../utils/redaction.js";
+import { type ThroughlineContext, tlDisabled, runHook } from "../lib.js";
 
 type ToolExecuteAfterHook = NonNullable<Hooks["tool.execute.after"]>;
 type ToolExecuteAfterInput = Parameters<ToolExecuteAfterHook>[0];
 type ToolExecuteAfterOutput = Parameters<ToolExecuteAfterHook>[1];
 
-// Deliberately excluded from the generic default-case capture below: the
-// noisiest built-in tools, matching Claude Code's PostToolUse matcher (which
-// never sends Read/Glob to the hook at all). Unlike Claude Code's
-// hooks.json-level matcher, OpenCode's tool.execute.after fires for EVERY
-// tool with no equivalent filter, so this hook has to do that filtering
-// itself — this set is that filter. Set confirmed against
-// PermissionConfig in @opencode-ai/sdk/dist/v2/gen/types.gen.d.ts: `list`
-// (the directory-listing tool, glob's direct analogue) and `todowrite`
-// (fires on every todo update) both need the same exclusion `read`/`glob`
-// already got, or the P0b fix above would newly start logging them on every
-// call — the noisiest-tools problem this set exists to solve in the first
-// place.
+// Read-side tools too frequent to be worth a buffer line (no spawn at all).
 const NOISY_TOOLS = new Set(["read", "glob", "list", "todowrite"]);
 
+type Args = Record<string, unknown>;
+const str = (v: unknown): string => (typeof v === "string" ? v : "");
+
 /**
- * Determine outcome suffix from tool result metadata.
- * OpenCode's tool output may expose `interrupted`, `is_error`, or
- * `exit_code`/`error`/`code` for bash. Match shell version's outcome() def.
+ * OpenCode tool name and args -> Claude Code tool_name and tool_input.
+ * Tools not listed pass through by name; session-capture.sh records those
+ * name-only (MCP ids included), reading none of their input.
  */
-function outcome(tool: string, output: ToolExecuteAfterOutput): string {
-  const meta = output?.metadata ?? {};
-  const resp = meta as Record<string, unknown>;
-
-  if (resp.interrupted === true) return " `[interrupted]`";
-  if (resp.is_error === true) return " `[failed]`";
-
-  // bash-specific: check exit code
-  if (tool === "bash") {
-    const exitCode = resp.exit_code ?? resp.code ?? resp.returncode ?? 0;
-    if (resp.error || String(exitCode) !== "0") return " `[failed]`";
+function toClaude(tool: string, args: Args): { tool_name: string; tool_input: Args } {
+  switch (tool) {
+    case "bash":
+      return { tool_name: "Bash", tool_input: { command: str(args.command), description: str(args.description) } };
+    case "edit":
+      return { tool_name: "Edit", tool_input: { file_path: str(args.filePath) } };
+    case "write":
+      return { tool_name: "Write", tool_input: { file_path: str(args.filePath) } };
+    case "grep":
+      return { tool_name: "Grep", tool_input: { pattern: str(args.pattern) } };
+    case "webfetch":
+      return { tool_name: "WebFetch", tool_input: { url: str(args.url) } };
+    case "websearch":
+      return { tool_name: "WebSearch", tool_input: { query: str(args.query) } };
+    case "task":
+      return {
+        tool_name: "Task",
+        tool_input: {
+          subagent_type: str(args.subagent_type),
+          description: str(args.description),
+          prompt: str(args.prompt),
+        },
+      };
+    default:
+      return { tool_name: tool, tool_input: {} };
   }
-
-  return "";
 }
 
-/**
- * Tool execute after hook implementation.
- */
+/** Build the PostToolUse payload, or null when the call is not worth a record. */
+export function capturePayload(
+  input: ToolExecuteAfterInput,
+  output: ToolExecuteAfterOutput,
+): Record<string, unknown> | null {
+  const { tool } = input;
+  if (!input.sessionID || !tool || NOISY_TOOLS.has(tool)) return null;
+  const args = (input.args ?? {}) as Args;
+  const mapped = toClaude(tool, args);
+  // An action with no identifying argument says nothing a later handoff can use.
+  if (tool === "bash" && !mapped.tool_input.command) return null;
+  if ((tool === "edit" || tool === "write") && !mapped.tool_input.file_path) return null;
+  if (tool === "grep" && !mapped.tool_input.pattern) return null;
+  if (tool === "webfetch" && !mapped.tool_input.url) return null;
+  if (tool === "websearch" && !mapped.tool_input.query) return null;
+  if (tool === "task" && !args.subagent_type && !args.description && !args.prompt) return null;
+  const meta = (output?.metadata ?? {}) as Record<string, unknown>;
+  const response: Record<string, unknown> = { ...meta };
+  // OpenCode's shell tool reports `exit` (null when aborted or timed out);
+  // session-capture.sh's outcome() reads exit_code and interrupted.
+  if (tool === "bash" && "exit" in meta) {
+    if (meta.exit === null) response.interrupted = true;
+    else if (typeof meta.exit === "number") response.exit_code = meta.exit;
+  }
+  return { session_id: input.sessionID, ...mapped, tool_response: response };
+}
+
 export async function toolExecuteAfter(
   ctx: ThroughlineContext,
   input: ToolExecuteAfterInput,
   output: ToolExecuteAfterOutput,
 ): Promise<void> {
-  const state = tlActive(ctx);
-  if (!state.active) return;
-
-  const sid = tlSafeSid(input.sessionID);
-  if (!sid) return;
-
-  const { tool, args } = input;
-  const root = ctx.directory;
-  const suffix = outcome(tool, output);
-
-  let line = "";
-
-  switch (tool) {
-    case "bash": {
-      // OpenCode's bash tool takes command/timeout/workdir — no
-      // description field (unlike Claude Code's Bash tool).
-      const cmd = (args?.command as string) ?? "";
-      if (!cmd) return;
-      line = `**bash**${suffix} \`${clamp(clean(redact(cmd)), 200, "…[truncated]")}\``;
-      break;
-    }
-
-    case "edit":
-    case "write": {
-      const filePath = (args?.filePath as string) ?? "";
-      if (!filePath) return;
-      // Show path relative to project root
-      const relPath = filePath.startsWith(root + "/")
-        ? filePath.slice(root.length + 1)
-        : filePath;
-      line = `**${tool}** ${clean(redact(relPath))}${suffix}`;
-      break;
-    }
-
-    case "grep": {
-      const pattern = (args?.pattern as string) ?? "";
-      if (!pattern) return;
-      // Grep pattern is not prose — use command-path redaction
-      line = `**grep** \`${clamp(clean(redact(pattern)), 120, "…")}\`${suffix}`;
-      break;
-    }
-
-    case "webfetch": {
-      const url = (args?.url as string) ?? "";
-      if (!url) return;
-      line = `**webfetch** ${clamp(clean(redact(url)), 200, "…")}${suffix}`;
-      break;
-    }
-
-    case "websearch": {
-      const query = (args?.query as string) ?? "";
-      if (!query) return;
-      // Natural-language query — prose-safe redaction
-      line = `**websearch** ${clamp(clean(redactPrompt(query)), 200, "…")}${suffix}`;
-      break;
-    }
-
-    case "task": {
-      const subagentType = (args?.subagent_type as string) ?? "";
-      // description // prompt: prefer description, fall back to prompt
-      const desc =
-        (args?.description as string) || (args?.prompt as string) || "";
-      if (!desc && !subagentType) return;
-      // Natural-language description — prose-safe redaction
-      const redactedDesc = desc ? redactPrompt(desc) : "";
-      const prefix = subagentType ? `${subagentType}: ` : "";
-      line = `**agent** ${prefix}${clamp(clean(redactedDesc), 200, "…")}${suffix}`;
-      break;
-    }
-
-    default: {
-      // MCP tools and any other unmatched tool: name only, zero assumptions
-      // about the input schema, so no field can leak a secret and no
-      // unverified shape can be misread. NOISY_TOOLS (read/glob) stays
-      // excluded even here — see its own comment.
-      //
-      // issue #56 (P0b): this used to require "mcp__"/"__" in the name,
-      // copying Claude Code's `mcp__server__tool` convention. Confirmed live
-      // that OpenCode's own MCP tool ids use a SINGLE underscore between
-      // server and tool name (e.g. `perplexity-ask_perplexity_ask`), which
-      // matched neither check — every MCP call was silently dropped. There is
-      // no prefix to gate on here: every other OpenCode built-in tool this
-      // plugin knows about is matched by name above
-      // (bash/edit/write/grep/webfetch/websearch/task), so anything reaching
-      // this default case is already known to be an MCP tool or something
-      // equally unanticipated, and capturing its bare name is safe either way.
-      if (NOISY_TOOLS.has(tool)) break;
-      const safeName = clean(tool).replace(/\*/g, "");
-      line = `**${safeName}**${suffix}`;
-      break;
-    }
-  }
-
-  if (!line) return;
-
-  const bufDir = join(state.dataDir, "buffer");
-  try {
-    mkdirSync(bufDir, { recursive: true });
-  } catch (err) {
-    tlErr(state.dataDir, `mkdir failed for buffer dir: ${err}`);
-    return;
-  }
-
-  tlAppendLine(bufDir, sid, line);
+  if (tlDisabled()) return;
+  const payload = capturePayload(input, output);
+  if (payload) await runHook(ctx, "session-capture.sh", payload);
 }
