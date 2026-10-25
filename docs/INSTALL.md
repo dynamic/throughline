@@ -284,6 +284,12 @@ and cron sessions are skipped so a gateway host's shared checkouts are not writt
 Set `THROUGHLINE_HERMES_SURFACES` (comma-separated surface names, or `all`) to change
 that.
 
+**Gateway hosts.** On a Hermes gateway host that serves webhook and cron work, throughline
+captures nothing from those sessions. It helps only interactive sessions run inside a git
+repo. Setting `THROUGHLINE_HERMES_SURFACES=all` captures gateway sessions too, but it writes
+into whatever checkout each session's workspace points at, so use it only where those
+checkouts are meant to hold throughline data.
+
 Plugin-internal state (pending injections) is kept in
 `<hermes home>/plugin-data/throughline/`, never in the install directory.
 
