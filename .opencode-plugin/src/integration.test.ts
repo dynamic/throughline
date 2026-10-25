@@ -12,7 +12,7 @@ import { chatMessage } from './hooks/chat-message.js';
 import { toolExecuteAfter } from './hooks/tool-execute-after.js';
 import { sessionCompacted, sessionCompactionRecovery } from './hooks/session-compacted.js';
 import { sessionIdle } from './hooks/session-idle.js';
-import { tlDisabled, PLUGIN_ROOT, drain } from './lib.js';
+import { tlDisabled, PLUGIN_ROOT, drain, enqueue } from './lib.js';
 
 /** The data dir as the shared shell resolves it (the plugin has no resolver of its own). */
 function tlDataDir(c: { directory: string }): string {
@@ -32,10 +32,10 @@ function tlSafeSid(sid: string): string {
 // calling shell (exported by a harness running CI locally) makes tlDisabled()
 // true for every hook, so all capture assertions fail with nothing wrong in the
 // code — a red check whose cause is invisible gets attributed to the change under
-// test. Clear it at module load, before any hook runs. Case 12m of tests/run.sh still
-// covers the kill switch for the shell hooks; the TypeScript copy in lib.ts is
-// asserted directly by the 'tlDisabled kill switch' block below (dynamic/throughline#126),
-// which saves and restores the variable around every case.
+// test. Clear it at module load, before any hook runs. Case 12m of tests/run.sh
+// covers the kill switch in the shell hooks; lib.ts's tlDisabled(), which only
+// skips the spawn, is asserted by the 'tlDisabled kill switch' block below
+// (dynamic/throughline#126), which saves and restores the variable around every case.
 delete process.env.THROUGHLINE_DISABLE;
 
 // --- Real-shaped fixture builders --------------------------------------
@@ -336,7 +336,7 @@ describe('Throughline Plugin Integration Tests', () => {
     });
 
     it("uses a worktree's own data dir only until the main tree has a HANDOFF.md (issue #218)", () => {
-      // tlDataRoot() is memoized per directory, so each phase uses its own worktree.
+      // Each phase uses its own worktree, so no phase sees an earlier one's state.
       const mk = (name: string) => {
         execSync(`git worktree add ../${name} -b ${name}`, { cwd: tempDir, stdio: 'pipe' });
         const dir = join(tempDir, '..', name);
@@ -364,9 +364,9 @@ describe('Throughline Plugin Integration Tests', () => {
 
     it('DOES claim worktree-sharing for a genuine linked git worktree (issue #56, P5)', async () => {
       // The positive case for the same fix: a REAL `git worktree add`, not a
-      // synthetic ctx.worktree mismatch — tlDataRoot() resolves sharing via
-      // git itself (see lib.ts computeDataRoot), so only a real linked
-      // worktree exercises this path at all.
+      // synthetic ctx.worktree mismatch — _tl_compute_data_root in hooks/_lib.sh
+      // resolves sharing via git itself, so only a real linked worktree
+      // exercises this path at all.
       execSync('git worktree add ../wt-linked -b wt-linked-branch', { cwd: tempDir, stdio: 'pipe' });
       const linkedDir = join(tempDir, '..', 'wt-linked');
       const linkedCtx = { directory: linkedDir, worktree: linkedDir };
@@ -761,9 +761,9 @@ describe('Throughline Plugin Integration Tests', () => {
     });
 
     it('sessionCompactionRecovery inlines the buffer tail (issue #56, P3)', async () => {
-      // Port of session-onboard.sh's source=compact branch. OpenCode's
-      // session.created does not re-fire after a compaction, so this is the
-      // only channel to re-inject anything post-compaction.
+      // session-onboard.sh's source=compact branch. OpenCode's session.created
+      // does not re-fire after a compaction, so this is the only channel to
+      // re-inject anything post-compaction.
       const sessionID = 'test-session-compact-recovery';
       const bufferDir = join(tlDataDir(ctx), 'buffer');
       mkdirSync(bufferDir, { recursive: true });
@@ -802,7 +802,7 @@ describe('Throughline Plugin Integration Tests', () => {
       assert.ok(content.includes('(idle)'));
     });
 
-    it('replaces a still-trailing marker instead of stacking duplicates (last-wins)', async () => {
+    it('does not stamp again when no record follows the last stamp', async () => {
       // session.idle fires after EVERY turn in OpenCode, not once at exit —
       // repeated idles with no activity in between must not accumulate markers.
       const sessionID = 'test-session-repeat-idle';
@@ -877,14 +877,13 @@ describe('Throughline Plugin Integration Tests', () => {
   });
 
   describe('tlDisabled kill switch', () => {
-    // The plugin's own TypeScript copy of the kill switch is separate code from
-    // the shell version covered by case 12m of tests/run.sh, and it gates every
-    // hook here. Semantics are "anything except unset, "0" and "" disables":
-    // an operator exporting THROUGHLINE_DISABLE=0 means "leave throughline on",
-    // so "0" and "" must NOT flip the switch while "1" and any other non-empty
-    // value must. Directly asserted so a dropped clause in lib.ts - which would
-    // silently disable capture for every operator who exports the variable at
-    // all - fails here instead of in the field. See dynamic/throughline#126.
+    // lib.ts's tlDisabled() skips the spawn; the scripts check the same variable
+    // (case 12m of tests/run.sh), so the two must agree. Semantics are "anything
+    // except unset, "0" and "" disables": an operator exporting
+    // THROUGHLINE_DISABLE=0 means "leave throughline on", so "0" and "" must NOT
+    // flip the switch while "1" and any other non-empty value must. A dropped
+    // clause in lib.ts would silently skip capture for every operator who exports
+    // the variable at all. See dynamic/throughline#126.
     function withDisable(value: string | undefined, body: () => void): void {
       const prev = process.env.THROUGHLINE_DISABLE;
       if (value === undefined) delete process.env.THROUGHLINE_DISABLE;
@@ -959,20 +958,10 @@ describe('Throughline Plugin Integration Tests', () => {
       }
     });
 
-    it('suppresses sessionCreated on an already-active project, where only its own guard can', async () => {
-      // Why this case sits next to the fresh-project one. On an empty project the
-      // disabled call returns null through `!dataExists && !state.active` alone, so
-      // the fresh-project case passes even with sessionCreated's own
-      // `if (tlDisabled()) return null` guard removed. The real kill-switch
-      // situation is a project that is already active - data dir present - where
-      // this hook's own guard is the only thing between it and a full onboarding
-      // block printed under THROUGHLINE_DISABLE. So: bootstrap, throw the switch,
-      // assert null.
-      //
-      // That is not the same as calling the disabled answer from tlActive()
-      // redundant. It is redundant only here, where this hook's early return fires
-      // first; chatMessage and toolExecuteAfter have no guard of their own, and for
-      // them it is the sole kill switch. See the chatMessage case below.
+    it('suppresses sessionCreated on an already-active project', async () => {
+      // The real kill-switch situation is a project that is already active (data
+      // dir present), where a full onboarding block would otherwise print under
+      // THROUGHLINE_DISABLE. So: bootstrap, throw the switch, assert null.
       const sessionID = 'kill-switch-active';
       const prev = process.env.THROUGHLINE_DISABLE;
       try {
@@ -988,7 +977,7 @@ describe('Throughline Plugin Integration Tests', () => {
         assert.strictEqual(
           await sessionCreated(ctx, { sessionID }),
           null,
-          'sessionCreated must return null on its own guard, not via tlActive()',
+          'sessionCreated must return null under the switch',
         );
       } finally {
         if (prev === undefined) delete process.env.THROUGHLINE_DISABLE;
@@ -996,15 +985,9 @@ describe('Throughline Plugin Integration Tests', () => {
       }
     });
 
-    it('suppresses chatMessage capture, whose only guard is tlActive()', async () => {
-      // chatMessage and toolExecuteAfter carry no tlDisabled() guard of their
-      // own: the `active: false` that tlActive() returns under the switch is
-      // their ONLY kill switch. The sessionCreated cases above cannot cover that
-      // path (that hook returns earlier, on its own guard), so without this case
-      // tlActive()'s disabled check could be deleted and every prompt, tool call
-      // and flush would go back to capturing under THROUGHLINE_DISABLE with the
-      // whole suite green. Captured here by asserting a real prompt written
-      // before the switch stays the only line in the buffer after it.
+    it('suppresses chatMessage capture', async () => {
+      // A real prompt written before the switch must stay the only line in the
+      // buffer after it.
       const sessionID = 'kill-switch-chat';
       const prev = process.env.THROUGHLINE_DISABLE;
       try {
@@ -1031,8 +1014,7 @@ describe('Throughline Plugin Integration Tests', () => {
         const after = readFileSync(bufferPath(sessionID), 'utf-8');
         assert.ok(
           !after.includes('prompt written after the switch'),
-          'a disabled plugin must capture nothing after the switch is thrown '
-            + '(chatMessage has no guard of its own but the disabled answer from tlActive)',
+          'a disabled plugin must capture nothing after the switch is thrown',
         );
         assert.strictEqual(
           after.split('\n').filter((l) => l.includes('**prompt**')).length,
@@ -1084,14 +1066,99 @@ describe('Throughline Plugin Integration Tests', () => {
       assert.ok(!existsSync(bufferPath(sessionID)), 'an opted-out project records nothing');
     });
 
-    it('maps OpenCode bash metadata onto the outcome suffix', async () => {
-      const sessionID = 'bridge-interrupted';
-      await toolExecuteAfter(
-        ctx,
-        { tool: 'bash', sessionID, callID: 'c1', args: { command: 'sleep 99' } } as any,
-        toolOutput({ metadata: { interrupted: true } }) as any,
+    it("maps OpenCode's bash `exit` onto the outcome suffix", async () => {
+      // OpenCode's shell tool reports `exit`: a number, or null when aborted or timed out.
+      const run = async (sessionID: string, exit: number | null) => {
+        await toolExecuteAfter(
+          ctx,
+          { tool: 'bash', sessionID, callID: 'c1', args: { command: 'false' } } as any,
+          toolOutput({ metadata: { exit } }) as any,
+        );
+        return readBuffer(sessionID);
+      };
+      assert.ok((await run('bridge-exit1', 1)).includes('`[failed]`'), 'exit 1 is a failure');
+      assert.ok((await run('bridge-exitnull', null)).includes('`[interrupted]`'), 'exit null is an interruption');
+      assert.ok(!(await run('bridge-exit0', 0)).includes('`['), 'exit 0 has no suffix');
+    });
+
+    it('delivers the session-start block to a transform call that does not wait for the event', async () => {
+      // OpenCode fires event handlers with `void`: the first transform call of a
+      // turn can arrive while session-onboard.sh is still running.
+      const hooks = await pluginFn(ctx);
+      const sessionID = 'bridge-race';
+      void hooks.event!({ event: { type: 'session.created', properties: { info: { id: sessionID } } } } as any);
+      const output = { system: [] as string[] };
+      await hooks['experimental.chat.system.transform']!({ sessionID } as any, output as any);
+      assert.ok(output.system[0]?.includes('throughline'), `expected the block, got: ${output.system}`);
+    });
+
+    it('keeps a block that idle reaches before its turn (manual /compact)', async () => {
+      const hooks = await pluginFn(ctx);
+      const sessionID = 'bridge-compact-idle';
+      await hooks['tool.execute.after']!(
+        { tool: 'bash', sessionID, callID: 'c1', args: { command: 'echo before' } } as any,
+        toolOutput() as any,
       );
-      assert.ok(readBuffer(sessionID).includes('`[interrupted]`'));
+      await hooks.event!({ event: { type: 'session.compacted', properties: { sessionID } } } as any);
+      await hooks.event!({ event: { type: 'session.idle', properties: { sessionID } } } as any);
+      const output = { system: [] as string[] };
+      await hooks['experimental.chat.system.transform']!({ sessionID } as any, output as any);
+      assert.ok(output.system[0]?.includes('Context was just compacted'), `expected recovery, got: ${output.system}`);
+      const content = readBuffer(sessionID);
+      assert.ok(content.indexOf('echo before') < content.indexOf('compaction-boundary'), 'boundary after the record');
+    });
+
+    it('a subagent session (parentID) does not record the unconsumed-buffer report (issue #191)', async () => {
+      const hooks = await pluginFn(ctx);
+      const bufDir = join(tlDataDir(ctx).trim(), 'buffer');
+      mkdirSync(bufDir, { recursive: true });
+      writeFileSync(
+        join(bufDir, 'session-old-ended.md'),
+        '- `2026-01-01 00:00:00` **bash** `echo a`\n- `2026-01-01 00:00:00` **bash** `echo b`\n- `2026-01-01 00:00:00` **bash** `echo c`\n\n<!-- session-ended 2026-01-01 00:00:01 (idle) -->\n',
+      );
+      await hooks.event!({ event: { type: 'session.created', properties: { info: { id: 'child-1', parentID: 'parent-1' } } } } as any);
+      const output = { system: [] as string[] };
+      await hooks['experimental.chat.system.transform']!({ sessionID: 'child-1' } as any, output as any);
+      assert.ok(output.system[0]?.includes('unconsumed session buffer'), 'the child still sees the warning');
+      assert.ok(!existsSync(join(bufDir, '.unconsumed-reported')), 'but records nothing');
+    });
+
+    it('a rejected queued job does not stop the next one', async () => {
+      const ran: string[] = [];
+      void enqueue('bridge-reject', async () => {
+        throw new Error('boom');
+      });
+      void enqueue('bridge-reject', async () => {
+        ran.push('second');
+      });
+      await assert.doesNotReject(() => drain('bridge-reject'));
+      assert.deepStrictEqual(ran, ['second']);
+    });
+
+    it('captures write, the bash description and the task prompt fallback', async () => {
+      const sessionID = 'bridge-fields';
+      await toolExecuteAfter(ctx, { tool: 'write', sessionID, callID: 'w', args: { filePath: join(tempDir, 'new.txt') } } as any, toolOutput() as any);
+      await toolExecuteAfter(ctx, { tool: 'bash', sessionID, callID: 'b', args: { command: 'ls', description: 'List the files' } } as any, toolOutput() as any);
+      await toolExecuteAfter(ctx, { tool: 'task', sessionID, callID: 't', args: { subagent_type: 'general', prompt: 'map the hooks dir' } } as any, toolOutput() as any);
+      const content = readBuffer(sessionID);
+      assert.ok(content.includes('**Write** new.txt'), content);
+      assert.ok(content.includes('**bash** List the files - `ls`'), content);
+      assert.ok(content.includes('**agent** general: map the hooks dir'), content);
+    });
+
+    it('skips noisy tools and calls with no identifying argument', async () => {
+      const sessionID = 'bridge-skip';
+      for (const [tool, args] of [
+        ['list', { path: '.' }],
+        ['todowrite', { todos: [] }],
+        ['grep', { pattern: '' }],
+        ['webfetch', { url: '' }],
+        ['websearch', { query: '' }],
+        ['task', {}],
+      ] as const) {
+        await toolExecuteAfter(ctx, { tool, sessionID, callID: tool, args } as any, toolOutput() as any);
+      }
+      assert.ok(!existsSync(bufferPath(sessionID)), 'nothing recorded');
     });
   });
 });

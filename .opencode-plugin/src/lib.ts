@@ -9,7 +9,7 @@
  * run, so there is no second implementation here to drift.
  */
 
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -87,13 +87,37 @@ export function runHook(
   });
 }
 
+/**
+ * runHook, blocking: for a step that must be on disk before a handler that
+ * OpenCode does not await can be cut off by process exit (see index.ts).
+ */
+export function runHookSync(
+  ctx: ThroughlineContext,
+  script: string,
+  payload: Record<string, unknown>,
+): string {
+  try {
+    return execFileSync("sh", [join(HOOKS_DIR, script)], {
+      cwd: ctx.directory,
+      env: { ...process.env, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT, CLAUDE_PROJECT_DIR: ctx.directory },
+      input: JSON.stringify(payload),
+      timeout: HOOK_TIMEOUT_MS,
+      maxBuffer: 1024 * 1024,
+      encoding: "utf-8",
+      stdio: ["pipe", "pipe", "ignore"],
+    });
+  } catch {
+    return "";
+  }
+}
+
 // --- Per-session ordering ---
 
 /**
- * Capture is enqueued without being awaited (a hook spawn costs tens of ms,
- * and OpenCode awaits plugin hooks on its own hot path), but records for one
- * session must still land in order, and before that session's compaction
- * boundary or idle stamp. One promise chain per session gives both.
+ * Records for one session must land in order, and before that session's
+ * compaction boundary or idle stamp, even when OpenCode runs tool calls in
+ * parallel. One promise chain per session gives both. A rejected job does not
+ * stop the jobs queued after it.
  */
 const queues = new Map<string, Promise<unknown>>();
 
@@ -109,6 +133,11 @@ export function enqueue(sessionID: string, job: () => Promise<unknown>): Promise
     if (queues.get(sessionID) === next) queues.delete(sessionID);
   });
   return next;
+}
+
+/** Whether any job for this session is still queued or running. */
+export function hasQueued(sessionID: string): boolean {
+  return queues.has(sessionID);
 }
 
 /** Wait for every job already queued for this session. */

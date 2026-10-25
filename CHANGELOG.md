@@ -33,10 +33,12 @@ All notable changes to throughline are documented here. Format loosely follows
   TypeScript port. Each OpenCode event becomes a Claude Code-shaped payload for the
   matching script (bundled in the npm package), so capture, redaction, data-dir
   resolution and the session-start block are one implementation across all five
-  harnesses. OpenCode now needs `jq` and a POSIX `sh`, like the others. Capture is queued
-  per session and not awaited; compaction and idle drain the queue first. The idle
-  end-stamp is appended per active turn (`session-flush.sh`) rather than rewritten in
-  place. `src/utils/redaction.ts` and the sweep's `--port` mode are gone. #179.
+  harnesses. OpenCode now needs `jq` and a POSIX `sh`, like the others. Capture runs
+  through a per-session queue, so records keep their order and land before that
+  session's compaction boundary and idle stamp. The idle end-stamp is appended per active
+  turn (`session-flush.sh`) rather than rewritten in place. A failed or aborted bash
+  call is now marked from OpenCode's `exit` field. `src/utils/redaction.ts` and the
+  sweep's `--port` mode are gone. #179.
 - The handoff skill runs `hooks/rescan.sh` over the capture buffers before reading them
   and quotes its summary lines, so a secret captured before a redaction rule existed is
   masked and reported. Where the script fails or is absent (OpenCode, skills-only
@@ -60,6 +62,10 @@ All notable changes to throughline are documented here. Format loosely follows
   consolidate as on demand or when HANDOFF.md is bloated, matching the skill. #208.
 
 ### Fixed
+- Capture clamps each tool field raw to 2000 characters before redacting, as prompt
+  capture already did. Redaction is superlinear on keyword-dense text: a 63 KB command
+  took 6 s, past the OpenCode, OMP and Hermes bridges' 5 s hook timeout, so the record
+  was dropped. #179.
 - A linked worktree with its own `.claude/throughline/` uses the main working tree's data
   dir once that has a HANDOFF.md, instead of staying pinned to its own (usually a copy
   some tool made of the main tree's gitignored `.claude/`). The session-start block and

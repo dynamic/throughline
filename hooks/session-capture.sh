@@ -88,6 +88,10 @@ mkdir -p "$bufdir" 2>/dev/null || { tl_err "mkdir failed for buffer dir"; exit 0
 # the one channel already confirmed immune to this, so the value it embeds
 # is the untouched original.
 root_json=$(printf '%s' "$root" | jq -Rs .)
+# Every field is clamped RAW to 2000 characters before redaction, as in
+# session-prompt.sh: the stored window is at most 200, so the bound still covers
+# it, and redaction is superlinear on keyword-dense input (a 63 KB run of
+# " password" took 6 s, past a bridge's 5 s hook timeout, so the record was lost).
 out=$(printf '%s' "$input" | jq -r "$(tl_jq_redact_defs)""(${root_json}) as \$proot | "'
   # Observable outcome from the tool result. The Claude Code Bash tool_response
   # exposes "interrupted" but NOT an exit code, so a plain non-zero exit is not
@@ -110,8 +114,8 @@ out=$(printf '%s' "$input" | jq -r "$(tl_jq_redact_defs)""(${root_json}) as \$pr
   ((.session_id // "") | clean) as $sid
   | ($sid + "\t" + (.tool_name as $t |
     if $t == "Bash" then
-      "**bash** " + ((.tool_input.description // "") | redact | clean) + outcome($t) + " - `" +
-      ((.tool_input.command // "") | redact | clean | clamp(200; "…[truncated]")) + "`"
+      "**bash** " + ((.tool_input.description // "") | clamp(2000; "") | redact | clean) + outcome($t) + " - `" +
+      ((.tool_input.command // "") | clamp(2000; "") | redact | clean | clamp(200; "…[truncated]")) + "`"
     elif ($t == "Edit" or $t == "Write" or $t == "NotebookEdit") then
       "**" + $t + "** " +
       ((.tool_input.file_path // .tool_input.notebook_path // "?") | ltrimstr($proot + "/") | redact | clean) +
@@ -125,16 +129,16 @@ out=$(printf '%s' "$input" | jq -r "$(tl_jq_redact_defs)""(${root_json}) as \$pr
     # session; falls back to the prompt head when no description is supplied.
     elif ($t == "Grep") then
       # A regex pattern, not prose — the command-tuned redact is appropriate.
-      "**grep** `" + ((.tool_input.pattern // "") | redact | clean | clamp(120; "…")) + "`" + outcome($t)
+      "**grep** `" + ((.tool_input.pattern // "") | clamp(2000; "") | redact | clean | clamp(120; "…")) + "`" + outcome($t)
     elif ($t == "WebFetch") then
       # A URL, not prose — same reasoning as Grep.
-      "**webfetch** " + ((.tool_input.url // "") | redact | clean | clamp(200; "…")) + outcome($t)
+      "**webfetch** " + ((.tool_input.url // "") | clamp(2000; "") | redact | clean | clamp(200; "…")) + outcome($t)
     elif ($t == "WebSearch") then
       # A natural-language query — redact_prompt (prose-safe), NOT redact: the
       # command-tuned bare-"token"-word rule mangles a query like "fix token
       # refresh bug" into "fix Token *** bug", the exact corruption class the
       # issue #5 fix (session-prompt.sh) exists to avoid.
-      "**websearch** " + ((.tool_input.query // "") | redact_prompt | clean | clamp(200; "…")) + outcome($t)
+      "**websearch** " + ((.tool_input.query // "") | clamp(2000; "") | redact_prompt | clean | clamp(200; "…")) + outcome($t)
     elif ($t == "Task" or $t == "Agent") then
       # description // prompt via an empty-aware select: jq // only falls
       # through on null/false, so an empty-STRING description would otherwise
@@ -146,7 +150,7 @@ out=$(printf '%s' "$input" | jq -r "$(tl_jq_redact_defs)""(${root_json}) as \$pr
       + ((.tool_input.subagent_type // "") | clean
          | if . == "" then "" else . + ": " end)
       + (((.tool_input.description | select(. != "" and . != null))
-          // .tool_input.prompt // "") | redact_prompt | clean | clamp(200; "…"))
+          // .tool_input.prompt // "") | clamp(2000; "") | redact_prompt | clean | clamp(200; "…"))
       + outcome($t)
     else
       # MCP tools (mcp__server__tool) and any other matched tool: name only.

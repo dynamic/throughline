@@ -68,12 +68,15 @@ export function capturePayload(
   if (tool === "webfetch" && !mapped.tool_input.url) return null;
   if (tool === "websearch" && !mapped.tool_input.query) return null;
   if (tool === "task" && !args.subagent_type && !args.description && !args.prompt) return null;
-  return {
-    session_id: input.sessionID,
-    ...mapped,
-    // interrupted / is_error / exit_code / error, as session-capture.sh's outcome() reads them.
-    tool_response: output?.metadata ?? {},
-  };
+  const meta = (output?.metadata ?? {}) as Record<string, unknown>;
+  const response: Record<string, unknown> = { ...meta };
+  // OpenCode's shell tool reports `exit` (null when aborted or timed out);
+  // session-capture.sh's outcome() reads exit_code and interrupted.
+  if (tool === "bash" && "exit" in meta) {
+    if (meta.exit === null) response.interrupted = true;
+    else if (typeof meta.exit === "number") response.exit_code = meta.exit;
+  }
+  return { session_id: input.sessionID, ...mapped, tool_response: response };
 }
 
 export async function toolExecuteAfter(

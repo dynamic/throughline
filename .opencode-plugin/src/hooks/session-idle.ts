@@ -8,7 +8,7 @@
  * stamp (issue #180).
  */
 
-import { type ThroughlineContext, tlDisabled, runHook } from "../lib.js";
+import { type ThroughlineContext, tlDisabled, runHook, runHookSync } from "../lib.js";
 
 interface SessionIdleInput {
   sessionID: string;
@@ -17,4 +17,10 @@ interface SessionIdleInput {
 export async function sessionIdle(ctx: ThroughlineContext, input: SessionIdleInput): Promise<void> {
   if (tlDisabled() || !input.sessionID) return;
   await runHook(ctx, "session-flush.sh", { session_id: input.sessionID, reason: "idle" });
+}
+
+/** The same stamp, blocking (see index.ts on headless exits). */
+export function sessionIdleSync(ctx: ThroughlineContext, input: SessionIdleInput): void {
+  if (tlDisabled() || !input.sessionID) return;
+  runHookSync(ctx, "session-flush.sh", { session_id: input.sessionID, reason: "idle" });
 }
