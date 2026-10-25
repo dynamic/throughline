@@ -31,6 +31,12 @@ of each worktree silently accumulating its own. The session-start capture point
 prints a note when this redirect is active. Live git state (current branch,
 `git status`) and captured file paths still describe the worktree you're actually in.
 
+A worktree that has its own `.claude/throughline/` keeps using it only while the main
+working tree has none (data it gathered before sharing existed). Once the main tree has
+a data dir, that one is used, and the session-start block and `--doctor` name the
+worktree's copy - usually a copy of the main tree's gitignored `.claude/` that a tool
+made - so you can fold in anything written only there and delete it.
+
 Set `THROUGHLINE_WORKTREE_SHARED=0` to opt back into isolated per-worktree data
 dirs. Requires git 2.31+; falls back to per-worktree behavior for bare repos,
 submodules, and older git.
@@ -199,7 +205,7 @@ the offer entirely when the files aren't actually committable in your layout.
 ### Troubleshooting
 
 throughline resolves its data location through three env vars, a
-`.throughlineignore` marker checked at two roots, sticky git-worktree
+`.throughlineignore` marker checked at two roots, git-worktree
 migration logic, and a soft `jq` dependency that degrades capture silently
 when missing - reasoning through all of that by hand to answer "why isn't
 capture firing" gets old fast. `session-onboard.sh --doctor` prints the

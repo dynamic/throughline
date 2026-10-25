@@ -123,11 +123,13 @@ function computeDataRoot(ctx: ThroughlineContext): string {
     const mainWt = tlCanonicalize(match[1]);
     if (!existsSync(mainWt)) return wt;
 
-    // Migration safety: don't strand pre-existing data
+    // Migration safety: keep a worktree's own pre-existing data dir only while the
+    // main checkout has none (issue #218, as in hooks/_lib.sh). Once the main tree
+    // has a data dir it wins - the own dir is usually a copy some tool made.
     const ownDir = dirUnder(wt);
     const mainDir = dirUnder(mainWt);
 
-    if (ownDir !== mainDir && (existsSync(ownDir) || existsSync(join(ownDir, "HANDOFF.md")))) {
+    if (ownDir !== mainDir && (existsSync(ownDir) || existsSync(join(ownDir, "HANDOFF.md"))) && !existsSync(mainDir)) {
       return wt;
     }
 

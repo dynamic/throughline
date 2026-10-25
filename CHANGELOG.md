@@ -53,6 +53,10 @@ All notable changes to throughline are documented here. Format loosely follows
   consolidate as on demand or when HANDOFF.md is bloated, matching the skill. #208.
 
 ### Fixed
+- A linked worktree with its own `.claude/throughline/` uses the main working tree's data
+  dir once that exists, instead of staying pinned to its own (usually a copy some tool
+  made of the main tree's gitignored `.claude/`). The session-start block and `--doctor`
+  name the shadowed copy. Same rule in the OpenCode plugin. #218.
 - A buffer counts as "ended" for the SessionStart warning only if no record follows its
   last end-stamp. OpenCode stamps on every idle turn, so a session that kept going after
   a stamp was reported as ended instead of possibly live. `session-flush.sh` stamps again

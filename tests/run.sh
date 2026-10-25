@@ -1010,13 +1010,20 @@ has "a worktree with PRE-EXISTING data keeps resolving to its own root" "$D_OLD"
 O_OLD=$(printf '%s' '{"source":"startup","session_id":"T"}' | CLAUDE_PROJECT_DIR="$WT_OLD_LINK" sh "$H/session-onboard.sh")
 hasnt "onboard does not claim sharing for a worktree keeping its own data" "$O_OLD" 'shared with the main working tree'
 
-# 5e7. once the shared main root ALSO has data (or is later adopted), sharing
-#      applies going forward - the migration guard only protects data that
-#      would otherwise be stranded, not a permanent per-worktree carve-out.
+# 5e7. issue #218: once the main checkout has a data dir, it wins over the worktree's
+#      own (which is usually a copy of the main tree's gitignored .claude/ some tool
+#      made). The sticky version of the guard pinned worktrees to that stale copy.
 mkdir -p "$WT_OLD_MAIN/.claude/throughline"
 printf -- '# Main\n**Last Updated:** 2024-06-01\n' > "$WT_OLD_MAIN/.claude/throughline/HANDOFF.md"
 D_OLD2=$(CLAUDE_PROJECT_DIR="$WT_OLD_LINK" sh -c '. "'"$H"'/_lib.sh"; tl_data_dir')
-has "once main tree also has data, the worktree still keeps its own (guard is sticky, not one-shot)" "$D_OLD2" "wt-old-linked/.claude/throughline"
+has   "once the main tree has data, a worktree resolves to it (issue #218)" "$D_OLD2" "wt-old-main/.claude/throughline"
+hasnt "and not to its own copy (issue #218)" "$D_OLD2" "wt-old-linked"
+O_OLD2=$(printf '%s' '{"source":"startup","session_id":"T"}' | CLAUDE_PROJECT_DIR="$WT_OLD_LINK" sh "$H/session-onboard.sh")
+has   "SessionStart names the shadowed worktree copy (issue #218)" "$O_OLD2" 'This worktree also has its own data dir at `.claude/throughline`'
+has   "and the copy's Last Updated (issue #218)" "$O_OLD2" 'Last Updated 2024-01-01'
+O_OLD2D=$(CLAUDE_PROJECT_DIR="$WT_OLD_LINK" sh "$H/session-onboard.sh" --doctor 2>&1)
+has   "--doctor names the shadowed worktree copy (issue #218)" "$O_OLD2D" 'worktree-copy:'
+
 
 # 5e8. the .throughlineignore opt-out check honors a marker at EITHER the
 #      shared main root OR the session's own worktree root (issue #31 review

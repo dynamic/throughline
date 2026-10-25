@@ -102,6 +102,10 @@ if [ "${1:-}" = "--doctor" ]; then
   echo "root:              $root"
   echo "data root:         $droot"
   echo "worktree-shared:   $shared"
+  # issue #218: a worktree's own data dir that the main tree's now shadows.
+  if [ "$shared" != "no" ] && [ -d "$(_tl_dir_under "$root")" ] && [ "$(_tl_dir_under "$root")" != "$data" ]; then
+    echo "worktree-copy:     $(_tl_dir_under "$root") (shadowed by the main tree's; not read)"
+  fi
   echo "data dir:          $data"
   echo "activation:        $state ($reason)"
   echo "jq:                $jq_state"
@@ -330,6 +334,15 @@ echo
 if [ "$droot" != "$(_tl_canonicalize_path "$root")" ]; then
   echo "🔗 throughline data is shared with the main working tree at \`$droot\` (this is a linked worktree)."
   echo
+  # A worktree's own data dir is shadowed once the main tree has one (issue #218):
+  # usually a copy of the main tree's gitignored .claude/ made by some tool. Name it,
+  # so anything written only there is not stranded silently.
+  _tl_wt_copy=$(_tl_dir_under "$root")
+  if [ "$_tl_wt_copy" != "$data" ] && [ -d "$_tl_wt_copy" ]; then
+    _tl_wt_upd=$(sed -n 's/^\*\*Last Updated:\*\* *//p' "$_tl_wt_copy/HANDOFF.md" 2>/dev/null | head -n 1)
+    echo "⚠️ This worktree also has its own data dir at \`${_tl_wt_copy#"$root"/}\`${_tl_wt_upd:+ (its HANDOFF.md says Last Updated $_tl_wt_upd)}. It is not read: the main working tree's is in use. Fold anything you need from it into the main HANDOFF.md, then delete it."
+    echo
+  fi
 fi
 
 # jq is required for action capture. If it is missing, capture silently no-ops,
