@@ -68,8 +68,8 @@ All notable changes to throughline are documented here. Format loosely follows
   was dropped. #179.
 - Redaction: a non-ASCII letter glued before a scheme word (`éBasic X`, `éToken X`)
   no longer hides the value, since the Basic, Token and SendGrid rules anchor on an
-  ASCII lookbehind instead of `\b`. On the command path Basic's value takes `=` only as
-  trailing padding, so `basic token=basic X` no longer leaves X visible. The generated
+  ASCII lookbehind instead of `\b`. Basic's value stops before an `=` that starts
+  another scheme word (`basic token=basic X` no longer leaves X visible). The generated
   sweep is at 0 leaks (baseline was 106). #220.
 - A linked worktree with its own `.claude/throughline/` uses the main working tree's data
   dir once that has a HANDOFF.md, instead of staying pinned to its own (usually a copy

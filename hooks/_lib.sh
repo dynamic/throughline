@@ -749,14 +749,13 @@ tl_jq_redact_defs() {
   # masked only up to its first `.`, leaving the rest of the token visible (#220).
   # The anchor is an ASCII lookbehind, not `\b`, which counts a glued `é` as a
   # word character and so never anchored `éBasic X` (#220, the #116 seam).
-  # $pad: `=` only as trailing padding, as in real base64. On the command path an
-  # `=` anywhere let `basic token=basic X` take `token=basic` as the value and leave
-  # X visible (#220); the value backstop there masks `basic secret=X` instead. The
-  # prompt path has no backstop and relies on the wide class to take `secret=X`
-  # whole, so it keeps `=` anywhere (narrowing it there leaked 908 sweep inputs).
-  def _basic_scheme($min; $pad):
-    (if $pad then "[A-Za-z0-9+/]{\($min),}={0,2}" else "[A-Za-z0-9+/=]{\($min),}" end) as $v
-    | gsub("(?i)(?<![A-Za-z0-9_])basic\\s+" + $v + "(?:\\.[A-Za-z0-9_+/=-]+)*"; "Basic ***");
+  # An `=` stays in the value (`basic username=X` must mask X) unless it starts
+  # another scheme word used as one, with whitespace after it: `basic token=basic X`
+  # took `token=basic` as the value and left X visible (#220). `=bearer=X` is not
+  # a scheme use and stays in the value (the prompt path relies on that). Narrowing `=` to trailing padding instead leaked the
+  # `name=X` forms.
+  def _basic_scheme($min):
+    gsub("(?i)(?<![A-Za-z0-9_])basic\\s+(?:[A-Za-z0-9+/]|=(?!(?:basic|bearer|token)\\s)){\($min),}(?:\\.[A-Za-z0-9_+/=-]+)*"; "Basic ***");
   # Authorization SCHEME rules (Bearer/Basic) - COMMAND-PATH version, used only
   # by `redact`. No length minimum on the bearer value and only an 8-char floor
   # on Basic's base64 run: commands aren't natural language, so "bearer X" /
@@ -767,7 +766,7 @@ tl_jq_redact_defs() {
   # shapes or false-positive on the other's ordinary text).
   def _auth_scheme:
     _bearer_scheme(1)
-    | _basic_scheme(8; true);
+    | _basic_scheme(8);
   # Authorization SCHEME rules - PROSE-SAFE version, used only by
   # `redact_prompt`. A bare 8-char base64-alphabet floor or an unbounded bearer
   # value both false-positive constantly on ordinary English: "bearer of good
@@ -797,7 +796,7 @@ tl_jq_redact_defs() {
   def _auth_scheme_prose:
     _bearer_scheme(16)
     | gsub("(?i)(?<![A-Za-z0-9_])token\\s+(?<t>[A-Za-z0-9._\\-]{16,})"; "Token ***")
-    | _basic_scheme(16; false);
+    | _basic_scheme(16);
   # Full command-path redaction. Shape-specific patterns run BEFORE the generic
   # keyword=value catch-all, so e.g. "Authorization:Basic <base64>" is fully
   # consumed by the Basic-auth rule rather than the generic auth keyword rule
