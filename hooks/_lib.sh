@@ -183,18 +183,21 @@ _tl_compute_data_root() {
   # Migration safety: don't strand data a worktree already accumulated under
   # its OWN root before this sharing default existed (issue #31 review
   # finding). If this worktree has its own data dir and the main checkout has
-  # NONE, keep resolving here, so pre-existing HANDOFF.md/logs/buffer stay
-  # visible. Once the main checkout has a data dir, it wins (issue #218): the
-  # sticky version of this rule pinned worktrees to a copy of the main tree's
-  # gitignored .claude/ that a tool had bulk-copied in, so sessions read a
-  # stale HANDOFF.md and wrote updates nobody else saw. session-onboard.sh
-  # names a shadowed worktree copy so nothing is stranded silently.
+  # no HANDOFF.md, keep resolving here, so pre-existing HANDOFF.md/logs/buffer
+  # stay visible. Once the main checkout has a HANDOFF.md, it wins (issue
+  # #218): the sticky version of this rule pinned worktrees to a copy of the
+  # main tree's gitignored .claude/ that a tool had bulk-copied in, so sessions
+  # read a stale HANDOFF.md and wrote updates nobody else saw. HANDOFF.md, not
+  # the bare dir: any SessionStart or sibling-worktree capture bootstraps an
+  # empty main dir, and that must not flip a running worktree session over to
+  # it mid-session. session-onboard.sh names a shadowed worktree copy so
+  # nothing is stranded silently.
   # Skipped entirely when THROUGHLINE_DATA_DIR is absolute: both roots then
   # resolve to the identical path anyway, so there is nothing to disambiguate.
   _tl_own=$(_tl_dir_under "$_tl_wt")
   if [ "$_tl_own" != "$(_tl_dir_under "$_tl_main")" ] \
     && { [ -d "$_tl_own" ] || [ -f "$_tl_own/HANDOFF.md" ]; } \
-    && [ ! -d "$(_tl_dir_under "$_tl_main")" ]; then
+    && [ ! -f "$(_tl_dir_under "$_tl_main")/HANDOFF.md" ]; then
     # Canonicalized (issue #42 review finding) - same reasoning as the
     # worktree-list-unparseable branch above: every return path in this
     # function must agree on raw vs. canonical, or a caller comparing this
