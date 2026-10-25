@@ -12,7 +12,21 @@ import { chatMessage } from './hooks/chat-message.js';
 import { toolExecuteAfter } from './hooks/tool-execute-after.js';
 import { sessionCompacted, sessionCompactionRecovery } from './hooks/session-compacted.js';
 import { sessionIdle } from './hooks/session-idle.js';
-import { tlDataDir, tlDisabled, tlSafeSid } from './lib.js';
+import { tlDisabled, PLUGIN_ROOT, drain } from './lib.js';
+
+/** The data dir as the shared shell resolves it (the plugin has no resolver of its own). */
+function tlDataDir(c: { directory: string }): string {
+  return execSync(`sh -c '. "${join(PLUGIN_ROOT, 'hooks', '_lib.sh')}"; tl_data_dir'`, {
+    encoding: 'utf-8',
+    env: { ...process.env, CLAUDE_PROJECT_DIR: c.directory },
+  });
+}
+
+/** Same filename-safe session id the shell derives (tl_safe_sid in hooks/_lib.sh). */
+function tlSafeSid(sid: string): string {
+  const s = sid.replace(/[^A-Za-z0-9._-]/g, '_');
+  return s === '.' || s === '..' ? '' : s;
+}
 
 // The suite controls its own environment: an ambient THROUGHLINE_DISABLE in the
 // calling shell (exported by a harness running CI locally) makes tlDisabled()
@@ -182,6 +196,7 @@ describe('Throughline Plugin Integration Tests', () => {
         { sessionID } as any,
         userMessageOutput('investigate the flaky test') as any,
       );
+      await drain(sessionID);
 
       const content = readBuffer(sessionID);
       assert.ok(content.includes('**prompt**'));
@@ -196,6 +211,7 @@ describe('Throughline Plugin Integration Tests', () => {
         { sessionID } as any,
         assistantMessageOutput('here is my answer') as any,
       );
+      await drain(sessionID);
 
       assert.ok(!existsSync(bufferPath(sessionID)), 'assistant-only turn should not create a buffer');
     });
@@ -208,6 +224,7 @@ describe('Throughline Plugin Integration Tests', () => {
         { tool: 'bash', sessionID, callID: 'c1', args: { command: 'echo hi' } } as any,
         toolOutput() as any,
       );
+      await drain(sessionID);
 
       const content = readBuffer(sessionID);
       assert.ok(content.includes('**bash**'));
@@ -215,9 +232,8 @@ describe('Throughline Plugin Integration Tests', () => {
     });
 
     it('tool.execute.after captures an unrecognized tool id generically, by name only (issue #56, P0b)', async () => {
-      // OpenCode never actually sends "Bash" (only "bash") — this uses it as
-      // a stand-in for "any tool id this switch doesn't have a specific case
-      // for". That used to mean silent drop, gated on the id containing
+      // "apply_patch" stands in for any tool id the mapping has no specific
+      // case for. That used to mean silent drop, gated on the id containing
       // "mcp__"/"__". Confirmed live that OpenCode's real MCP tool ids use a
       // single underscore (e.g. `perplexity-ask_perplexity_ask`), matching
       // neither check, so every MCP call was silently dropped — the "require
@@ -229,12 +245,14 @@ describe('Throughline Plugin Integration Tests', () => {
       const sessionID = 'e2e-tool-unmatched';
 
       await hooks['tool.execute.after']!(
-        { tool: 'Bash', sessionID, callID: 'c1', args: { command: 'echo hi' } } as any,
+        { tool: 'apply_patch', sessionID, callID: 'c1', args: { patchText: 'secret body' } } as any,
         toolOutput() as any,
       );
+      await drain(sessionID);
 
       const content = readBuffer(sessionID);
-      assert.ok(content.includes('**Bash**'), 'unmatched tool id should be captured by name only');
+      assert.ok(content.includes('**apply_patch**'), 'unmatched tool id should be captured by name only');
+      assert.ok(!content.includes('secret body'), 'and none of its input');
     });
 
     it('session.idle and session.compacted resolve sessionID from event.properties', async () => {
@@ -520,11 +538,9 @@ describe('Throughline Plugin Integration Tests', () => {
     });
 
     it('redacts a recognizable token prefix in user prompts', async () => {
-      // redactPrompt() is deliberately structural-only (PEM / auth schemes /
-      // known token prefixes) — it does NOT do generic keyword=value
-      // matching like redact() does, because that corrupts ordinary prose
-      // ("bearer of good news" → "Bearer ***"). A bare "password: secret123"
-      // is intentionally NOT masked here; see utils/redaction.ts.
+      // session-prompt.sh's redact_prompt is deliberately structural-only (PEM /
+      // auth schemes / known token prefixes): generic keyword=value matching
+      // corrupts ordinary prose ("bearer of good news" → "Bearer ***").
       const sessionID = 'test-session-redact';
       await chatMessage(
         ctx,
@@ -571,7 +587,7 @@ describe('Throughline Plugin Integration Tests', () => {
       );
 
       const content = readBuffer(sessionID);
-      assert.ok(content.includes('**edit**'));
+      assert.ok(content.includes('**Edit**'));
       assert.ok(content.includes('test-file.txt'));
     });
 
@@ -763,9 +779,10 @@ describe('Throughline Plugin Integration Tests', () => {
       assert.ok(recovery!.includes('echo two'));
     });
 
-    it('sessionCompactionRecovery returns null when there is no buffer yet', async () => {
+    it('sessionCompactionRecovery has no buffer tail when there is no buffer yet', async () => {
+      // session-onboard.sh still re-issues the session-start block on compact.
       const recovery = await sessionCompactionRecovery(ctx, { sessionID: 'test-session-no-buffer-yet' });
-      assert.strictEqual(recovery, null);
+      assert.ok(!(recovery ?? '').includes('Context was just compacted'));
     });
   });
 
@@ -804,7 +821,7 @@ describe('Throughline Plugin Integration Tests', () => {
       assert.strictEqual(endedCount, 1, 'repeated idles must not stack markers');
     });
 
-    it('moves the marker to the true end when activity resumes after an idle', async () => {
+    it('stamps again at the true end when activity resumes after an idle (issue #180)', async () => {
       const sessionID = 'test-session-resume-after-idle';
       await toolExecuteAfter(
         ctx,
@@ -823,15 +840,15 @@ describe('Throughline Plugin Integration Tests', () => {
 
       const content = readBuffer(sessionID);
       const endedCount = (content.match(/session-ended/g) || []).length;
-      assert.strictEqual(endedCount, 1, 'still only one marker');
+      assert.strictEqual(endedCount, 2, 'one stamp per turn that had records');
 
       const lines = content.trim().split('\n');
       assert.ok(
         lines[lines.length - 1].startsWith('<!-- session-ended'),
-        'marker must sit at the true end after activity resumes',
+        'a stamp must sit at the true end after activity resumes',
       );
-      // The second bash line must appear BEFORE the (only) marker.
-      const markerIndex = content.indexOf('<!-- session-ended');
+      // The second bash line must appear BEFORE the last stamp.
+      const markerIndex = content.lastIndexOf('<!-- session-ended');
       const secondBashIndex = content.indexOf('`pwd`');
       assert.ok(secondBashIndex >= 0 && secondBashIndex < markerIndex);
     });
@@ -1026,6 +1043,55 @@ describe('Throughline Plugin Integration Tests', () => {
         if (prev === undefined) delete process.env.THROUGHLINE_DISABLE;
         else process.env.THROUGHLINE_DISABLE = prev;
       }
+    });
+  });
+
+  describe('Shell bridge (issue #179)', () => {
+    it('keeps queued records in order and stamps idle after all of them', async () => {
+      const hooks = await pluginFn(ctx);
+      const sessionID = 'bridge-order';
+      for (const n of [1, 2, 3, 4, 5]) {
+        // Not awaited by OpenCode's hot path in spirit: the hook returns before capture runs.
+        void hooks['tool.execute.after']!(
+          { tool: 'bash', sessionID, callID: `c${n}`, args: { command: `echo step${n}` } } as any,
+          toolOutput() as any,
+        );
+      }
+      await hooks.event!({ event: { type: 'session.idle', properties: { sessionID } } } as any);
+
+      const content = readBuffer(sessionID);
+      const order = [1, 2, 3, 4, 5].map((n) => content.indexOf(`echo step${n}`));
+      assert.ok(order.every((i) => i >= 0), `every record lands, got: ${content}`);
+      assert.deepStrictEqual([...order].sort((a, b) => a - b), order, 'records keep their order');
+      const lines = content.trim().split('\n');
+      assert.ok(lines[lines.length - 1].startsWith('<!-- session-ended'), 'idle stamps after the queued records');
+    });
+
+    it('survives a script that exits without reading a large stdin (EPIPE)', async () => {
+      // .throughlineignore makes session-capture.sh exit before it reads stdin.
+      writeFileSync(join(tempDir, '.throughlineignore'), '');
+      const sessionID = 'bridge-epipe';
+      const big = 'x'.repeat(256 * 1024);
+      for (let n = 0; n < 5; n++) {
+        await assert.doesNotReject(() =>
+          toolExecuteAfter(
+            ctx,
+            { tool: 'bash', sessionID, callID: `c${n}`, args: { command: `echo ${big}` } } as any,
+            toolOutput() as any,
+          ),
+        );
+      }
+      assert.ok(!existsSync(bufferPath(sessionID)), 'an opted-out project records nothing');
+    });
+
+    it('maps OpenCode bash metadata onto the outcome suffix', async () => {
+      const sessionID = 'bridge-interrupted';
+      await toolExecuteAfter(
+        ctx,
+        { tool: 'bash', sessionID, callID: 'c1', args: { command: 'sleep 99' } } as any,
+        toolOutput({ metadata: { interrupted: true } }) as any,
+      );
+      assert.ok(readBuffer(sessionID).includes('`[interrupted]`'));
     });
   });
 });

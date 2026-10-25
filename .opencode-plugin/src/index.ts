@@ -12,10 +12,14 @@
  *   it is currently the ONLY way a plugin hook can inject an AI-visible
  *   message at all; upstream anomalyco/opencode#17412 tracks the missing
  *   stable primitive (a community PR implementing it, #19519, was closed
- *   unmerged). See dynamic/throughline#58 for the broader tracking issue:
- *   revisit this whole file as a thin shell-script bridge (matching Codex,
- *   which reuses hooks/*.sh as-is) if/when anomalyco/opencode#12472 (native
- *   Claude Code hook compat) ships.
+ *   unmerged). Each hook runs one of the shared hooks/*.sh scripts (issue
+ *   #179); if anomalyco/opencode#12472 (native Claude Code hook compat)
+ *   ships, this event mapping could go too (dynamic/throughline#58).
+ *
+ * Ordering: prompt and tool capture are queued per session and not awaited,
+ * so a script spawn never sits on OpenCode's hot path. Compaction and idle
+ * drain that session's queue first, so the boundary and the end-stamp land
+ * after every record that preceded them.
  *
  * Types are imported from @opencode-ai/plugin rather than hand-rolled, so a
  * payload-shape mismatch is a compile error instead of a silent no-op.
@@ -41,6 +45,7 @@ import { chatMessage } from "./hooks/chat-message.js";
 import { toolExecuteAfter } from "./hooks/tool-execute-after.js";
 import { sessionCompacted, sessionCompactionRecovery } from "./hooks/session-compacted.js";
 import { sessionIdle } from "./hooks/session-idle.js";
+import { enqueue, drain } from "./lib.js";
 
 // --- Plugin implementation ---
 
@@ -66,11 +71,11 @@ export const ThroughlinePlugin: Plugin = async ({ directory, worktree }) => {
   const hooks: Hooks = {
     // Direct hooks
     "chat.message": async (input, output) => {
-      await chatMessage(tlCtx, input, output);
+      void enqueue(input.sessionID, () => chatMessage(tlCtx, input, output));
     },
 
     "tool.execute.after": async (input, output) => {
-      await toolExecuteAfter(tlCtx, input, output);
+      void enqueue(input.sessionID, () => toolExecuteAfter(tlCtx, input, output));
     },
 
     "experimental.chat.system.transform": async (input, output) => {
@@ -97,6 +102,7 @@ export const ThroughlinePlugin: Plugin = async ({ directory, worktree }) => {
 
         case "session.compacted": {
           const sessionID = event.properties.sessionID;
+          await drain(sessionID);
           await sessionCompacted(tlCtx, { sessionID });
           // session.created does not re-fire after a compaction, so this is
           // the only channel for post-compaction recovery: overwrite (not
@@ -112,6 +118,7 @@ export const ThroughlinePlugin: Plugin = async ({ directory, worktree }) => {
 
         case "session.idle": {
           const sessionID = event.properties.sessionID;
+          await drain(sessionID);
           await sessionIdle(tlCtx, { sessionID });
           // Clear here, not in the transform hook: idle fires once, after
           // every transform call for the turn has already happened, so this

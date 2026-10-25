@@ -6,27 +6,23 @@
 # x value x suffix, plus two- and three-keyword chains, runs every input through an
 # engine's `redact`, and counts the inputs whose seeded marker survives.
 #
-# It is a ratchet, not a zero gate: inputs that leak on every engine today are known
-# and tracked (#220), so the script fails when an engine leaks MORE than its pinned
-# baseline and asks for the baseline to be lowered when it leaks less.
+# It is a ratchet, not a zero gate: inputs that leak today are known and tracked
+# (#220), so the script fails when the engine leaks MORE than its pinned baseline and
+# asks for the baseline to be lowered when it leaks less. Every harness runs this one
+# engine (the OpenCode plugin shells out to hooks/*.sh since #179).
 #
 # Usage:
 #   sh tests/redaction-sweep.sh            # the jq hooks engine (needs jq)
-#   sh tests/redaction-sweep.sh --port F   # also the OpenCode port's compiled
-#                                          # redaction module F (needs node)
-#   sh tests/redaction-sweep.sh --show N   # print N surviving inputs per engine
+#   sh tests/redaction-sweep.sh --show N   # print N surviving inputs
 set -eu
 
 # Pinned leak counts. Lower them when a fix lands; never raise them to make CI pass.
 BASELINE_JQ=106
-BASELINE_PORT=10
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-PORT=""
 SHOW=0
 while [ $# -gt 0 ]; do
   case "$1" in
-    --port) PORT=$2; shift 2 ;;
     --show) SHOW=$2; shift 2 ;;
     *) echo "redaction-sweep: unknown argument $1" >&2; exit 2 ;;
   esac
@@ -92,19 +88,5 @@ report() { # engine outfile baseline
 }
 check_shape jq "$tmp/jq.out"
 report jq "$tmp/jq.out" "$BASELINE_JQ"
-
-if [ -n "$PORT" ]; then
-  command -v node >/dev/null 2>&1 || { echo "redaction-sweep: node is required for --port" >&2; exit 2; }
-  node -e '
-    const fs = require("fs");
-    import(require("path").resolve(process.argv[1])).then((m) => {
-      const out = fs.readFileSync(process.argv[2], "utf8").trim().split("\n")
-        .map((l) => JSON.stringify(m.redact(JSON.parse(l))));
-      fs.writeFileSync(process.argv[3], out.join("\n") + "\n");
-    });
-  ' "$PORT" "$tmp/corpus.jsonl" "$tmp/port.out"
-  check_shape port "$tmp/port.out"
-  report port "$tmp/port.out" "$BASELINE_PORT"
-fi
 
 exit "$status"

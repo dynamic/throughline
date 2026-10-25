@@ -275,19 +275,17 @@ throughline/
 ├─ .opencode-plugin/
 │  ├─ package.json          # Node dependencies + plugin entry point (main)
 │  ├─ tsconfig.json         # TypeScript config
-│  ├─ .gitignore            # Excludes node_modules/ and dist/
+│  ├─ .gitignore            # Excludes node_modules/, dist/ and the hooks/ copy
+│  ├─ scripts/copy-hooks.mjs # build step: copies ../hooks/*.sh into the package
 │  └─ src/
-│     ├─ index.ts           # Plugin entry point
-│     ├─ lib.ts             # Core library (data dir, session ID, buffer)
-│     ├─ hooks/             # All 5 hook implementations
+│     ├─ index.ts           # Plugin entry point: event wiring, per-session queue
+│     ├─ lib.ts             # runHook (spawns hooks/*.sh) and the queue
+│     ├─ hooks/             # One bridge per event, each onto a hooks/*.sh script
 │     │  ├─ session-created.ts
 │     │  ├─ chat-message.ts
 │     │  ├─ tool-execute-after.ts
 │     │  ├─ session-compacted.ts
 │     │  └─ session-idle.ts
-│     ├─ utils/
-│     │  ├─ redaction.ts       # Redaction logic ported from jq to TypeScript
-│     │  └─ redaction.test.ts
 │     └─ integration.test.ts
 ├─ hooks/
 │  ├─ hooks.json

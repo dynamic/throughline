@@ -21,7 +21,9 @@ doesn't appear to be running.
 
 ## What you get
 
-All five throughline hooks, ported to OpenCode's plugin API:
+All five throughline hooks, mapped onto OpenCode's plugin API. Each event runs the
+same `hooks/*.sh` script Claude Code, Codex, OMP and Hermes run (bundled in this
+package), so `git` and `jq` must be on your `PATH`:
 
 - **Continuous capture** of prompts and tool calls, with redaction, written to
   `.claude/throughline/buffer/`
