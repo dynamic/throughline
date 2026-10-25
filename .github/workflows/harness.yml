@@ -1,0 +1,59 @@
+name: harness
+
+# Live harness tests (issue #196): each job installs throughline into a real
+# harness and runs one scripted headless session. They spend model tokens, so they
+# run nightly and on demand, never on pull requests. A leg whose credentials are
+# not configured exits 2 and is reported as a warning, not a failure.
+
+on:
+  schedule:
+    - cron: "17 7 * * *"
+  workflow_dispatch:
+    inputs:
+      harness:
+        description: "Harness to run (all, claude, opencode)"
+        default: all
+
+permissions:
+  contents: read
+
+jobs:
+  live:
+    name: live (${{ matrix.harness }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        harness: [claude, opencode]
+    # A job-level `if` cannot read `matrix`, so each step carries the harness filter.
+    env:
+      SELECTED: ${{ github.event_name == 'schedule' || inputs.harness == 'all' || inputs.harness == matrix.harness }}
+    steps:
+      - uses: actions/checkout@v4
+        if: env.SELECTED == 'true'
+      - uses: actions/setup-node@v4
+        if: env.SELECTED == 'true'
+        with:
+          node-version: "22"
+      - name: Install the harness
+        if: env.SELECTED == 'true'
+        run: |
+          case "${{ matrix.harness }}" in
+            claude) npm install -g @anthropic-ai/claude-code ;;
+            opencode) npm install -g opencode-ai ;;
+          esac
+      - name: Run
+        if: env.SELECTED == 'true'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: |
+          set +e
+          sh tests/harness/run.sh "${{ matrix.harness }}"
+          status=$?
+          if [ "$status" -eq 2 ]; then
+            echo "::warning::${{ matrix.harness }} leg not configured (see the log above)"
+            exit 0
+          fi
+          exit "$status"
