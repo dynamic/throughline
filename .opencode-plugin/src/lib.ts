@@ -11,7 +11,7 @@
  */
 
 import { execSync } from "node:child_process";
-import { existsSync, mkdirSync, appendFileSync, realpathSync } from "node:fs";
+import { existsSync, mkdirSync, appendFileSync, realpathSync, statSync } from "node:fs";
 import { dirname, join, isAbsolute } from "node:path";
 
 // --- Types ---
@@ -123,17 +123,28 @@ function computeDataRoot(ctx: ThroughlineContext): string {
     const mainWt = tlCanonicalize(match[1]);
     if (!existsSync(mainWt)) return wt;
 
-    // Migration safety: don't strand pre-existing data
+    // Migration safety: keep a worktree's own pre-existing data dir only while the
+    // main checkout has no HANDOFF.md (issue #218, as in hooks/_lib.sh). Once it has
+    // one, the main tree wins - the own dir is usually a copy some tool made. A bare
+    // main dir does not count: any session bootstraps one empty.
     const ownDir = dirUnder(wt);
     const mainDir = dirUnder(mainWt);
 
-    if (ownDir !== mainDir && (existsSync(ownDir) || existsSync(join(ownDir, "HANDOFF.md")))) {
+    if (ownDir !== mainDir && existsSync(ownDir) && !isFile(join(mainDir, "HANDOFF.md"))) {
       return wt;
     }
 
     return mainWt;
   } catch {
     return wt;
+  }
+}
+
+function isFile(path: string): boolean {
+  try {
+    return statSync(path).isFile();
+  } catch {
+    return false;
   }
 }
 

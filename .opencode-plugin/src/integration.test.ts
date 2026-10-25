@@ -317,6 +317,33 @@ describe('Throughline Plugin Integration Tests', () => {
       );
     });
 
+    it("uses a worktree's own data dir only until the main tree has a HANDOFF.md (issue #218)", () => {
+      // tlDataRoot() is memoized per directory, so each phase uses its own worktree.
+      const mk = (name: string) => {
+        execSync(`git worktree add ../${name} -b ${name}`, { cwd: tempDir, stdio: 'pipe' });
+        const dir = join(tempDir, '..', name);
+        mkdirSync(join(dir, '.claude', 'throughline'), { recursive: true });
+        return dir;
+      };
+      const a = mk('wt-own-a');
+      const b = mk('wt-own-b');
+      const c = mk('wt-own-c');
+      try {
+        assert.ok(tlDataDir({ directory: a }).includes('wt-own-a'), 'no main data: keep own');
+        mkdirSync(join(tempDir, '.claude', 'throughline'), { recursive: true });
+        assert.ok(tlDataDir({ directory: b }).includes('wt-own-b'), 'empty main dir: keep own');
+        writeFileSync(join(tempDir, '.claude', 'throughline', 'HANDOFF.md'), '# Main\n');
+        assert.ok(!tlDataDir({ directory: c }).includes('wt-own-c'), 'main HANDOFF.md: main wins');
+      } finally {
+        for (const d of [a, b, c]) rmSync(d, { recursive: true, force: true });
+        try {
+          execSync('git worktree prune', { cwd: tempDir, stdio: 'pipe' });
+        } catch {
+          // best-effort cleanup
+        }
+      }
+    });
+
     it('DOES claim worktree-sharing for a genuine linked git worktree (issue #56, P5)', async () => {
       // The positive case for the same fix: a REAL `git worktree add`, not a
       // synthetic ctx.worktree mismatch — tlDataRoot() resolves sharing via

@@ -182,21 +182,22 @@ _tl_compute_data_root() {
   _tl_main=$(_tl_canonicalize_path "$_tl_main")
   # Migration safety: don't strand data a worktree already accumulated under
   # its OWN root before this sharing default existed (issue #31 review
-  # finding). If this worktree's own would-be data dir already has content (a
-  # HANDOFF.md, or the dir itself), keep resolving here permanently rather
-  # than silently making pre-existing HANDOFF.md/logs/buffer invisible -
-  # deliberately STICKY, not a one-shot check that flips to sharing the first
-  # time the main root happens to gain data of its own (from a sibling
-  # worktree's session, say): matches tl_data_exists()'s existing precedent
-  # elsewhere in this file (once a data dir exists, it stays authoritative;
-  # nothing here auto-migrates it). A worktree that has never been used with
-  # throughline (the common case going forward, and every case in a fresh
-  # repo) has no such directory, so it shares as designed from the start.
+  # finding). If this worktree has its own data dir and the main checkout has
+  # no HANDOFF.md, keep resolving here, so pre-existing HANDOFF.md/logs/buffer
+  # stay visible. Once the main checkout has a HANDOFF.md, it wins (issue
+  # #218): the sticky version of this rule pinned worktrees to a copy of the
+  # main tree's gitignored .claude/ that a tool had bulk-copied in, so sessions
+  # read a stale HANDOFF.md and wrote updates nobody else saw. HANDOFF.md, not
+  # the bare dir: any SessionStart or sibling-worktree capture bootstraps an
+  # empty main dir, and that must not flip a running worktree session over to
+  # it mid-session. session-onboard.sh names a shadowed worktree copy so
+  # nothing is stranded silently.
   # Skipped entirely when THROUGHLINE_DATA_DIR is absolute: both roots then
   # resolve to the identical path anyway, so there is nothing to disambiguate.
   _tl_own=$(_tl_dir_under "$_tl_wt")
   if [ "$_tl_own" != "$(_tl_dir_under "$_tl_main")" ] \
-    && { [ -d "$_tl_own" ] || [ -f "$_tl_own/HANDOFF.md" ]; }; then
+    && { [ -d "$_tl_own" ] || [ -f "$_tl_own/HANDOFF.md" ]; } \
+    && [ ! -f "$(_tl_dir_under "$_tl_main")/HANDOFF.md" ]; then
     # Canonicalized (issue #42 review finding) - same reasoning as the
     # worktree-list-unparseable branch above: every return path in this
     # function must agree on raw vs. canonical, or a caller comparing this
