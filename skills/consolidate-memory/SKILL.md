@@ -20,6 +20,7 @@ license: MIT
 
 ## Phase 1: Determine Scope
 
+0. Not in Claude Code: say "no native memory store on this harness" ([memory-routing.md](memory-routing.md)) and stop.
 1. Find the current project's memory directory: `$CLAUDE_MEMORY_DIR` if set, else `~/.claude/projects/<project-slug>/memory/`. Record that path exactly as found in `dir` and never overwrite it with a resolved path: when an edit needs a physical path, resolve a copy (see Safety Guidelines)
 2. Inventory `MEMORY.md` + all `*.md` topic files in the memory directory
 3. Parse MEMORY.md index to build a map of indexed files vs actual files

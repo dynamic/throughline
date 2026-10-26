@@ -20,8 +20,8 @@ bad() { echo "skill-lint: $*" >&2; fail=1; }
 budget() {
   case "$1" in
     consolidate-memory) echo 29500 ;;
-    handoff) echo 21000 ;;
-    consolidate) echo 12000 ;;
+    handoff) echo 21200 ;;       # +200 for the per-harness memory routing pointers (#194)
+    consolidate) echo 12150 ;;   # +150, same reason
     onboard) echo 3000 ;;
     *) echo 12000 ;;
   esac

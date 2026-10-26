@@ -6,6 +6,10 @@ All notable changes to throughline are documented here. Format loosely follows
 ## [Unreleased]
 
 ### Added
+- `skills/consolidate-memory/memory-routing.md`: where `handoff`, `consolidate` and
+  `consolidate-memory` write durable facts per harness. Claude Code keeps its native
+  memory; Codex CLI, OpenCode, OMP and Hermes route to an operator-approved `AGENTS.md`
+  section instead of a Claude-shaped directory nobody reads. #194.
 - `hooks/rescan.sh`: re-applies the current redaction rules in place to a buffer, archive
   or draft written before them, record-aware (prose-safe rules on prompt, websearch and
   agent records), and prints one line per changed file with counts by class, never a
