@@ -144,7 +144,7 @@ For each candidate, propose exactly **one** home:
 | (a) Global `CLAUDE.md` rule | The lesson holds across all projects |
 | (b) The owning skill, in its source repo | The lesson corrects or extends a specific skill. **File an issue in that repo - never edit another repo's skill directly** |
 | (c) Project `CLAUDE.md` | The lesson is project-specific, true every session, and belongs in the project's own instructions rather than a memory fact |
-| (d) Auto-memory file | A confirmed preference or fact that fits the native memory types (`feedback`, `user`, `project`, `reference`) — the default for anything "project-specific and true every session" that isn't an instruction. `HANDOFF.md` is never a home here: it holds in-flight state only (see `handoff` Phase 2), so a durable lesson routed there would just become a fresh HANDOFF-diet finding (row (e)) |
+| (d) Auto-memory file (Claude Code; elsewhere per [routing](../consolidate-memory/memory-routing.md)) | A confirmed preference or fact that fits the native memory types (`feedback`, `user`, `project`, `reference`) — the default for anything "project-specific and true every session" that isn't an instruction. `HANDOFF.md` is never a home here: it holds in-flight state only (see `handoff` Phase 2), so a durable lesson routed there would just become a fresh HANDOFF-diet finding (row (e)) |
 | (e) HANDOFF-diet (trim, don't add) | The candidate is a Phase 1.4 size-discipline finding - HANDOFF.md is over its 200-line/~11KB cap, or durable-fact content has crept back into it. For each line proposed for removal, state exactly where its surviving copy lives or will be written (existing memory topic file, a new one to write in this same promotion, existing session-log citation, or an existing `CHANGELOG.md` entry), so the reviewer can confirm nothing is actually lost |
 
 Present the **full list** - lesson, evidence, confidence, proposed home - and stop.
@@ -160,8 +160,8 @@ always-loaded files, where one wrong line costs every future session.
 1. Apply the **approved** promotions only, each to its agreed home. For home (b),
    opening the issue *is* the promotion - the edit happens in that repo on its own
    schedule. For home (e): write any *new* backing entry exactly as proposed in
-   Phase 3 - a *new* memory topic file (per `handoff` Phase 4 step 4's frontmatter
-   shape) or a *new* `CHANGELOG.md` entry **only when the project already
+   Phase 3 - a *new* memory topic file (per `handoff` Phase 4 step 4, or the routing file
+   outside Claude Code) or a *new* `CHANGELOG.md` entry **only when the project already
    maintains a `CHANGELOG.md`** (never create one solely for this; see Phase 1.4) -
    re-verify every cited *existing* memory file/`CHANGELOG.md`/session-log copy
    still checks out, then trim the now-redundant content from HANDOFF.md. **Never

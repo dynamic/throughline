@@ -77,7 +77,9 @@ by **durability**, using the test *"would this still be true in three months?"*
 - **Yes → native memory, not `HANDOFF.md`.** Architecture/topology, environment/infra
   facts, tool/integration inventory, config & secret **names** (never values), key
   files & resources, and anything else that reads as a fact about the project rather
-  than a status. Write it as a memory topic file per Phase 4 step 4 below — that store
+  than a status. Write it as a memory topic file per Phase 4 step 4 below (outside Claude
+  Code, where [memory-routing.md](../consolidate-memory/memory-routing.md) sends it; a fact no
+  destination takes lives on in the session log's Key learnings) — that store
   is durably-recalled and does not cost resident context every turn the way
   `HANDOFF.md` does.
 - **No → `HANDOFF.md`.** Only genuinely volatile, in-flight state belongs here:
@@ -176,7 +178,8 @@ having to carry it. Omit the line entirely for a session that starts something n
      in-flight state), the count is real signal that there's too much in flight
      at once — say so in your report rather than forcing an artificial trim.
 4. **Memory binding (native system) — the default destination for anything durable.**
-   Outside Claude Code, route per [memory-routing.md](../consolidate-memory/memory-routing.md).
+   Only on Claude Code does the rest of this step apply; elsewhere
+   [memory-routing.md](../consolidate-memory/memory-routing.md) replaces it.
    Every durable item identified in Phase 2 gets written here, not just rare
    standout insights — but still **curated**, not auto-dumped: one entry per genuine
    fact, and check `MEMORY.md`'s existing index first so you update or merge into an
