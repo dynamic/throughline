@@ -176,6 +176,7 @@ having to carry it. Omit the line entirely for a session that starts something n
      in-flight state), the count is real signal that there's too much in flight
      at once — say so in your report rather than forcing an artificial trim.
 4. **Memory binding (native system) — the default destination for anything durable.**
+   Outside Claude Code, route per [memory-routing.md](../consolidate-memory/memory-routing.md).
    Every durable item identified in Phase 2 gets written here, not just rare
    standout insights — but still **curated**, not auto-dumped: one entry per genuine
    fact, and check `MEMORY.md`'s existing index first so you update or merge into an

@@ -39,7 +39,7 @@ dir to [`consolidate-memory`](../consolidate-memory/SKILL.md) - don't duplicate 
 Two shipped skills share the word "consolidate" and touch completely different
 stores. This one reads the **handoff session logs**; the
 [`consolidate-memory`](../consolidate-memory/SKILL.md) skill owns the **auto-memory files**
-(`~/.claude/projects/<slug>/memory/`, `MEMORY.md`). A handoff or a user can name
+(Claude Code: `~/.claude/projects/<slug>/memory/`, [routing](../consolidate-memory/memory-routing.md)). A handoff or a user can name
 either job with the same two words, and the store is the part that gets lost.
 
 Decide the store from the request **before reading any file**. If it is about the
@@ -48,8 +48,7 @@ memory dir - `$CLAUDE_MEMORY_DIR` where set, else
 stale memories, orphans, or dangling `[[wikilinks]]` - stop here: say in one line
 that this is [`consolidate-memory`](../consolidate-memory/SKILL.md)'s job, and suggest
 the user run it. Read no session logs, propose no promotions, and end the turn. Do
-not "confirm scope" by mining the logs first - the store is decided here, not in
-Phase 1.
+not "confirm scope" by mining the logs first.
 
 One request can name both stores ("consolidate handoffs and tidy `MEMORY.md`").
 Then run this pass over the logs and name the memory half for
