@@ -316,27 +316,30 @@ having to carry it. Omit the line entirely for a session that starts something n
 
    | Item | Default route |
    | --- | --- |
-   | A skill | Issue on the repo that owns it (resolve it from the plugin manifest or the skill's source, never guess), or a concrete edit if the skill is local. |
+   | A skill | Issue on the repo that owns it (resolve it from the plugin manifest or the skill's source, never guess), or a direct edit only where this project's repo owns the skill - a plugin-cache or installer copy is overwritten on update. |
    | Project instructions | The harness's instructions file: `CLAUDE.md` on Claude Code, `AGENTS.md` on Codex, OpenCode and OMP, or the project's override - as exact lines. |
    | A tool or service (MCP server, CLI, CI gate) | Issue on its repo. |
    | A durable fact | Native memory, as in step 4. |
 
    Check the user's own filing rules first: where their instructions file, or a doc it
    points at, says findings like these go, follow it and name the rule; with none, use
-   the route above. Anything headed for a repo the client does not own takes the
-   confidentiality bullet below plus the secret re-scan - a quoted failed command is
+   the route above. Anything headed for a repo this project's owner does not control takes
+   the confidentiality bullet below plus the secret re-scan - a quoted failed command is
    exactly the shape that carries one.
 
    Then log it, as the log's final section - `## Reflection`, omitted entirely when
-   nothing was recommended - one line per item:
+   nothing was recommended - one line per item. The re-scan covers this text too: it
+   quotes failed commands, and the log may be tracked.
 
    ```markdown
    ## Reflection
    - <recommendation> -> <route taken: issue link, edited path, or memory> (evidence: <buffer line, failure, or finding>)
    ```
 
-   Per-session and forward-looking; `consolidate` mines it later for recurrences, and
-   neither writes the other's record.
+   If step 8 committed the log, this leaves it modified: offer a follow-up commit of that
+   one path, same rules (explicit go, stage only that path, never `-A`). Per-session and
+   forward-looking; `consolidate` mines it later for recurrences, and neither writes the
+   other's record.
 
 ---
 
@@ -386,10 +389,10 @@ the file is currently under the 150/200-line target (see Phase 1 step 4 above).
   credential on a bare CLI flag (`curl -u user:pass`, or `-p<pw>` anywhere but after
   a mysql/mariadb client name); (2) a value only *partially* masked - a `***` does not
   mean the whole secret was caught.
-- **Confidentiality, for anything leaving this project.** What step 9 files on a repo the
-  client does not own carries no client name, domain, live URL or real record, page and
-  class name: describe the finding generically. A client name is no secret, so the redaction
-  pass above never catches it.
+- **Confidentiality, for anything leaving this project.** What step 9 files on a repo this
+  project's owner does not control carries no client name, domain, live URL or real
+  record, page and class name: describe the finding generically. A client name is no
+  secret, so the redaction pass above never catches it.
 - **Report, then let the user review.** After writing, show the HANDOFF.md diff +
   session-log path, then the copy-pasteable next-session briefing block, then -
   only if something is committable (step 8) - the commit/push offer. With both
@@ -397,6 +400,7 @@ the file is currently under the 150/200-line target (see Phase 1 step 4 above).
   review gate is post-write, not pre-write: commit/push waits on an explicit go,
   and so does every item step 9 offers to file or edit - nothing else here does.
 - **The reflection offer closes the report** whatever step 8 concluded and whether or not
-  anything is committable: `THROUGHLINE_REFLECT=off` is the only thing that drops it.
+  anything is committable; under `always` the reflection itself takes its place, and
+  `THROUGHLINE_REFLECT=off` drops both.
 - **Buffers are the source of truth for *what happened*** — they don't lie about
   which commands ran or files changed, even after a long, compacted session.

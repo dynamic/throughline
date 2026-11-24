@@ -2041,7 +2041,7 @@ has "handoff skill: the consume step calls hooks/archive-buffer.sh" "$(cat "$ROO
 # surface for it: the opt-in flag, the routing table's per-harness instructions file,
 # the empty answer, and the fact that it runs AFTER the handoff artifacts are written.
 HSKILL=$(cat "$ROOT/skills/handoff/SKILL.md")
-has "handoff skill: reflection is opt-in through THROUGHLINE_REFLECT" "$HSKILL" "THROUGHLINE_REFLECT"
+has "handoff skill: reflection is gated by THROUGHLINE_REFLECT" "$HSKILL" "THROUGHLINE_REFLECT"
 has "handoff skill: reflection routes project instructions per harness (AGENTS.md)" "$HSKILL" 'AGENTS.md` on Codex, OpenCode and OMP'
 has "handoff skill: step 9 owns the log's Reflection section" "$HSKILL" "as the log's final section"
 has "handoff skill: Phase 3 must not write the Reflection section" "$HSKILL" 'No ## Reflection section in a Phase 3 write'
