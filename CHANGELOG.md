@@ -6,6 +6,10 @@ All notable changes to throughline are documented here. Format loosely follows
 ## [Unreleased]
 
 ### Added
+- `handoff` step 9: an optional reflection at the end of a handoff that backs every item
+  with evidence, routes it to the skill, tool or instructions file that owns it, and acts
+  only on a yes for that item. `THROUGHLINE_REFLECT=ask|always|off` (default `ask`); the
+  step runs after the artifacts are written, so it never gates a handoff. #163.
 - `skills/consolidate-memory/memory-routing.md`: where `handoff`, `consolidate` and
   `consolidate-memory` write durable facts per harness. Claude Code keeps its native
   memory; Codex CLI, OpenCode, OMP and Hermes route to an operator-approved `AGENTS.md`

@@ -243,6 +243,10 @@ EOF
   echo "  THROUGHLINE_DATA_DIR=${THROUGHLINE_DATA_DIR:-<unset>}"
   echo "  THROUGHLINE_WORKTREE_SHARED=${THROUGHLINE_WORKTREE_SHARED:-<unset>}"
   echo "  THROUGHLINE_DISABLE=${THROUGHLINE_DISABLE:-<unset>}"
+  # THROUGHLINE_REFLECT is read by the handoff skill, not by a hook, but it is part of
+  # the env this session sees and "why did the reflection not offer?" is the same
+  # question --doctor answers. Same line shape as the lines above.
+  echo "  THROUGHLINE_REFLECT=${THROUGHLINE_REFLECT:-<unset>}"
   exit 0
 fi
 

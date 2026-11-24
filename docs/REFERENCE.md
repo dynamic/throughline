@@ -136,6 +136,25 @@ With no recorded pass, every log counts. To change the threshold:
 export THROUGHLINE_CONSOLIDATE_AFTER=8   # the default; 0 turns the suggestion off
 ```
 
+### Reflection offer
+
+At the very end of a handoff - after `HANDOFF.md`, the session log and memory are
+written - the `handoff` skill can offer a short, evidence-backed reflection on the
+session's workflow, skills, tools and instructions, and route each accepted item to its
+owner (an issue on the repo that owns a skill or tool, an edit to `CLAUDE.md` /
+`AGENTS.md`, or native memory). It never blocks the handoff, and nothing is filed or
+edited without an explicit yes per item. To change the default:
+
+```sh
+export THROUGHLINE_REFLECT=ask   # the default; ask|always|off
+```
+
+`ask` appends the one-line offer to the handoff report, `always` runs the reflection
+without asking, `off` skips it entirely. With nothing evidenced to recommend, the skill
+adds no section and asks nothing further either way. The skill reads the variable itself
+(`printenv THROUGHLINE_REFLECT`), and `session-onboard.sh --doctor` prints what the
+session sees, so a mode that appears to be ignored is checkable rather than guessed at.
+
 ### Local by default
 
 throughline's data - `HANDOFF.md`, `logs/`, `buffer/`, everything under the data
@@ -222,7 +241,8 @@ sh "$CLAUDE_PLUGIN_ROOT/hooks/session-onboard.sh" --doctor
 It reports the resolved root and data root (and whether they differ, i.e.
 worktree-sharing applies), the activation state and why (`disabled` /
 `ignored` / `active` / `would-bootstrap`), whether `jq` is on `PATH`, live vs.
-archived buffer counts, and the three env vars' current values. It also lists
+archived buffer counts, and the env vars' current values (`THROUGHLINE_DATA_DIR`,
+`THROUGHLINE_WORKTREE_SHARED`, `THROUGHLINE_DISABLE`, `THROUGHLINE_REFLECT`). It also lists
 the throughline version each harness on the machine has installed (Claude Code,
 Codex, OpenCode per plugin spec, OMP link and marketplace installs, Hermes), read from
 each harness's own install record, and marks any older than the copy running the

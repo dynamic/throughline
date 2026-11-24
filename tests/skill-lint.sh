@@ -20,7 +20,7 @@ bad() { echo "skill-lint: $*" >&2; fail=1; }
 budget() {
   case "$1" in
     consolidate-memory) echo 29500 ;;
-    handoff) echo 21200 ;;       # +200 for the per-harness memory routing pointers (#194)
+    handoff) echo 24500 ;;       # +3300 for the optional reflection step (#163), incl. review round 1-2 fixes; was 21200, itself +200 for the per-harness memory routing pointers (#194)
     consolidate) echo 12150 ;;   # +150, same reason
     onboard) echo 3000 ;;
     *) echo 12000 ;;

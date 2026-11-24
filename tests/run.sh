@@ -1683,6 +1683,12 @@ has "onboard header carries the plugin version" "$O17" "throughline v$PLUGIN_VER
 DOC1=$(THROUGHLINE_DISABLE=1 sh "$H/session-onboard.sh" --doctor)
 has "doctor reports under THROUGHLINE_DISABLE (not swallowed by the kill switch)" "$DOC1" "disabled"
 
+# #163: the reflection mode is read by the skill rather than a hook, but it is still env
+# state the session sees, so --doctor has to show it - otherwise "off did not take"
+# cannot be told apart from "the skill never looked."
+DOCR=$(THROUGHLINE_REFLECT=off sh "$H/session-onboard.sh" --doctor)
+has "doctor prints THROUGHLINE_REFLECT" "$DOCR" "THROUGHLINE_REFLECT=off"
+
 DOC2=$(CLAUDE_PROJECT_DIR="$WT_IGN_LINK" sh "$H/session-onboard.sh" --doctor)
 has "doctor reports ignored when .throughlineignore is present" "$DOC2" "ignored"
 
@@ -2035,6 +2041,21 @@ else
 fi
 # #186: the skill archives through the script, never a bare move onto the archive.
 has "handoff skill: the consume step calls hooks/archive-buffer.sh" "$(cat "$ROOT/skills/handoff/SKILL.md")" "hooks/archive-buffer.sh"
+
+# #163: the optional self-improvement reflection step. The skill is the only home for
+# this behaviour (no hook runs it), so these assertions are the whole regression
+# surface for it: the opt-in flag, the routing table's per-harness instructions file,
+# the empty answer, and the fact that it runs AFTER the handoff artifacts are written.
+HSKILL=$(cat "$ROOT/skills/handoff/SKILL.md")
+has "handoff skill: reflection is gated by THROUGHLINE_REFLECT" "$HSKILL" "THROUGHLINE_REFLECT"
+has "handoff skill: reflection reads its flag out of the environment" "$HSKILL" "printenv THROUGHLINE_REFLECT"
+has "handoff skill: reflection reads the archived buffers, not live ones" "$HSKILL" 'moved them to `DATA/buffer/archive/`'
+has "handoff skill: reflection routes project instructions per harness (AGENTS.md)" "$HSKILL" 'AGENTS.md` on Codex, OpenCode, OMP and Hermes'
+has "handoff skill: step 9 owns the log's Reflection section" "$HSKILL" "as the log's final section"
+has "handoff skill: Phase 3 must not write the Reflection section" "$HSKILL" 'No ## Reflection section in a Phase 3 write'
+has "handoff skill: 'nothing worth changing' adds no section" "$HSKILL" 'add no section, ask'
+before "handoff skill: reflection runs after the commit offer, never before" "$HSKILL" "Offer to commit + push the handoff artifacts" "Optional reflection on the workflow"
+before "handoff skill: nothing is filed without a per-item yes" "$HSKILL" "explicit yes for that item alone" "| A skill |"
 
 # --- jq program size (Windows command-line cap) ---------------------------------
 # session-capture.sh hands jq ONE argument: the redaction defs plus the capture
