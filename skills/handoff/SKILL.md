@@ -135,11 +135,8 @@ Ordered, specific — exact commands, paths, expected outcomes.
 
 ## Files & resources
 Key paths, URLs, credential locations (names only).
-
-## Reflection
-<!-- Optional; step 9 appends it, and only when it recommended something. What was
-     proposed, and what was filed or edited after an explicit yes, with links. -->
-- <recommendation> -> <route: issue link, edited path, or memory> (evidence: <buffer line, failure, or finding>)
+<!-- No ## Reflection section in a Phase 3 write: step 9 appends one, and only when it
+     recommended something. -->
 ```
 
 **Chain link:** if this session continues work a prior log already started (same
@@ -304,38 +301,42 @@ having to carry it. Omit the line entirely for a session that starts something n
      without explicit authorization each time).
 
 9. **Optional reflection on the workflow and the skills used - never a blocker.** Runs
-   only after steps 1-8; nothing above waits on it. `THROUGHLINE_REFLECT` picks the mode
-   (set it per user or project, like the other `THROUGHLINE_*` knobs): `ask` (default)
-   appends one line to your report ("Want a quick reflection on the workflow and
-   skills?") and waits for an answer; `off` skips it entirely; `always` goes straight to
-   the list. Any other value (or an unset one) behaves as `ask`.
-
-   Mine this session for **evidence** - the buffers you just distilled, plus the
-   conversation: an `` `[interrupted]` ``/failed buffer line, a retry loop, a review
-   finding, a workaround or a gate you bypassed, or rework. Each recommendation cites
-   one; no evidence, no recommendation. "Nothing worth changing" is a complete answer -
-   add no section, ask nothing further. Cap at ~5, ranked by time or risk saved.
+   only after steps 1-8; nothing above waits on it. `THROUGHLINE_REFLECT` picks the mode:
+   `ask` (default) appends one line to your report ("Want a quick reflection on the
+   workflow and skills?") and waits; `off` skips it; `always` goes straight to the list.
+   Any other value, or none, behaves as `ask`.
+   Mine the buffers you just distilled, plus the conversation, for **evidence**: an
+   `` `[interrupted]` ``/failed buffer line, a retry loop, a review finding, a workaround
+   or a gate you bypassed, or rework. Each recommendation cites one; no evidence, no
+   recommendation. "Nothing worth changing" is a complete answer: add no section, ask
+   nothing further. Cap at ~5, by time or risk saved.
 
    Route each item to whatever owns it, as a proposal; **nothing is filed or edited
    without an explicit yes for that item alone**:
 
    | Item | Default route |
    | --- | --- |
-   | A skill | Issue on the repo that owns it (resolve that repo from the plugin manifest or the skill's source, never guess), or a concrete edit where the skill is local. |
-   | Project instructions | The harness's instructions file: `CLAUDE.md` on Claude Code, `AGENTS.md` on Codex, OpenCode and OMP, or the project's override - shown as exact lines. |
+   | A skill | Issue on the repo that owns it (resolve it from the plugin manifest or the skill's source, never guess), or a concrete edit if the skill is local. |
+   | Project instructions | The harness's instructions file: `CLAUDE.md` on Claude Code, `AGENTS.md` on Codex, OpenCode and OMP, or the project's override - as exact lines. |
    | A tool or service (MCP server, CLI, CI gate) | Issue on its repo. |
    | A durable fact | Native memory, as in step 4. |
 
-   Check the user's own filing rules first: if their instructions file, or a doc it
-   points at, says where findings like this go, follow it and name the rule you followed;
-   with none, use the route above. Anything headed for a public repo gets the
-   confidentiality pass in Reminders - no client names, domains or data - and the secret
-   re-scan there, since a quoted failed command is exactly the shape that carries one.
+   Check the user's own filing rules first: where their instructions file, or a doc it
+   points at, says findings like these go, follow it and name the rule; with none, use
+   the route above. Anything headed for a repo the client does not own takes the
+   confidentiality bullet below plus the secret re-scan - a quoted failed command is
+   exactly the shape that carries one.
 
-   Then log it: append the session log's `## Reflection` section with what you proposed
-   and what was actually filed, with links. This is per-session and forward-looking;
-   `consolidate` reads it later when it mines logs for recurrences, and neither writes
-   the other's record.
+   Then log it, as the log's final section - `## Reflection`, omitted entirely when
+   nothing was recommended - one line per item:
+
+   ```markdown
+   ## Reflection
+   - <recommendation> -> <route taken: issue link, edited path, or memory> (evidence: <buffer line, failure, or finding>)
+   ```
+
+   Per-session and forward-looking; `consolidate` mines it later for recurrences, and
+   neither writes the other's record.
 
 ---
 
@@ -385,12 +386,17 @@ the file is currently under the 150/200-line target (see Phase 1 step 4 above).
   credential on a bare CLI flag (`curl -u user:pass`, or `-p<pw>` anywhere but after
   a mysql/mariadb client name); (2) a value only *partially* masked - a `***` does not
   mean the whole secret was caught.
+- **Confidentiality, for anything leaving this project.** What step 9 files on a repo the
+  client does not own carries no client name, domain, live URL or real record, page and
+  class name: describe the finding generically. A client name is no secret, so the redaction
+  pass above never catches it.
 - **Report, then let the user review.** After writing, show the HANDOFF.md diff +
   session-log path, then the copy-pasteable next-session briefing block, then -
-  only if something is committable (step 8) - the commit/push offer, then the
-  one-line reflection offer unless `THROUGHLINE_REFLECT=off` (step 9); with both
+  only if something is committable (step 8) - the commit/push offer. With both
   artifacts gitignored there is no offer to make and nothing to say about it. The
-  review gate is post-write, not pre-write - commit/push is the only action in
-  this sequence that waits on an explicit go.
+  review gate is post-write, not pre-write: commit/push waits on an explicit go,
+  and so does every item step 9 offers to file or edit - nothing else here does.
+- **The reflection offer closes the report** whatever step 8 concluded and whether or not
+  anything is committable: `THROUGHLINE_REFLECT=off` is the only thing that drops it.
 - **Buffers are the source of truth for *what happened*** — they don't lie about
   which commands ran or files changed, even after a long, compacted session.
