@@ -2036,6 +2036,18 @@ fi
 # #186: the skill archives through the script, never a bare move onto the archive.
 has "handoff skill: the consume step calls hooks/archive-buffer.sh" "$(cat "$ROOT/skills/handoff/SKILL.md")" "hooks/archive-buffer.sh"
 
+# #163: the optional self-improvement reflection step. The skill is the only home for
+# this behaviour (no hook runs it), so these assertions are the whole regression
+# surface for it: the opt-in flag, the routing table's per-harness instructions file,
+# the empty answer, and the fact that it runs AFTER the handoff artifacts are written.
+HSKILL=$(cat "$ROOT/skills/handoff/SKILL.md")
+has "handoff skill: reflection is opt-in through THROUGHLINE_REFLECT" "$HSKILL" "THROUGHLINE_REFLECT"
+has "handoff skill: reflection routes project instructions per harness (AGENTS.md)" "$HSKILL" 'AGENTS.md` on Codex, OpenCode and OMP'
+has "handoff skill: the session-log template has an optional Reflection section" "$HSKILL" "## Reflection"
+has "handoff skill: 'nothing worth changing' adds no section" "$HSKILL" "add no section, ask nothing further"
+before "handoff skill: reflection runs after the commit offer, never before" "$HSKILL" "Offer to commit + push the handoff artifacts" "Optional reflection on the workflow"
+before "handoff skill: nothing is filed without a per-item yes" "$HSKILL" "explicit yes for that item alone" "| A skill |"
+
 # --- jq program size (Windows command-line cap) ---------------------------------
 # session-capture.sh hands jq ONE argument: the redaction defs plus the capture
 # filter. Windows caps a whole command line at 32,767 characters, and a jq call

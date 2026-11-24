@@ -135,6 +135,11 @@ Ordered, specific — exact commands, paths, expected outcomes.
 
 ## Files & resources
 Key paths, URLs, credential locations (names only).
+
+## Reflection
+<!-- Optional; step 9 appends it, and only when it recommended something. What was
+     proposed, and what was filed or edited after an explicit yes, with links. -->
+- <recommendation> -> <route: issue link, edited path, or memory> (evidence: <buffer line, failure, or finding>)
 ```
 
 **Chain link:** if this session continues work a prior log already started (same
@@ -298,6 +303,40 @@ having to carry it. Omit the line entirely for a session that starts something n
      default branch, respect any repo-configured push gate, don't bypass one
      without explicit authorization each time).
 
+9. **Optional reflection on the workflow and the skills used - never a blocker.** Runs
+   only after steps 1-8; nothing above waits on it. `THROUGHLINE_REFLECT` picks the mode
+   (set it per user or project, like the other `THROUGHLINE_*` knobs): `ask` (default)
+   appends one line to your report ("Want a quick reflection on the workflow and
+   skills?") and waits for an answer; `off` skips it entirely; `always` goes straight to
+   the list. Any other value (or an unset one) behaves as `ask`.
+
+   Mine this session for **evidence** - the buffers you just distilled, plus the
+   conversation: an `` `[interrupted]` ``/failed buffer line, a retry loop, a review
+   finding, a workaround or a gate you bypassed, or rework. Each recommendation cites
+   one; no evidence, no recommendation. "Nothing worth changing" is a complete answer -
+   add no section, ask nothing further. Cap at ~5, ranked by time or risk saved.
+
+   Route each item to whatever owns it, as a proposal; **nothing is filed or edited
+   without an explicit yes for that item alone**:
+
+   | Item | Default route |
+   | --- | --- |
+   | A skill | Issue on the repo that owns it (resolve that repo from the plugin manifest or the skill's source, never guess), or a concrete edit where the skill is local. |
+   | Project instructions | The harness's instructions file: `CLAUDE.md` on Claude Code, `AGENTS.md` on Codex, OpenCode and OMP, or the project's override - shown as exact lines. |
+   | A tool or service (MCP server, CLI, CI gate) | Issue on its repo. |
+   | A durable fact | Native memory, as in step 4. |
+
+   Check the user's own filing rules first: if their instructions file, or a doc it
+   points at, says where findings like this go, follow it and name the rule you followed;
+   with none, use the route above. Anything headed for a public repo gets the
+   confidentiality pass in Reminders - no client names, domains or data - and the secret
+   re-scan there, since a quoted failed command is exactly the shape that carries one.
+
+   Then log it: append the session log's `## Reflection` section with what you proposed
+   and what was actually filed, with links. This is per-session and forward-looking;
+   `consolidate` reads it later when it mines logs for recurrences, and neither writes
+   the other's record.
+
 ---
 
 ## Phase 5: HANDOFF.md template (if absent)
@@ -348,7 +387,8 @@ the file is currently under the 150/200-line target (see Phase 1 step 4 above).
   mean the whole secret was caught.
 - **Report, then let the user review.** After writing, show the HANDOFF.md diff +
   session-log path, then the copy-pasteable next-session briefing block, then -
-  only if something is committable (step 8) - the commit/push offer; with both
+  only if something is committable (step 8) - the commit/push offer, then the
+  one-line reflection offer unless `THROUGHLINE_REFLECT=off` (step 9); with both
   artifacts gitignored there is no offer to make and nothing to say about it. The
   review gate is post-write, not pre-write - commit/push is the only action in
   this sequence that waits on an explicit go.

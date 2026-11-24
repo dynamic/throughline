@@ -136,6 +136,23 @@ With no recorded pass, every log counts. To change the threshold:
 export THROUGHLINE_CONSOLIDATE_AFTER=8   # the default; 0 turns the suggestion off
 ```
 
+### Reflection offer
+
+At the very end of a handoff - after `HANDOFF.md`, the session log and memory are
+written - the `handoff` skill can offer a short, evidence-backed reflection on the
+session's workflow, skills, tools and instructions, and route each accepted item to its
+owner (an issue on the repo that owns a skill or tool, an edit to `CLAUDE.md` /
+`AGENTS.md`, or native memory). It never blocks the handoff, and nothing is filed or
+edited without an explicit yes per item. To change the default:
+
+```sh
+export THROUGHLINE_REFLECT=ask   # the default; ask|always|off
+```
+
+`ask` appends the one-line offer to the handoff report, `always` runs the reflection
+without asking, `off` skips it entirely. With nothing evidenced to recommend, the skill
+adds no section and asks nothing further either way.
+
 ### Local by default
 
 throughline's data - `HANDOFF.md`, `logs/`, `buffer/`, everything under the data
