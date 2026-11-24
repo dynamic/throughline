@@ -305,7 +305,8 @@ having to carry it. Omit the line entirely for a session that starts something n
    `ask` (default) appends one line to your report ("Want a quick reflection on the
    workflow and skills?") and waits; `off` skips it; `always` goes straight to the list.
    Any other value, or none, behaves as `ask`.
-   Mine the buffers you just distilled, plus the conversation, for **evidence**: an
+   Mine the buffers you just distilled (step 5 moved them to `DATA/buffer/archive/`),
+   plus the conversation, for **evidence**: an
    `` `[interrupted]` ``/failed buffer line, a retry loop, a review finding, a workaround
    or a gate you bypassed, or rework. Each recommendation cites one; no evidence, no
    recommendation. "Nothing worth changing" is a complete answer: add no section, ask
@@ -317,7 +318,7 @@ having to carry it. Omit the line entirely for a session that starts something n
    | Item | Default route |
    | --- | --- |
    | A skill | Issue on the repo that owns it (resolve it from the plugin manifest or the skill's source, never guess), or a direct edit only where this project's repo owns the skill - a plugin-cache or installer copy is overwritten on update. |
-   | Project instructions | The harness's instructions file: `CLAUDE.md` on Claude Code, `AGENTS.md` on Codex, OpenCode and OMP, or the project's override - as exact lines. |
+   | Project instructions | The harness's instructions file: `CLAUDE.md` on Claude Code, `AGENTS.md` on Codex, OpenCode, OMP and Hermes, or the project's override - as exact lines. |
    | A tool or service (MCP server, CLI, CI gate) | Issue on its repo. |
    | A durable fact | Native memory, as in step 4. |
 
