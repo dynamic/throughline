@@ -301,10 +301,11 @@ having to carry it. Omit the line entirely for a session that starts something n
      without explicit authorization each time).
 
 9. **Optional reflection on the workflow and the skills used - never a blocker.** Runs
-   only after steps 1-8; nothing above waits on it. `THROUGHLINE_REFLECT` picks the mode:
+   only after steps 1-8; nothing above waits on it. Read the flag first
+   (`printenv THROUGHLINE_REFLECT`); it picks the mode:
    `ask` (default) appends one line to your report ("Want a quick reflection on the
    workflow and skills?") and waits; `off` skips it; `always` goes straight to the list.
-   Any other value, or none, behaves as `ask`.
+   Any other value, or empty output, behaves as `ask`.
    Mine the buffers you just distilled (step 5 moved them to `DATA/buffer/archive/`),
    plus the conversation, for **evidence**: an
    `` `[interrupted]` ``/failed buffer line, a retry loop, a review finding, a workaround
