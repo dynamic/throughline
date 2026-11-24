@@ -748,6 +748,25 @@ cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwhscheme
 hasnt "kwhschemedup: secret not stored (issue #220)" "$(cap_line kwhschemedup)" 'S3cretPw'
 cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwhbasicsetup","command":"echo basic setup"}}'
 has   "kwhbasicsetup: a word after a lone scheme word is still left alone (issue #220)" "$(cap_line kwhbasicsetup)" 'basic setup'
+#      A non-ASCII letter glued before a scheme word (`éBasic X`) is not a word
+#      boundary for these rules: `\b` and `\w` count it as a word character, so the
+#      scheme was never anchored (issue #220, the #116/#121 seam). An ASCII letter
+#      before it (`xbasic`) still blocks the rule.
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwhseambasic","command":"echo \u00e9Basic S3cretPw:x"}}'
+hasnt "kwhseambasic: secret not stored (issue #220)" "$(cap_line kwhseambasic)" 'S3cretPw'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwhseamtoken","command":"echo \u00fcToken S3cretPwS3cretPw"}}'
+hasnt "kwhseamtoken: secret not stored (issue #220)" "$(cap_line kwhseamtoken)" 'S3cretPw'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwhseamascii","command":"echo xbasic S3cretPwLong"}}'
+has   "kwhseamascii: an ASCII letter before the scheme word still blocks it (issue #220)" "$(cap_line kwhseamascii)" 'xbasic S3cretPwLong'
+#      Basic's value stops before an `=` that starts another scheme word, so it no
+#      longer swallows `token=basic` and the next scheme word's value with it; any
+#      other `=` stays in the value (`basic username=X` must still mask X).
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwhbasicpad","command":"echo basic token=basic S3cretPw ok"}}'
+hasnt "kwhbasicpad: secret not stored (issue #220)" "$(cap_line kwhbasicpad)" 'S3cretPw'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwhbasicb64","command":"curl -H Authorization:Basic dXNlcjpTM2NyZXRQd3Bhc3M= x"}}'
+hasnt "kwhbasicb64: a padded base64 value is still masked whole (issue #220)" "$(cap_line kwhbasicb64)" 'dXNlcjpTM2NyZXRQd3Bhc3M'
+cap '{"session_id":"T","tool_name":"Bash","tool_input":{"description":"kwhbasicname","command":"mycli auth basic username=S3cretPwXyz"}}'
+hasnt "kwhbasicname: a name=value after basic is still masked (issue #220 review)" "$(cap_line kwhbasicname)" 'S3cretPwXyz'
 #      Whole-token replacement: a value that also occurs inside a longer word is not
 #      masked there (`PASSWORD` must not eat the tail of `DB_PASSWORD`), and a closing
 #      quote is never read as a value.

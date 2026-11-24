@@ -17,7 +17,7 @@
 set -eu
 
 # Pinned leak counts. Lower them when a fix lands; never raise them to make CI pass.
-BASELINE_JQ=106
+BASELINE_JQ=0
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 SHOW=0
